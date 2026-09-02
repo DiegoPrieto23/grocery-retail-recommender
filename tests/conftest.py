@@ -25,3 +25,21 @@ def dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     out: Path = tmp_path_factory.mktemp("dataset_csv")
     generate(GeneratorConfig(out_dir=out, scale=TEST_SCALE))
     return out
+
+
+# --------------------------------------------------------------------------------------
+# Fixtures de Spark (Fase 2)
+# --------------------------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def spark():
+    """SparkSession compartida por todos los tests del ETL.
+
+    Arrancar la JVM cuesta ~10 s, asi que se levanta una sola vez por sesion de pytest.
+    Dos particiones de shuffle: con DataFrames de decenas de filas, mas particiones solo
+    anaden ficheros vacios y latencia.
+    """
+    from src.etl.session import get_spark
+
+    session = get_spark("tests", master="local[2]", shuffle_partitions=2, driver_memory="1g")
+    yield session
+    session.stop()

@@ -1,0 +1,849 @@
+{
+  "score": 89.99,
+  "grade": "C",
+  "checks_total": 79,
+  "checks_failing": 10,
+  "dimension_scores": {
+    "completeness": 97.41,
+    "uniqueness": 81.07,
+    "validity": 93.61,
+    "consistency": 77.88,
+    "integrity": 100.0
+  },
+  "dimension_detail": {
+    "completeness": {
+      "row_score": 99.95,
+      "check_score": 94.87,
+      "score": 97.41,
+      "checks": 39,
+      "checks_failing": 2
+    },
+    "uniqueness": {
+      "row_score": 99.63,
+      "check_score": 62.5,
+      "score": 81.07,
+      "checks": 8,
+      "checks_failing": 3
+    },
+    "validity": {
+      "row_score": 99.73,
+      "check_score": 87.5,
+      "score": 93.61,
+      "checks": 16,
+      "checks_failing": 2
+    },
+    "consistency": {
+      "row_score": 98.62,
+      "check_score": 57.14,
+      "score": 77.88,
+      "checks": 7,
+      "checks_failing": 3
+    },
+    "integrity": {
+      "row_score": 100.0,
+      "check_score": 100.0,
+      "score": 100.0,
+      "checks": 9,
+      "checks_failing": 0
+    }
+  },
+  "weights": {
+    "completeness": 0.2,
+    "uniqueness": 0.2,
+    "validity": 0.2,
+    "consistency": 0.2,
+    "integrity": 0.2
+  },
+  "checks": [
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "customer_id_not_null",
+      "description": "`customer_id` informada",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "signup_date_not_null",
+      "description": "`signup_date` informada",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "country_not_null",
+      "description": "`country` informada",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "city_not_null",
+      "description": "`city` informada",
+      "rows_total": 20000,
+      "rows_failed": 163,
+      "pass_rate": 0.99185,
+      "passed": false
+    },
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "household_size_est_not_null",
+      "description": "`household_size_est` informada",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "loyalty_tier_not_null",
+      "description": "`loyalty_tier` informada",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "preferred_channel_not_null",
+      "description": "`preferred_channel` informada",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "completeness",
+      "name": "churn_label_not_null",
+      "description": "`churn_label` informada",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "validity",
+      "name": "household_size_in_range",
+      "description": "`household_size_est` entre 1 y 6",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "validity",
+      "name": "loyalty_tier_domain",
+      "description": "`loyalty_tier` en bronze/silver/gold",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "validity",
+      "name": "preferred_channel_domain",
+      "description": "`preferred_channel` en app/web/store",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "uniqueness",
+      "name": "customer_id_unique",
+      "description": "`customer_id` sin repetir",
+      "rows_total": 20000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "customers",
+      "dimension": "consistency",
+      "name": "signup_before_first_purchase",
+      "description": "`signup_date` anterior o igual a la primera compra",
+      "rows_total": 20000,
+      "rows_failed": 58,
+      "pass_rate": 0.9971,
+      "passed": false
+    },
+    {
+      "table": "customers",
+      "dimension": "consistency",
+      "name": "signup_within_period",
+      "description": "`signup_date` no posterior al fin del periodo observado",
+      "rows_total": 20000,
+      "rows_failed": 3,
+      "pass_rate": 0.99985,
+      "passed": false
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "product_id_not_null",
+      "description": "`product_id` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "department_not_null",
+      "description": "`department` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "category_not_null",
+      "description": "`category` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "brand_not_null",
+      "description": "`brand` informada",
+      "rows_total": 1500,
+      "rows_failed": 17,
+      "pass_rate": 0.988667,
+      "passed": false
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "is_private_label_not_null",
+      "description": "`is_private_label` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "is_perishable_not_null",
+      "description": "`is_perishable` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "unit_price_not_null",
+      "description": "`unit_price` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "pack_size_not_null",
+      "description": "`pack_size` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "completeness",
+      "name": "typical_repurchase_days_not_null",
+      "description": "`typical_repurchase_days` informada",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "uniqueness",
+      "name": "product_id_unique",
+      "description": "`product_id` sin repetir",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "validity",
+      "name": "category_canonical",
+      "description": "`category` sin mayusculas ni espacios inconsistentes",
+      "rows_total": 1500,
+      "rows_failed": 60,
+      "pass_rate": 0.96,
+      "passed": false
+    },
+    {
+      "table": "products",
+      "dimension": "validity",
+      "name": "unit_price_positive",
+      "description": "`unit_price` mayor que 0",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "validity",
+      "name": "pack_size_positive",
+      "description": "`pack_size` mayor que 0",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "products",
+      "dimension": "validity",
+      "name": "repurchase_days_positive",
+      "description": "`typical_repurchase_days` mayor que 0",
+      "rows_total": 1500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "completeness",
+      "name": "promotion_id_not_null",
+      "description": "`promotion_id` informada",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "completeness",
+      "name": "product_id_not_null",
+      "description": "`product_id` informada",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "completeness",
+      "name": "promo_type_not_null",
+      "description": "`promo_type` informada",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "completeness",
+      "name": "discount_value_not_null",
+      "description": "`discount_value` informada",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "completeness",
+      "name": "start_date_not_null",
+      "description": "`start_date` informada",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "completeness",
+      "name": "end_date_not_null",
+      "description": "`end_date` informada",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "uniqueness",
+      "name": "promotion_id_unique",
+      "description": "`promotion_id` sin repetir",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "validity",
+      "name": "promo_type_domain",
+      "description": "`promo_type` en 2x1/discount_pct/coupon",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "validity",
+      "name": "discount_value_positive",
+      "description": "`discount_value` mayor que 0",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "validity",
+      "name": "date_range_valid",
+      "description": "`start_date` anterior o igual a `end_date`",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "promotions",
+      "dimension": "integrity",
+      "name": "product_id_fk",
+      "description": "`product_id` existe en `product_id`",
+      "rows_total": 300,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "completeness",
+      "name": "basket_id_not_null",
+      "description": "`basket_id` informada",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "completeness",
+      "name": "channel_not_null",
+      "description": "`channel` informada",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "completeness",
+      "name": "basket_date_not_null",
+      "description": "`basket_date` informada",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "completeness",
+      "name": "total_amount_not_null",
+      "description": "`total_amount` informada",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "uniqueness",
+      "name": "basket_id_unique",
+      "description": "`basket_id` sin repetir",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "validity",
+      "name": "channel_domain",
+      "description": "`channel` en app/web/store",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "validity",
+      "name": "total_amount_positive",
+      "description": "`total_amount` mayor que 0",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "consistency",
+      "name": "store_id_matches_channel",
+      "description": "`store_id` informado si y solo si el canal es `store`",
+      "rows_total": 600174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "baskets",
+      "dimension": "consistency",
+      "name": "total_amount_matches_items",
+      "description": "`total_amount` cuadra con la suma de sus lineas",
+      "rows_total": 600174,
+      "rows_failed": 56340,
+      "pass_rate": 0.906127,
+      "passed": false
+    },
+    {
+      "table": "baskets",
+      "dimension": "integrity",
+      "name": "customer_id_fk",
+      "description": "`customer_id` existe en `customer_id`",
+      "rows_total": 582174,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "completeness",
+      "name": "basket_id_not_null",
+      "description": "`basket_id` informada",
+      "rows_total": 3103684,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "completeness",
+      "name": "product_id_not_null",
+      "description": "`product_id` informada",
+      "rows_total": 3103684,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "completeness",
+      "name": "quantity_not_null",
+      "description": "`quantity` informada",
+      "rows_total": 3103684,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "completeness",
+      "name": "unit_price_paid_not_null",
+      "description": "`unit_price_paid` informada",
+      "rows_total": 3103684,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "uniqueness",
+      "name": "no_duplicate_rows",
+      "description": "Sin filas duplicadas exactas",
+      "rows_total": 3103684,
+      "rows_failed": 45506,
+      "pass_rate": 0.985338,
+      "passed": false
+    },
+    {
+      "table": "basket_items",
+      "dimension": "uniqueness",
+      "name": "basket_product_unique",
+      "description": "Una sola linea por cesta y producto",
+      "rows_total": 3103684,
+      "rows_failed": 45859,
+      "pass_rate": 0.985224,
+      "passed": false
+    },
+    {
+      "table": "basket_items",
+      "dimension": "validity",
+      "name": "quantity_positive",
+      "description": "`quantity` mayor que 0",
+      "rows_total": 3103684,
+      "rows_failed": 12308,
+      "pass_rate": 0.996034,
+      "passed": false
+    },
+    {
+      "table": "basket_items",
+      "dimension": "validity",
+      "name": "unit_price_paid_positive",
+      "description": "`unit_price_paid` mayor que 0",
+      "rows_total": 3103684,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "consistency",
+      "name": "promo_active_on_basket_date",
+      "description": "La promocion aplicada estaba vigente el dia de la cesta",
+      "rows_total": 83214,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "integrity",
+      "name": "basket_id_fk",
+      "description": "`basket_id` existe en `basket_id`",
+      "rows_total": 3103684,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "integrity",
+      "name": "product_id_fk",
+      "description": "`product_id` existe en `product_id`",
+      "rows_total": 3103684,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "basket_items",
+      "dimension": "integrity",
+      "name": "promotion_id_fk",
+      "description": "`promotion_id` existe en `promotion_id`",
+      "rows_total": 83214,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "completeness",
+      "name": "session_id_not_null",
+      "description": "`session_id` informada",
+      "rows_total": 150000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "completeness",
+      "name": "session_date_not_null",
+      "description": "`session_date` informada",
+      "rows_total": 150000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "completeness",
+      "name": "device_type_not_null",
+      "description": "`device_type` informada",
+      "rows_total": 150000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "completeness",
+      "name": "converted_not_null",
+      "description": "`converted` informada",
+      "rows_total": 150000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "uniqueness",
+      "name": "session_id_unique",
+      "description": "`session_id` sin repetir",
+      "rows_total": 150000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "validity",
+      "name": "device_type_domain",
+      "description": "`device_type` en mobile/desktop/tablet",
+      "rows_total": 150000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "consistency",
+      "name": "converted_matches_basket",
+      "description": "`converted` coincide con tener `basket_id`",
+      "rows_total": 150000,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "integrity",
+      "name": "customer_id_fk",
+      "description": "`customer_id` existe en `customer_id`",
+      "rows_total": 115521,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "sessions",
+      "dimension": "integrity",
+      "name": "basket_id_fk",
+      "description": "`basket_id` existe en `basket_id`",
+      "rows_total": 52500,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "completeness",
+      "name": "session_id_not_null",
+      "description": "`session_id` informada",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "completeness",
+      "name": "product_id_not_null",
+      "description": "`product_id` informada",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "completeness",
+      "name": "event_type_not_null",
+      "description": "`event_type` informada",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "completeness",
+      "name": "event_timestamp_not_null",
+      "description": "`event_timestamp` informada",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "uniqueness",
+      "name": "no_duplicate_rows",
+      "description": "Sin filas duplicadas exactas",
+      "rows_total": 945676,
+      "rows_failed": 25,
+      "pass_rate": 0.999974,
+      "passed": false
+    },
+    {
+      "table": "session_events",
+      "dimension": "validity",
+      "name": "event_type_domain",
+      "description": "`event_type` en view/add_to_cart",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "consistency",
+      "name": "event_after_session_start",
+      "description": "El evento no es anterior al inicio de su sesion",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "integrity",
+      "name": "session_id_fk",
+      "description": "`session_id` existe en `session_id`",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    },
+    {
+      "table": "session_events",
+      "dimension": "integrity",
+      "name": "product_id_fk",
+      "description": "`product_id` existe en `product_id`",
+      "rows_total": 945676,
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
+    }
+  ]
+}
