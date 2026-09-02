@@ -298,7 +298,7 @@ cargue vía Power Query, en local — sin conexión a ninguna base de datos en l
 | `dim_customers`       | `customer_id` (PK), `loyalty_tier`, `household_size_est`, `preferred_channel`, `city`, `churn_label`     |
 | `dim_products`         | `product_id` (PK), `department`, `category`, `brand`, `is_private_label`, `is_perishable`                |
 | `dim_date`              | `date` (PK), `year`, `month`, `month_name`, `quarter`, `is_weekend` — para time intelligence               |
-| `dim_actions`            | `action_id` (PK), `action_name`, `cost`, `expected_margin` — catálogo de acciones del NBA                   |
+| `dim_actions`            | `action_id` (PK), `action_name`, `send_cost`, `discount`, `conversion_uplift`, `churn_reduction` — catálogo de acciones del NBA (Fase 4) |
 
 ### Hechos
 
@@ -306,8 +306,23 @@ cargue vía Power Query, en local — sin conexión a ninguna base de datos en l
 | --------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `fact_basket_items`           | 1 fila por línea de ticket                     | `basket_id`, `customer_id` (FK), `product_id` (FK), `date_id` (FK), `quantity`, `unit_price_paid`, `is_promo` |
 | `fact_recommendations`         | 1 fila por cesta de test evaluada               | `basket_id`, `customer_id` (FK), `customer_profile` (1-4), `ndcg_at_5`, `recall_at_5`                     |
-| `fact_nba`                      | 1 fila por cliente y fecha de evaluación         | `customer_id` (FK), `date_id` (FK), `recommended_action_id` (FK a `dim_actions`), `propensity_score`, `expected_value` |
+| `fact_nba`                      | 1 fila por cliente y fecha de evaluación         | `customer_id` (FK), `date_id` (FK), `recommended_action_id` (FK a `dim_actions`), `category`, `p_purchase`, `p_churn`, `expected_value` |
 
 Todas las FK son las columnas que usará el modelo tabular (TMDL) de Power BI para definir
 las relaciones — no hace falta resolver los JOINs de antemano, eso lo hace el propio
 semantic model.
+
+`fact_nba` sale de `predictions/nba_actions.parquet`, que genera `python -m src.nba.pipeline`.
+Dos precisiones sobre su esquema, que cambió al construir la Fase 4:
+
+- **Hay dos propensiones, no una.** La Tarea 3b entrena dos modelos con horizontes
+  distintos (`p_purchase` a 7 días sobre el par cliente-categoría, `p_churn` a 4 semanas
+  sobre el cliente), y la política usa los dos: el primero para el valor de cross-sell y el
+  segundo para el de retención. Colapsarlos en un único `propensity_score` perdería
+  justamente la parte que hace no trivial a la política.
+- **El coste de una acción se parte en dos.** `send_cost` se paga siempre que se ejecuta la
+  acción; `discount` sólo si el cliente compra, porque es valor facial de cupón que se
+  descuenta del ticket. Tratarlos como un único `cost` penalizaría de más a los clientes de
+  baja propensión. `conversion_uplift` y `churn_reduction` son **supuestos declarados**, no
+  estimaciones: este dataset no permite identificar el efecto causal de una acción (ver la
+  cabecera de `src/nba/config.py`).

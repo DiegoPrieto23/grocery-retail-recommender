@@ -24,11 +24,11 @@ punta.
 | 1 · Generador de datos | 7 tablas con reglas de negocio y defectos inyectados | ✅ |
 | 2 · ETL y features | Limpieza, Data Trust Score, RFM, recompra, afinidad, EDA | ✅ |
 | 3 · Recomendador de cesta | Candidatos (popularidad + co-compra + ALS) → ranker LightGBM | ✅ |
-| 4 · Next Best Action | Modelo de propensión + política de valor esperado | ⬜ |
+| 4 · Next Best Action | Modelo de propensión + política de valor esperado | ✅ |
 | 5 · Empaquetado y Power BI | Star schema, `.pbip`, resumen de impacto | ⬜ |
 | 6 · Demo web | Streamlit con simulación de cesta en vivo | ⬜ |
 
-Este README cubre lo que existe hoy (Fases 0-3). El plan completo está en
+Este README cubre lo que existe hoy (Fases 0-4). El plan completo está en
 [`ROADMAP.md`](ROADMAP.md) y el enunciado del reto en [`CHALLENGE.md`](CHALLENGE.md).
 
 **Lo que ya se puede enseñar:** 3,1 M de líneas de ticket generadas de forma reproducible,
@@ -54,7 +54,8 @@ python -m data_generation.verify_dataset              # comprueba los patrones i
 python -m src.etl.run_etl                             # ~8 min  → data/processed/ + reports/etl/
 python -m src.recommender.pipeline                    # ~33 min → models/ + predictions/ + reports/recommender/
 python -m src.recommender.demo_profiles               # los 4 perfiles, con un caso de cada uno
-pytest                                                # 158 tests
+python -m src.nba.pipeline                            # ~8 min  → models/ + predictions/ + reports/nba/
+pytest                                                # 183 tests
 ```
 
 El dataset **no se versiona** (`data/` está en `.gitignore`): se regenera con la semilla
@@ -92,11 +93,18 @@ grocery-retail-recommender/
 │   │   ├── evaluate.py       #   NDCG@5, Recall@5 y el desglose SKU / categoría
 │   │   ├── pipeline.py       #   orquestador
 │   │   └── demo_profiles.py  #   un caso legible de cada perfil
-│   └── nba/                  # FASE 4 — vacío por ahora
+│   └── nba/                  # FASE 4 — propensión + política
+│       ├── config.py         #   cortes, catálogo de acciones y TODOS los supuestos
+│       ├── targets.py        #   las dos etiquetas, construidas por corte
+│       ├── features.py       #   features de cliente y de cliente × categoría
+│       ├── propensity.py     #   los dos LightGBM binarios y sus métricas
+│       ├── policy.py         #   valor esperado, baselines y sensibilidad
+│       └── pipeline.py       #   orquestador
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 158 tests
+├── tests/                    # 183 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
 ├── reports/recommender/      # métricas de la Fase 3 y demo de los 4 perfiles
+├── reports/nba/              # métricas de la Fase 4 y barridos de sensibilidad
 ├── docs/CLEANING.md          # el porqué de cada decisión de limpieza
 ├── data/{raw,processed}/     # generados, no versionados
 ├── DATA_SPEC.md              # esquema columna a columna, crudo y procesado
@@ -481,9 +489,93 @@ recomendación. La tabla que lo resume:
 
 ---
 
+## Fase 4 — Next Best Action
+
+`python -m src.nba.pipeline` entrena los dos modelos de propensión de la Tarea 3b y resuelve
+la política de valor esperado, dejando la tabla `customer_id → acción → valor esperado` en
+`predictions/nba_actions.parquet` y el informe en [`reports/nba/`](reports/nba/).
+
+### El split, otra vez temporal
+
+Cuatro **cortes** de entrenamiento (abril a agosto de 2025), validación en septiembre y test
+en noviembre. Un corte parte el mundo en dos: lo anterior es lo único que puede mirar una
+feature, lo posterior lo único que puede definir una etiqueta. Un test lo fija añadiendo una
+compra posterior al corte y comprobando que **ninguna feature se mueve**.
+
+**No se usa `customers.churn_label` como target.** Está definido respecto al final del
+dataset (60 días sin comprar hasta el 31-12-2025), así que en un corte de abril sería pedirle
+al modelo que adivine algo de ocho meses después, y como *feature* sería fuga pura. El churn
+se construye por corte de forma observacional, y `churn_label` se reserva para una
+comprobación de cordura: coinciden en el **83,4 %**.
+
+### Los dos modelos
+
+| Modelo | Grano | Tasa base | AUC | PR-AUC | Lift decil 1 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Churn a 4 semanas | cliente | 0,4759 | **0,8531** | 0,8556 | 2,07x |
+| Compra en categoría a 7 días | cliente × categoría | 0,0619 | **0,7634** | 0,2190 | 3,51x |
+
+El PR-AUC se lee contra la tasa base, no contra 0,5. Y conviene un matiz honesto sobre el
+primero: con una cadencia media de visita de ~24 días, **no comprar en 4 semanas le pasa a
+media base sin ser abandono**. Las features dominantes (`n_baskets_90d`,
+`avg_days_between_baskets`, `recency_days`) confirman que buena parte de lo que acierta es
+frecuencia de compra. Es un modelo de inactividad a 4 semanas más que de churn, y queda
+anotado como deuda en el `ROADMAP.md`.
+
+### La política
+
+    acción* = argmax_a ( P(conversión | a) × margen_esperado(a) − coste(a) )
+
+Con tres decisiones de diseño que evitan hacer trampa:
+
+- **Todo se mide incremental sobre no actuar**, así `ninguna_accion` vale 0 por construcción
+  y una acción sólo gana si su efecto paga su coste.
+- **El coste se parte en dos.** `send_cost` se paga siempre; el `discount` del cupón sólo si
+  el cliente compra, así que entra multiplicado por la probabilidad y no como coste fijo.
+- **Margen bruto por departamento** (18 % en Frescos, 35 % en Droguería/Higiene), y valor
+  facial del cupón anclado a la media real de los cupones de `promotions`: 2,54 €.
+
+| Política | Valor incremental | Actúa sobre |
+| --- | ---: | ---: |
+| No actuar siempre | 0 € | 0 % |
+| Actuar siempre: recomendar | 930 € | 83,2 % |
+| Actuar siempre: cupón | **−1.430 €** | 83,2 % |
+| **Política de valor esperado** | **4.012 €** | **75,6 %** |
+
+Sobre 18.729 clientes: **+4.012 €** frente a no actuar y **+3.082 €** frente a la mejor
+alternativa trivial. Mandar el cupón a todo el mundo **destruye valor**.
+
+### Lo que este dataset no puede medir
+
+`P(conversión | acción)` **no es identificable aquí**. El generador aplica su
+`PROMO_UPLIFT = 3.0` al reparto de cuota *dentro* de una categoría — qué SKU se elige —, no
+a la probabilidad de comprar la categoría ni a la de volver: el tratamiento nunca varía. Las
+propensiones se miden; el efecto de cada acción es un **supuesto declarado**.
+
+Barrer ese supuesto cambió la lectura del resultado. El barrido obvio — el uplift de
+conversión del cupón — resultó ser el parámetro equivocado: moverlo de 1,00 a 2,00 lleva el
+total de 3.938 € a 4.721 €, apenas nada. La razón es económica: con un cupón de 2,54 €
+persiguiendo un margen esperado de ~1,4 €, **el descuento es mayor que el margen**, así que
+por cross-sell el cupón destruye valor haga lo que haga la conversión. Todo lo que aporta
+viene de la retención, y el barrido que importa es el de `churn_reduction`:
+
+| `churn_reduction` | Valor de la política | Cupones repartidos |
+| ---: | ---: | ---: |
+| **0,00** (no retiene a nadie) | **1.210 €** | 0 % |
+| 0,05 | 1.734 € | 41,7 % |
+| **0,10** (el supuesto) | **4.012 €** | 64,8 % |
+| 0,20 | 8.862 € | 71,7 % |
+
+La conclusión robusta es la primera fila: **incluso suponiendo que el cupón no retenga a
+nadie, la política sigue ganando** — 1.210 € frente a los 930 € de "recomendar siempre" —, y
+en ese escenario deja de repartir cupones por completo. Lo que depende del supuesto es el
+tamaño del premio, no el signo.
+
+---
+
 ## Tests
 
-**158 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17.
+**183 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17.
 
 | Fichero | Qué fija |
 | --- | ---: |
@@ -495,6 +587,7 @@ recomendación. La tabla que lo resume:
 | `test_rfm.py` | Quintiles, segmentos y clientes sin compras |
 | `test_schemas.py` | Tipos al leer, ida y vuelta a Parquet por los dos motores |
 | `test_recommender.py` | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte |
+| `test_nba.py` | Que las features no miran tras el corte, y la aritmética del valor esperado a mano |
 
 Los tests de calidad no comprueban "el score bajó": parten de un dataset diminuto y
 perfecto que puntúa 100 e introducen **un solo** defecto, verificando que lo detecta la
@@ -528,9 +621,53 @@ correctos. Conviene extraer la fecha o la hora **dentro** de Spark.
 
 ## Qué viene ahora
 
-La **Fase 4** monta el Next Best Action: un modelo de propensión (compra en categoría a 7
-días, churn a 4 semanas) con validación temporal, y una política de valor esperado sobre un
-catálogo fijo de acciones.
+La **Fase 5** empaqueta: exportar el star schema a `reports/powerbi/`, generar el proyecto
+Power BI (`.pbip`) que lo lee en local, y escribir el resumen de impacto de negocio. La
+**Fase 6** es la demo en Streamlit, que sólo hace inferencia sobre los modelos ya guardados.
 
-Queda además pendiente, anotado en el `ROADMAP.md`: **dar fidelidad de marca al generador**,
-que es el techo real del recomendador de SKU descrito arriba.
+Dos deudas anotadas en el `ROADMAP.md`, ninguna de ellas bloqueante:
+
+- **Dar fidelidad de marca/SKU al generador**, que es el techo real del recomendador
+  (Fase 3). Implica regenerar el dataset y rehacer la Fase 2 con sus informes.
+- **El "modelo de churn" es en realidad un modelo de inactividad a 4 semanas** (Fase 4). Un
+  target honesto pediría una ventana más larga o condicionar por la cadencia de cada cliente.
+
+---
+
+## Resumen: qué hay implementado, fase por fase
+
+| Fase | Qué se construyó | Cómo se verifica | Resultado |
+| --- | --- | --- | --- |
+| **0 · Setup** | Estructura del repo, entorno con `constraints.txt` y CI en GitHub Actions | El workflow instala y ejecuta la suite | ✅ |
+| **1 · Generador** | `data_generation/generate_dataset.py`: 7 tablas, 3,1 M de líneas de ticket, con ciclos de reposición, afinidad de cesta, estacionalidad, uplift de promoción, churn progresivo, embudo online y defectos de calidad inyectados a propósito | 32 tests; dos ejecuciones dan `sha256` idénticos | ✅ |
+| **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta | 94 tests; informes regenerables en `reports/etl/` | Data Trust **89,99 (C) → 100,00 (A)** |
+| **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank`. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | 16 tests centrados en fuga de datos; `reports/recommender/` | **NDCG@5 = 0,0343** · Recall@5 = 0,0332 (baseline 0,0200) |
+| **4 · Next Best Action** | Dos modelos de propensión (churn a 4 semanas, compra en categoría a 7 días) sobre cortes temporales, y política de valor esperado con catálogo de acciones y economía por departamento | 25 tests, incluida la aritmética del valor esperado a mano; `reports/nba/` | **AUC 0,8531 / 0,7634** · política **+4.012 €** vs. no actuar |
+| **5 · Power BI** | Star schema y proyecto `.pbip` | — | ⬜ pendiente |
+| **6 · Demo** | Streamlit con simulación de cesta en vivo | — | ⬜ pendiente |
+
+### Los tres hallazgos que dan forma al proyecto
+
+Cada fase produjo algo que no estaba en el plan y que cambió lo que vino después. Los tres
+tienen la misma estructura: una métrica que parecía buena o mala resultó estar midiendo otra
+cosa.
+
+1. **La señal de sesión estaba contaminada** (detectado en la Fase 2, resuelto en la 3). El
+   generador emitía un `add_to_cart` por cada producto del ticket y ninguno más, así que la
+   sesión *era* el ticket escrito de otra forma; los `view` estaban igual. Usarla como
+   feature habría dado un NDCG@5 espectacular y falso. Se arregló el generador con abandono
+   de carrito, productos que sólo se miran y un retardo entre ver y añadir.
+2. **El techo del recomendador lo pone el dato, no el modelo** (Fase 3). El sistema acierta
+   la categoría en el 51,4 % de las cestas y el SKU sólo en el 11,8 %. Ampliar el pool de 92
+   a 155 candidatos subió el `pool_recall` un 43 % y **no movió el NDCG**: dentro de una
+   categoría la elección de referencia es casi aleatoria por construcción.
+3. **El efecto de una acción no es medible con este dataset** (Fase 4). El `PROMO_UPLIFT` del
+   generador reparte cuota dentro de una categoría, no crea demanda ni retiene. Así que el
+   uplift es un supuesto declarado, y al barrerlo apareció lo importante: el cupón sólo se
+   justifica por retención, nunca por margen, porque su valor facial supera al margen que
+   persigue.
+
+Lo que estos tres tienen en común es el criterio que sigue todo el repo: **ninguna cifra del
+README se copia a mano de un notebook**. Todas salen de ejecutar un script — `run_etl`,
+`recommender.pipeline`, `nba.pipeline` — y las que sostienen una afirmación de negocio están
+fijadas por un test.

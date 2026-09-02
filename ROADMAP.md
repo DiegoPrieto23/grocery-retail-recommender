@@ -115,21 +115,81 @@ cuando se mira la categoría. La fidelidad está en la categoría, no en la refe
 
 ## Fase 4 — Next Best Action
 
-- [ ] Target de propensión: compra en categoría en próximos 7 días / churn en 4 semanas
-- [ ] Modelo (LightGBM o logística) + validación temporal (no aleatoria, para no filtrar
+Se ejecuta entera con `python -m src.nba.pipeline`, que deja los dos modelos en `models/`,
+la tabla `customer_id → acción → valor esperado` en `predictions/nba_actions.parquet` y los
+informes en `reports/nba/`.
+
+- [x] Target de propensión: compra en categoría en próximos 7 días / churn en 4 semanas
+      · `src/nba/targets.py` · **no se usa `customers.churn_label` como target**: está
+      definido respecto al final del dataset (60 días sin comprar hasta 2025-12-31), así
+      que en un corte de abril sería adivinar algo de ocho meses después, y como *feature*
+      sería fuga. El churn se construye por corte de forma observacional; `churn_label`
+      queda para una comprobación de cordura, que da **83,4 % de coincidencia** ·
+      verificado por `tests/test_nba.py`
+- [x] Modelo (LightGBM o logística) + validación temporal (no aleatoria, para no filtrar
       futuro)
-- [ ] Catálogo de acciones y coste/margen asociado por acción
-- [ ] Política de valor esperado (Tarea 3b)
-- [ ] Evaluación: AUC/PR-AUC del modelo, uplift de valor esperado de la política frente a
+      · `src/nba/propensity.py` · dos binarios · cuatro cortes de entrenamiento
+      (abr–ago 2025), validación en 2025-09-15, test en 2025-11-01 · las features de cada
+      corte sólo miran compras anteriores a él, fijado por un test que añade una compra
+      posterior y comprueba que ninguna feature se mueve
+- [x] Catálogo de acciones y coste/margen asociado por acción
+      · `src/nba/config.py` · `ninguna_accion`, `recomendar_producto`,
+      `enviar_cupon_categoria` · margen bruto **por departamento** (18 % Frescos → 35 %
+      Droguería/Higiene) · el coste se parte en dos: `send_cost` se paga siempre,
+      `discount` sólo si el cliente compra · valor facial del cupón anclado a la media real
+      de los cupones de `promotions` (2,54 €)
+- [x] Política de valor esperado (Tarea 3b)
+      · `src/nba/policy.py` · todo se mide **incremental sobre no actuar**, así
+      `ninguna_accion` vale 0 por construcción y una acción sólo gana si su efecto paga su
+      coste · actúa sobre el **75,6 %** de los clientes, no sobre todos
+- [x] Evaluación: AUC/PR-AUC del modelo, uplift de valor esperado de la política frente a
       "no actuar" y "actuar siempre"
+      · **Churn 4 semanas: AUC = 0,8531 · PR-AUC = 0,8556** (tasa base 0,4759) ·
+      **Compra en categoría 7 días: AUC = 0,7634 · PR-AUC = 0,2190** (tasa base 0,0619) ·
+      política **+4.012 €** frente a "no actuar", **+3.082 €** frente a la mejor
+      alternativa trivial · `reports/nba/metrics.md`
+
+### Lo que no es medible con este dataset (hallazgo de la fase)
+
+`P(conversión | acción)` **no es identificable aquí**. El generador aplica su
+`PROMO_UPLIFT = 3.0` al reparto de cuota *dentro* de una categoría (qué SKU se elige), no a
+la probabilidad de comprar la categoría ni a la de volver: el tratamiento nunca varía. Las
+propensiones sí se miden; el efecto de cada acción es un **supuesto declarado** en
+`config.py`, y el informe lo barre en vez de esconderlo.
+
+Barrer el supuesto cambió la lectura del resultado. El barrido obvio —el uplift de
+conversión del cupón— resultó ser el parámetro equivocado: pasar de 1,00 a 2,00 mueve el
+total de 3.938 € a 4.721 €. La razón es económica: con un cupón de 2,54 € persiguiendo un
+margen esperado de ~1,4 €, **el descuento es mayor que el margen**, así que por cross-sell
+el cupón destruye valor haga lo que haga la conversión. Todo lo que aporta viene de la
+retención. El barrido que importa es el de `churn_reduction`:
+
+| `churn_reduction` | Valor de la política | Cupones repartidos |
+| ---: | ---: | ---: |
+| **0,00** (no retiene a nadie) | **1.210 €** | 0 % |
+| 0,05 | 1.734 € | 41,7 % |
+| **0,10** (el supuesto) | **4.012 €** | 64,8 % |
+| 0,20 | 8.862 € | 71,7 % |
+
+La conclusión robusta es la primera fila: **incluso suponiendo que el cupón no retenga a
+nadie, la política sigue ganando** (1.210 € frente a 930 € de "recomendar siempre" y 0 € de
+"no actuar"), y en ese escenario deja de repartir cupones por completo. Lo que depende del
+supuesto es el tamaño del premio, no el signo.
+
+- [ ] **Deuda: el "modelo de churn" es en realidad un modelo de inactividad a 4 semanas.**
+      Su tasa base es 0,4759 porque la cadencia media de visita ronda los 24 días, así que
+      no comprar en 4 semanas le pasa a media base sin ser abandono. Las features
+      dominantes (`n_baskets_90d`, `avg_days_between_baskets`, `recency_days`) confirman
+      que buena parte de lo que acierta es frecuencia de compra. Un target honesto de churn
+      pediría una ventana más larga o condicionar por la cadencia propia de cada cliente.
 
 ## Fase 5 — Empaquetado y storytelling
 
 - [~] README principal con arquitectura, resultados y cómo reproducir
-      · `README.md` cubre ya las Fases 0-3 (generación, lógica inyectada, ETL, features,
-      EDA, recomendador con su NDCG@5 y el diagnóstico SKU/categoría, tests y notas de
-      entorno). Falta añadir los resultados de las Fases 4-6 (uplift del NBA, Power BI y
-      demo) según vayan saliendo.
+      · `README.md` cubre ya las Fases 0-4 (generación, lógica inyectada, ETL, features,
+      EDA, recomendador con su NDCG@5 y el diagnóstico SKU/categoría, NBA con sus AUC y el
+      barrido de sensibilidad, tests y notas de entorno), y cierra con un resumen fase a
+      fase. Falta añadir los resultados de las Fases 5-6 (Power BI y demo).
 - [x] Diagrama ER (Mermaid) del modelo relacional de las 7 tablas, con sus claves y
       relaciones, incluido en el README
       · sección "Modelo relacional" del `README.md`; las 14 relaciones están además
