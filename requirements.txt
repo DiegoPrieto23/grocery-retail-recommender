@@ -1,0 +1,32 @@
+# Dependencias del proyecto grocery-retail-recommender.
+# Instalar siempre con el fichero de constraints para tener versiones reproducibles:
+#   pip install -r requirements.txt -c constraints.txt
+
+# --- Generacion de datos (Fase 1) ---
+numpy
+pandas
+Faker
+
+# --- ETL y feature engineering (Fase 2) ---
+pyspark
+# Arrow es el unico puente pandas <-> Spark que no levanta un worker de Python; en Windows
+# con Python 3.13 ese worker esta roto, asi que aqui no es opcional (ver src/etl/session.py).
+pyarrow
+
+# --- EDA y visualizacion (Fase 2, notebooks/) ---
+matplotlib
+seaborn
+# Lo justo para ejecutar el notebook sin abrirlo a mano:
+#   jupyter nbconvert --to notebook --execute --inplace notebooks/01_eda.ipynb
+# Para abrirlo de forma interactiva hace falta ademas `pip install jupyterlab`.
+nbformat
+nbclient
+nbconvert
+ipykernel
+
+# --- Modelado: recomendador y propension (Fases 3 y 4) ---
+scikit-learn
+lightgbm
+
+# --- Tests ---
+pytest

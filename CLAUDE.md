@@ -13,8 +13,17 @@ a propósito.
 ## Stack
 
 - **PySpark** para generación a escala, ETL y feature engineering — no dbt en este proyecto.
-- **scikit-learn / LightGBM** para el modelo de propensión.
-- **ALS (MLlib) o similar** para la parte colaborativa del recomendador.
+- **Recomendador**: arquitectura de dos etapas. Candidatos con ALS (Spark MLlib) + co-compra
+  + popularidad; ranking final con **LightGBM** (objetivo `LambdaRank`). Sin deep learning:
+  es el patrón habitual en recomendadores de retail reales y corre bien en CPU.
+- **NBA**: scikit-learn / LightGBM para el modelo de propensión.
+- **Storytelling**: Power BI para el dashboard de la Fase 5 — Claude Code genera el
+  proyecto completo como Power BI Project (`.pbip`: modelo TMDL + informe PBIR), con Power
+  Query leyendo los ficheros locales de `reports/powerbi/` a través de un parámetro de
+  carpeta. Sin conexión a ninguna base de datos en la nube; se abre directo en Power BI
+  Desktop.
+- **Demo**: Streamlit para la app interactiva de la Fase 6 — carga los modelos ya
+  entrenados, no reentrena nada en caliente.
 - Python 3.10+.
 
 ## Reproducibilidad

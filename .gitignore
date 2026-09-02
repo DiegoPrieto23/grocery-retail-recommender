@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# El dataset se regenera con data_generation/generate_dataset.py, no se versiona.
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+models/*
+predictions/*
+!models/.gitkeep
+!predictions/.gitkeep
+
+spark-warehouse/
+metastore_db/
+derby.log

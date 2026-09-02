@@ -62,6 +62,11 @@ Preguntas de negocio sobre `customers`, `products` y `basket_items` (equivalente
 del hackathon de Inditex, pero sobre este dominio), más una función que calcule el
 **Data Trust Score** del dataset generado, reutilizando el enfoque de `sports-rental-analytics`.
 
+El resultado se documenta en un **notebook de EDA** (`notebooks/`) que resuelve cada
+pregunta con **Spark SQL** (vistas temporales + `spark.sql(...)`) acompañada de una
+**visualización** (matplotlib/seaborn/plotly) — una consulta y un gráfico por pregunta, no
+solo una tabla de números.
+
 ### Tarea 2 — Función de features
 
 Dada una tabla con el formato de `basket_items` + `customers`, devolver por cliente y
@@ -73,17 +78,31 @@ al NBA.
 ### Tarea 3a — Recomendador de cesta
 
 Dada una cesta en curso (0 o más artículos ya añadidos) y un `customer_id` que puede o no
-tener historial, recomendar **5 productos**. Cubrir los mismos cuatro perfiles que el reto
-de Inditex, adaptados:
+tener historial, recomendar **5 productos**. Arquitectura de **dos etapas**, como en los
+recomendadores de retail reales — evita entrenar un modelo end-to-end sobre todo el
+catálogo y es ligero en cómputo (sin deep learning, sin GPU):
 
-1. Cliente nuevo, sin artículos aún en la cesta → fallback por popularidad/estacionalidad.
-2. Cliente nuevo, con algún artículo ya en la cesta → afinidad de cesta (co-compra).
-3. Cliente recurrente, sin artículos aún en la cesta → historial personal + repescar
+1. **Generación de candidatos** (varias fuentes, cada una aporta un pool):
+   - Popularidad/estacionalidad (fallback, siempre disponible)
+   - Co-compra / afinidad de cesta (tabla de la Fase 2)
+   - ALS (Spark MLlib) sobre `customer_id × product_id`, señal colaborativa personalizada
+2. **Ranking**: un **LightGBM** con objetivo de ranking (`LambdaRank`) reordena el pool de
+   candidatos usando features (score de cada fuente, recency/frequency del cliente con esa
+   categoría, si el producto está en promoción, popularidad reciente, señal de sesión si la
+   hay) y devuelve el top-5 final.
+
+Cubrir los mismos cuatro perfiles que el reto de Inditex, adaptados — lo que cambia entre
+perfiles es qué fuentes de candidatos tienen señal disponible, no el ranker, que es el mismo
+para los cuatro:
+
+1. Cliente nuevo, sin artículos aún en la cesta → candidatos de popularidad/estacionalidad.
+2. Cliente nuevo, con algún artículo ya en la cesta → candidatos de co-compra.
+3. Cliente recurrente, sin artículos aún en la cesta → candidatos del historial personal +
    productos "due for repurchase".
-4. Cliente recurrente, con artículos en la cesta → combinar afinidad de cesta con
-   preferencias históricas.
+4. Cliente recurrente, con artículos en la cesta → combinación de las tres fuentes.
 
-**Métrica:** NDCG@5 y Recall@5 sobre cestas reales ocultadas en el split de test.
+**Métrica:** NDCG@5 y Recall@5 sobre cestas reales ocultadas en el split de test (holdout
+por `basket_id`, nunca visto en entrenamiento).
 
 ### Tarea 3b — Next Best Action
 
@@ -103,6 +122,26 @@ esperado`.
 **Métrica:** AUC / PR-AUC del modelo de propensión, y una evaluación tipo negocio (uplift de
 valor esperado de la política frente a "no actuar" o "actuar siempre"), sobre un periodo de
 test simulado.
+
+---
+
+### Tarea 4 — Storytelling, BI y demo
+
+Más allá de los notebooks y las métricas, el proyecto se cierra con tres piezas orientadas
+a comunicar el trabajo — ninguna reentrena nada, todas consumen lo ya construido en las
+Tareas 1-3:
+
+- **Dashboard en Power BI**: proyecto Power BI (`.pbip`, modelo TMDL + informe PBIR)
+  generado sobre las tablas de hechos y dimensiones de `DATA_SPEC.md`, cargadas en local vía
+  Power Query — sin conectar a ninguna base de datos en la nube. Es la pieza de BI
+  Engineering que no está presente en los otros dos proyectos del portfolio.
+- **Resumen de impacto de negocio** (medio folio, no un proyecto aparte): traducir NDCG@5 y
+  el uplift del NBA a impacto estimado — por ejemplo, si el recomendador sube el cross-sell
+  un X %, sobre Y cestas/mes son Z € extra.
+- **Demo web interactiva** (en local): simulación de cesta de la compra donde, al añadir
+  productos, aparecen en vivo las recomendaciones del sistema (Tarea 3a) y la próxima mejor
+  acción para ese cliente (Tarea 3b), cubriendo los 4 perfiles de cliente de forma
+  interactiva.
 
 ---
 
