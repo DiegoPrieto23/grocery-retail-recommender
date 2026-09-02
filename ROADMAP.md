@@ -79,9 +79,14 @@ Se ejecuta entera con `python -m src.etl.run_etl`, que deja las tablas en
 
 ## Fase 5 — Empaquetado y storytelling
 
-- [ ] README principal con arquitectura, resultados y cómo reproducir
-- [ ] Diagrama ER (Mermaid) del modelo relacional de las 7 tablas, con sus claves y
+- [~] README principal con arquitectura, resultados y cómo reproducir
+      · `README.md` cubre ya las Fases 0-2 (generación, lógica inyectada, ETL, features,
+      EDA, tests y notas de entorno). Falta añadir los resultados de las Fases 3-6
+      (NDCG@5, uplift del NBA, Power BI y demo) según vayan saliendo.
+- [x] Diagrama ER (Mermaid) del modelo relacional de las 7 tablas, con sus claves y
       relaciones, incluido en el README
+      · sección "Modelo relacional" del `README.md`; las 14 relaciones están además
+      verificadas empíricamente en `notebooks/01_eda.ipynb` (0 claves huérfanas)
 - [ ] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
       impacto estimado (ej. cross-sell extra en €/mes)
 - [ ] Exportar a `reports/powerbi/` el modelo dimensional de `DATA_SPEC.md` (`dim_customers`,
