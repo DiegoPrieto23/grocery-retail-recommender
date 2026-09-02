@@ -740,7 +740,7 @@
       "dimension": "integrity",
       "name": "customer_id_fk",
       "description": "`customer_id` existe en `customer_id`",
-      "rows_total": 115521,
+      "rows_total": 115340,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -760,7 +760,7 @@
       "dimension": "completeness",
       "name": "session_id_not_null",
       "description": "`session_id` informada",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -770,7 +770,7 @@
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -780,7 +780,7 @@
       "dimension": "completeness",
       "name": "event_type_not_null",
       "description": "`event_type` informada",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -790,7 +790,7 @@
       "dimension": "completeness",
       "name": "event_timestamp_not_null",
       "description": "`event_timestamp` informada",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -800,7 +800,7 @@
       "dimension": "uniqueness",
       "name": "no_duplicate_rows",
       "description": "Sin filas duplicadas exactas",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -810,7 +810,7 @@
       "dimension": "validity",
       "name": "event_type_domain",
       "description": "`event_type` en view/add_to_cart",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -820,7 +820,7 @@
       "dimension": "consistency",
       "name": "event_after_session_start",
       "description": "El evento no es anterior al inicio de su sesion",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -830,7 +830,7 @@
       "dimension": "integrity",
       "name": "session_id_fk",
       "description": "`session_id` existe en `session_id`",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -840,7 +840,7 @@
       "dimension": "integrity",
       "name": "product_id_fk",
       "description": "`product_id` existe en `product_id`",
-      "rows_total": 945651,
+      "rows_total": 900110,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true

@@ -23,18 +23,20 @@ punta.
 | 0 · Setup | Estructura, entorno reproducible, CI | ✅ |
 | 1 · Generador de datos | 7 tablas con reglas de negocio y defectos inyectados | ✅ |
 | 2 · ETL y features | Limpieza, Data Trust Score, RFM, recompra, afinidad, EDA | ✅ |
-| 3 · Recomendador de cesta | Candidatos (popularidad + co-compra + ALS) → ranker LightGBM | ⬜ |
+| 3 · Recomendador de cesta | Candidatos (popularidad + co-compra + ALS) → ranker LightGBM | ✅ |
 | 4 · Next Best Action | Modelo de propensión + política de valor esperado | ⬜ |
 | 5 · Empaquetado y Power BI | Star schema, `.pbip`, resumen de impacto | ⬜ |
 | 6 · Demo web | Streamlit con simulación de cesta en vivo | ⬜ |
 
-Este README cubre lo que existe hoy (Fases 0-2). El plan completo está en
+Este README cubre lo que existe hoy (Fases 0-3). El plan completo está en
 [`ROADMAP.md`](ROADMAP.md) y el enunciado del reto en [`CHALLENGE.md`](CHALLENGE.md).
 
 **Lo que ya se puede enseñar:** 3,1 M de líneas de ticket generadas de forma reproducible,
 un ETL en PySpark que las limpia y documenta cada corrección, un Data Trust Score que pasa
-de **89,99 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar y un
-[notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL.
+de **89,99 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
+[notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL,
+y un recomendador de cesta de dos etapas con su evaluación honesta y su diagnóstico de por
+qué la métrica sale donde sale.
 
 ---
 
@@ -50,7 +52,9 @@ pip install -r requirements.txt -c constraints.txt
 python -m data_generation.generate_dataset            # ~3 min  → data/raw/    (7 CSV, ~155 MB)
 python -m data_generation.verify_dataset              # comprueba los patrones inyectados
 python -m src.etl.run_etl                             # ~8 min  → data/processed/ + reports/etl/
-pytest                                                # 140 tests
+python -m src.recommender.pipeline                    # ~33 min → models/ + predictions/ + reports/recommender/
+python -m src.recommender.demo_profiles               # los 4 perfiles, con un caso de cada uno
+pytest                                                # 158 tests
 ```
 
 El dataset **no se versiona** (`data/` está en `.gitignore`): se regenera con la semilla
@@ -79,11 +83,20 @@ grocery-retail-recommender/
 │   │   ├── repurchase.py     #   due_for_repurchase (Tarea 2)
 │   │   ├── affinity.py       #   co-ocurrencia y FP-Growth
 │   │   └── run_etl.py        #   orquestador
-│   ├── recommender/          # FASE 3 — vacío por ahora
+│   ├── recommender/          # FASE 3 — dos etapas
+│   │   ├── config.py         #   ventanas temporales, tamaños de pool, hiperparámetros
+│   │   ├── splits.py         #   split por cesta, prefijo/target y los 4 perfiles
+│   │   ├── candidates.py     #   popularidad, co-compra (SKU y categoría), historial, ALS
+│   │   ├── features.py       #   54 features del par (query, candidato)
+│   │   ├── ranker.py         #   LightGBM LambdaRank
+│   │   ├── evaluate.py       #   NDCG@5, Recall@5 y el desglose SKU / categoría
+│   │   ├── pipeline.py       #   orquestador
+│   │   └── demo_profiles.py  #   un caso legible de cada perfil
 │   └── nba/                  # FASE 4 — vacío por ahora
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 140 tests
+├── tests/                    # 158 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
+├── reports/recommender/      # métricas de la Fase 3 y demo de los 4 perfiles
 ├── docs/CLEANING.md          # el porqué de cada decisión de limpieza
 ├── data/{raw,processed}/     # generados, no versionados
 ├── DATA_SPEC.md              # esquema columna a columna, crudo y procesado
@@ -349,29 +362,139 @@ Tres hallazgos que condicionan lo que viene:
 - **El ciclo observado reproduce el teórico** con una correlación de rangos de Spearman de
   **0,978**, y se acorta de forma monótona al crecer el hogar. Eso es lo que respalda el
   ajuste por `household_size_est` de la Tarea 2 en vez de dejarlo como suposición.
-- **⚠️ La señal de sesión está contaminada.** El solapamiento entre lo añadido al carrito y
-  lo comprado sale del **100,0 %** (269.611 de 269.611). No es un hallazgo: el generador
-  emite un `add_to_cart` por cada producto de la cesta y ninguno más, así que `add_to_cart`
-  *es* el ticket escrito de otra forma. Usarlo como feature del ranker filtraría el target
-  y daría un NDCG@5 espectacular y falso. Queda anotado como deuda en la Fase 3, con las
-  dos salidas posibles: dejarlo fuera, o arreglar el generador para que haya carritos
-  abandonados. Los eventos `view` sí tienen ruido real y son utilizables.
+- **⚠️ La señal de sesión estaba contaminada, y se arregló.** El solapamiento entre lo
+  añadido al carrito y lo comprado salía del **100,0 %**: el generador emitía un
+  `add_to_cart` por cada producto de la cesta y ninguno más, así que `add_to_cart` *era*
+  el ticket escrito de otra forma. Al abordar la Fase 3 se comprobó que los `view` estaban
+  igual de contaminados (cubrían también el 100 % de la cesta), así que la salida no podía
+  ser "usar sólo las vistas": se arregló el generador. Ver [Fase 3](#fase-3--recomendador-de-cesta).
+
+---
+
+## Fase 3 — Recomendador de cesta
+
+`python -m src.recommender.pipeline` entrena y evalúa el sistema de dos etapas de la
+Tarea 3a, y deja el modelo en `models/`, las predicciones en `predictions/` y los informes
+en [`reports/recommender/`](reports/recommender/).
+
+### El split, que es donde se gana o se pierde la credibilidad
+
+Temporal **y a nivel de cesta**, en tres ventanas:
+
+```
+    |<---------- fuentes ---------->|<-- ranker -->|<-- test -->|
+    2024-01-01                 2025-09-01     2025-11-01   2026-01-01
+```
+
+Ninguna cesta se parte entre train y test, y las fuentes de candidatos se **reajustan dos
+veces**: una con el historial hasta septiembre, para las cestas con las que se entrena el
+ranker, y otra con el historial hasta noviembre, para las de test. Sin ese doble ajuste el
+ranker aprendería con *features* que ya contienen la respuesta — "lo que el cliente ya
+compró" — y en test se desplomaría.
+
+### Las cinco fuentes de candidatos
+
+| Fuente | De dónde sale | Perfiles que cubre |
+| --- | --- | --- |
+| Popularidad × estacionalidad | Ventas de los últimos 90 días × índice estacional del mes | los cuatro (es el respaldo) |
+| Co-compra de SKU | `affinity_product` recalculada sobre la ventana | 2 y 4 |
+| Co-compra de categoría | `affinity_category` + los más vendidos de cada categoría | 2 y 4, y llega a la cola larga |
+| Historial + recompra | Lo que el cliente compra, priorizando lo que "toca" (Tarea 2) | 3 y 4 |
+| ALS implícito (Spark MLlib) | `customer_id × product_id` | 3 y 4 |
+
+Unidas dan **155 candidatos por cesta** de los 1.500 del catálogo. Sobre ellos, un
+**LightGBM `LambdaRank`** con 54 *features* devuelve el top-5.
+
+### La señal de sesión, que obligó a arreglar el generador
+
+Se resolvió la deuda del EDA regenerando `sessions` y `session_events` con abandono de
+carrito, productos que sólo se miran y un retardo entre ver y añadir. Ahora
+`P(en la cesta | add_to_cart)` = 87,9 % y `P(visto | en la cesta)` = 85,0 %, ninguna de las
+dos es 1. El ranker la consume con un **corte temporal estricto** (`cut_ts`): sólo entran
+los eventos anteriores al último `add_to_cart` del carrito simulado. Un test lo fija.
+
+Aporta, y de forma medible pero modesta — lo que debe ser, porque sólo el 9 % de las cestas
+tiene sesión detrás:
+
+| Sistema | NDCG@5 | Recall@5 | hit_rate@5 |
+| --- | ---: | ---: | ---: |
+| Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0200 | 0,0221 | 8,3 % |
+| LambdaRank sin señal de sesión | 0,0303 | 0,0302 | 11,1 % |
+| **LambdaRank completo** | **0,0343** | **0,0332** | **11,8 %** |
+
+### Resultado por perfil
+
+Sobre 18.000 cestas de test. El ranker es **el mismo** para los cuatro perfiles: lo que
+cambia es qué fuentes tienen algo que decir.
+
+| Perfil | Cestas | NDCG@5 | Recall@5 | hit_rate@5 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 · nuevo, carrito vacío | 521 | 0,0212 | 0,0191 | 7,3 % |
+| 2 · nuevo, con artículos | 421 | 0,0149 | 0,0168 | 4,5 % |
+| 3 · recurrente, carrito vacío | 8.713 | 0,0352 | 0,0304 | 14,1 % |
+| 4 · recurrente, con artículos | 8.345 | 0,0351 | 0,0378 | 10,1 % |
+| **Total** | **18.000** | **0,0343** | **0,0332** | **11,8 %** |
+
+El cold-start rinde peor, como se esperaba, pero no se desploma: **el perfil 2 es el peor**
+(NDCG@5 0,0149, un 58 % por debajo del 4). Tiene sentido — es el único que no puede tirar
+ni de historial ni de ALS, y encima su cesta ya va por la mitad, así que lo fácil de
+acertar ya está dentro. Y el perfil 3 es el mejor en `hit_rate` (14,1 %) porque evalúa la
+cesta entera: cinco huecos contra 5,0 productos por adivinar en vez de 2,9.
+
+### Por qué el número es bajo: no es el modelo, es el dato
+
+Esta es la parte interesante. El sistema **acierta la categoría en el 51,4 % de las cestas**
+y el SKU exacto sólo en el 11,8 %:
+
+| | Acierta la categoría | Acierta el SKU |
+| --- | ---: | ---: |
+| Al menos uno en el top-5 | **51,4 %** | 11,8 % |
+| Precisión media del top-5 | **18,3 %** | 2,5 % |
+
+Dos comprobaciones más lo confirman:
+
+- **Ampliar el pool no sirve de nada.** Pasar de 92 a 155 candidatos por cesta subió el
+  `pool_recall` del 21,7 % al 31,1 % — un 43 % más de target alcanzable — y el NDCG@5 se
+  quedó donde estaba (0,0344 → 0,0343). El sistema no está limitado por la primera etapa.
+- **La fidelidad del cliente está en la categoría, no en la referencia.** El 88,6 % de las
+  líneas de una cesta futura son de una categoría que ese cliente ya compró, pero sólo el
+  29,7 % son un producto que ya compró. Con ~24 referencias por categoría, un cliente con
+  tres o más compras en una categoría se lleva **0,86 referencias distintas por compra**:
+  casi nunca repite SKU.
+
+Es decir: el generador elige el SKU dentro de la categoría casi al azar, y eso pone el
+techo. Queda anotado en el `ROADMAP.md` como la siguiente mejora del generador — dar
+fidelidad de marca, que es lo que hace un cliente real con su leche de siempre.
+
+### Un caso de cada perfil
+
+[`reports/recommender/profiles_demo.md`](reports/recommender/profiles_demo.md) enseña la
+mecánica con una cesta real de cada perfil, incluyendo qué fuente propuso cada
+recomendación. La tabla que lo resume:
+
+| Perfil | Popularidad | Co-compra SKU | Co-compra categoría | Historial | ALS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 · nuevo, carrito vacío | 100 % | 0 % | 0 % | 0 % | 0 % |
+| 2 · nuevo, con artículos | 84 % | 47 % | 48 % | 0 % | 0 % |
+| 3 · recurrente, carrito vacío | 86 % | 0 % | 0 % | 49 % | 65 % |
+| 4 · recurrente, con artículos | 79 % | 34 % | 39 % | 42 % | 57 % |
 
 ---
 
 ## Tests
 
-**140 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17.
+**158 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17.
 
 | Fichero | Qué fija |
 | --- | ---: |
-| `test_generate_dataset.py` | Reproducibilidad, volúmenes y patrones del generador |
+| `test_generate_dataset.py` | Reproducibilidad, volúmenes, patrones del generador y el embudo online |
 | `test_cleaning.py` | Cada regla de limpieza con un caso mínimo comprobable a mano |
 | `test_data_trust.py` | Un defecto → la dimensión que le toca, sobre un dataset impecable |
 | `test_repurchase.py` | Cadencias de 7 y 4 días, efecto del hogar, tolerancia |
 | `test_affinity.py` | Soporte, confianza y lift calculados a mano sobre 10 cestas |
 | `test_rfm.py` | Quintiles, segmentos y clientes sin compras |
 | `test_schemas.py` | Tipos al leer, ida y vuelta a Parquet por los dos motores |
+| `test_recommender.py` | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte |
 
 Los tests de calidad no comprueban "el score bajó": parten de un dataset diminuto y
 perfecto que puntúa 100 e introducen **un solo** defecto, verificando que lo detecta la
@@ -405,13 +528,9 @@ correctos. Conviene extraer la fecha o la hora **dentro** de Spark.
 
 ## Qué viene ahora
 
-La Fase 3 monta el recomendador en dos etapas: generación de candidatos desde tres fuentes
-(popularidad estacional, la tabla de co-compra que ya existe, y ALS sobre
-`customer_id × product_id`) y un ranker LightGBM con objetivo `LambdaRank` que devuelve el
-top-5. El split será por `basket_id`, nunca por fila, para no filtrar datos entre train y
-test.
+La **Fase 4** monta el Next Best Action: un modelo de propensión (compra en categoría a 7
+días, churn a 4 semanas) con validación temporal, y una política de valor esperado sobre un
+catálogo fijo de acciones.
 
-Hay dos cosas pendientes que ya se sabe que habrá que resolver: la **fuga de
-`add_to_cart`** descrita arriba, y que **`affinity_product` sólo cubre 712 de los 1.500
-productos** — un par necesita al menos 50 cestas en común para que su lift sea creíble, y
-la cola larga del surtido no llega, así que hará falta cubrirla con popularidad y ALS.
+Queda además pendiente, anotado en el `ROADMAP.md`: **dar fidelidad de marca al generador**,
+que es el techo real del recomendador de SKU descrito arriba.

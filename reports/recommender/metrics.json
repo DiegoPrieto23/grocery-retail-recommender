@@ -1,0 +1,208 @@
+{
+  "fit_end": "2025-09-01",
+  "test_start": "2025-11-01",
+  "top_k": 5,
+  "n_test_queries": 18000,
+  "n_train_queries": 8549,
+  "valid_ndcg": 0.08356289043632593,
+  "summary": [
+    {
+      "grupo": "total",
+      "n_queries": 18000,
+      "ndcg@5": 0.034294155151642434,
+      "recall@5": 0.03319181027306027,
+      "hit_rate@5": 0.11838888888888889,
+      "n_target_medio": 3.9326666666666665
+    },
+    {
+      "grupo": "1 - nuevo, carrito vacio",
+      "n_queries": 521,
+      "ndcg@5": 0.0211636667775664,
+      "recall@5": 0.0191222618285958,
+      "hit_rate@5": 0.07293666026871401,
+      "n_target_medio": 4.165067178502879
+    },
+    {
+      "grupo": "2 - nuevo, con articulos",
+      "n_queries": 421,
+      "ndcg@5": 0.01486098866726895,
+      "recall@5": 0.016825019794140934,
+      "hit_rate@5": 0.04513064133016627,
+      "n_target_medio": 2.344418052256532
+    },
+    {
+      "grupo": "3 - recurrente, carrito vacio",
+      "n_queries": 8713,
+      "ndcg@5": 0.03522427282644813,
+      "recall@5": 0.030380644229203852,
+      "hit_rate@5": 0.1413979111672214,
+      "n_target_medio": 5.031906346838058
+    },
+    {
+      "grupo": "4 - recurrente, con articulos",
+      "n_queries": 8345,
+      "ndcg@5": 0.035123182381388715,
+      "recall@5": 0.037831036548831624,
+      "hit_rate@5": 0.10089874176153385,
+      "n_target_medio": 2.850569203115638
+    }
+  ],
+  "summary_no_session": [
+    {
+      "grupo": "total",
+      "n_queries": 18000,
+      "ndcg@5": 0.030290431055140364,
+      "recall@5": 0.030206203210369875,
+      "hit_rate@5": 0.11072222222222222,
+      "n_target_medio": 3.9326666666666665
+    },
+    {
+      "grupo": "1 - nuevo, carrito vacio",
+      "n_queries": 521,
+      "ndcg@5": 0.02041063833276176,
+      "recall@5": 0.02130822898577217,
+      "hit_rate@5": 0.07485604606525911,
+      "n_target_medio": 4.165067178502879
+    },
+    {
+      "grupo": "2 - nuevo, con articulos",
+      "n_queries": 421,
+      "ndcg@5": 0.014483548308125711,
+      "recall@5": 0.016429136975455262,
+      "hit_rate@5": 0.040380047505938245,
+      "n_target_medio": 2.344418052256532
+    },
+    {
+      "grupo": "3 - recurrente, carrito vacio",
+      "n_queries": 8713,
+      "ndcg@5": 0.034549534559501785,
+      "recall@5": 0.029944234833480785,
+      "hit_rate@5": 0.14002065878572248,
+      "n_target_medio": 5.031906346838058
+    },
+    {
+      "grupo": "4 - recurrente, con articulos",
+      "n_queries": 8345,
+      "ndcg@5": 0.02725777686836401,
+      "recall@5": 0.031730291877086356,
+      "hit_rate@5": 0.08591971240263631,
+      "n_target_medio": 2.850569203115638
+    }
+  ],
+  "summary_popularity": [
+    {
+      "grupo": "total",
+      "n_queries": 18000,
+      "ndcg@5": 0.020021201612970416,
+      "recall@5": 0.022054609665026332,
+      "hit_rate@5": 0.08311111111111111,
+      "n_target_medio": 3.9326666666666665
+    },
+    {
+      "grupo": "1 - nuevo, carrito vacio",
+      "n_queries": 521,
+      "ndcg@5": 0.022644062112236917,
+      "recall@5": 0.024123328154038323,
+      "hit_rate@5": 0.09596928982725528,
+      "n_target_medio": 4.165067178502879
+    },
+    {
+      "grupo": "2 - nuevo, con articulos",
+      "n_queries": 421,
+      "ndcg@5": 0.008695284573716452,
+      "recall@5": 0.011678543151227235,
+      "hit_rate@5": 0.030878859857482184,
+      "n_target_medio": 2.344418052256532
+    },
+    {
+      "grupo": "3 - recurrente, carrito vacio",
+      "n_queries": 8713,
+      "ndcg@5": 0.02295438031747237,
+      "recall@5": 0.021243484667391475,
+      "hit_rate@5": 0.10398255480316768,
+      "n_target_medio": 5.031906346838058
+    },
+    {
+      "grupo": "4 - recurrente, con articulos",
+      "n_queries": 8345,
+      "ndcg@5": 0.0173663082278395,
+      "recall@5": 0.023295814431224856,
+      "hit_rate@5": 0.06315158777711204,
+      "n_target_medio": 2.850569203115638
+    }
+  ],
+  "candidate_recall": [
+    {
+      "grupo": "total",
+      "n_queries": 18000,
+      "pool_recall": 0.31085101939636256,
+      "pool_size_medio": 155.14911111111113
+    },
+    {
+      "grupo": "1 - nuevo, carrito vacio",
+      "n_queries": 521,
+      "pool_recall": 0.16298560151727137,
+      "pool_size_medio": 60.0
+    },
+    {
+      "grupo": "2 - nuevo, con articulos",
+      "n_queries": 421,
+      "pool_recall": 0.217735550277118,
+      "pool_size_medio": 97.53206650831353
+    },
+    {
+      "grupo": "3 - recurrente, carrito vacio",
+      "n_queries": 8713,
+      "pool_recall": 0.2996486359497006,
+      "pool_size_medio": 142.43670377596695
+    },
+    {
+      "grupo": "4 - recurrente, con articulos",
+      "n_queries": 8345,
+      "pool_recall": 0.33647664697994234,
+      "pool_size_medio": 177.26926303175554
+    }
+  ],
+  "by_category": [
+    {
+      "grupo": "total",
+      "n_queries": 18000,
+      "cat_hit_rate@5": 0.5143888888888889,
+      "cat_precision@5": 0.18284444444444445,
+      "sku_hit_rate@5": 0.11838888888888889,
+      "sku_precision@5": 0.02506666666666667
+    },
+    {
+      "grupo": "1 - nuevo, carrito vacio",
+      "n_queries": 521,
+      "cat_hit_rate@5": 0.46449136276391556,
+      "cat_precision@5": 0.13358925143953934,
+      "sku_hit_rate@5": 0.07293666026871401,
+      "sku_precision@5": 0.015355086372360844
+    },
+    {
+      "grupo": "2 - nuevo, con articulos",
+      "n_queries": 421,
+      "cat_hit_rate@5": 0.28978622327790976,
+      "cat_precision@5": 0.10736342042755345,
+      "sku_hit_rate@5": 0.04513064133016627,
+      "sku_precision@5": 0.009026128266033256
+    },
+    {
+      "grupo": "3 - recurrente, carrito vacio",
+      "n_queries": 8713,
+      "cat_hit_rate@5": 0.6110409732583496,
+      "cat_precision@5": 0.2196488006427178,
+      "sku_hit_rate@5": 0.1413979111672214,
+      "sku_precision@5": 0.030024101916676225
+    },
+    {
+      "grupo": "4 - recurrente, con articulos",
+      "n_queries": 8345,
+      "cat_hit_rate@5": 0.427920910724985,
+      "cat_precision@5": 0.15130017974835233,
+      "sku_hit_rate@5": 0.10089874176153385,
+      "sku_precision@5": 0.02130617136009587
+    }
+  ]
+}

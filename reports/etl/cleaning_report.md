@@ -22,7 +22,7 @@ Generado por `python -m src.etl.run_etl`. El porque de cada regla esta en `docs/
 | `promotions` | ventana de vigencia invertida | Se marca en date_range_invalid; no se borra para no romper las FK | 0 | 0.000 % | 300 | 300 |
 | `sessions` | session_id duplicado | Se conserva una fila por PK | 0 | 0.000 % | 150.000 | 150.000 |
 | `sessions` | converted incoherente con basket_id | converted pasa a derivarse de basket_id IS NOT NULL | 0 | 0.000 % | 150.000 | 150.000 |
-| `session_events` | evento duplicado exacto | Se elimina la fila repetida entera | 25 | 0.003 % | 945.676 | 945.651 |
+| `session_events` | evento duplicado exacto | Se elimina la fila repetida entera | 33 | 0.004 % | 900.143 | 900.110 |
 
 ### Categorias normalizadas (54 grafias corregidas)
 

@@ -28,7 +28,7 @@
 | `basket_items` | validity | `quantity` mayor que 0 | 12.308 | 3.103.684 | 99.603 % |
 | `customers` | consistency | `signup_date` anterior o igual a la primera compra | 58 | 20.000 | 99.710 % |
 | `customers` | consistency | `signup_date` no posterior al fin del periodo observado | 3 | 20.000 | 99.985 % |
-| `session_events` | uniqueness | Sin filas duplicadas exactas | 25 | 945.676 | 99.997 % |
+| `session_events` | uniqueness | Sin filas duplicadas exactas | 33 | 900.143 | 99.996 % |
 | `basket_items` | integrity | `basket_id` existe en `basket_id` | 0 | 3.103.684 | 100.000 % |
 | `basket_items` | completeness | `basket_id` informada | 0 | 3.103.684 | 100.000 % |
 | `basket_items` | integrity | `product_id` existe en `product_id` | 0 | 3.103.684 | 100.000 % |
@@ -81,18 +81,18 @@
 | `promotions` | completeness | `promotion_id` informada | 0 | 300 | 100.000 % |
 | `promotions` | uniqueness | `promotion_id` sin repetir | 0 | 300 | 100.000 % |
 | `promotions` | completeness | `start_date` informada | 0 | 300 | 100.000 % |
-| `session_events` | consistency | El evento no es anterior al inicio de su sesion | 0 | 945.676 | 100.000 % |
-| `session_events` | completeness | `event_timestamp` informada | 0 | 945.676 | 100.000 % |
-| `session_events` | validity | `event_type` en view/add_to_cart | 0 | 945.676 | 100.000 % |
-| `session_events` | completeness | `event_type` informada | 0 | 945.676 | 100.000 % |
-| `session_events` | integrity | `product_id` existe en `product_id` | 0 | 945.676 | 100.000 % |
-| `session_events` | completeness | `product_id` informada | 0 | 945.676 | 100.000 % |
-| `session_events` | integrity | `session_id` existe en `session_id` | 0 | 945.676 | 100.000 % |
-| `session_events` | completeness | `session_id` informada | 0 | 945.676 | 100.000 % |
+| `session_events` | consistency | El evento no es anterior al inicio de su sesion | 0 | 900.143 | 100.000 % |
+| `session_events` | completeness | `event_timestamp` informada | 0 | 900.143 | 100.000 % |
+| `session_events` | validity | `event_type` en view/add_to_cart | 0 | 900.143 | 100.000 % |
+| `session_events` | completeness | `event_type` informada | 0 | 900.143 | 100.000 % |
+| `session_events` | integrity | `product_id` existe en `product_id` | 0 | 900.143 | 100.000 % |
+| `session_events` | completeness | `product_id` informada | 0 | 900.143 | 100.000 % |
+| `session_events` | integrity | `session_id` existe en `session_id` | 0 | 900.143 | 100.000 % |
+| `session_events` | completeness | `session_id` informada | 0 | 900.143 | 100.000 % |
 | `sessions` | integrity | `basket_id` existe en `basket_id` | 0 | 52.500 | 100.000 % |
 | `sessions` | consistency | `converted` coincide con tener `basket_id` | 0 | 150.000 | 100.000 % |
 | `sessions` | completeness | `converted` informada | 0 | 150.000 | 100.000 % |
-| `sessions` | integrity | `customer_id` existe en `customer_id` | 0 | 115.521 | 100.000 % |
+| `sessions` | integrity | `customer_id` existe en `customer_id` | 0 | 115.340 | 100.000 % |
 | `sessions` | validity | `device_type` en mobile/desktop/tablet | 0 | 150.000 | 100.000 % |
 | `sessions` | completeness | `device_type` informada | 0 | 150.000 | 100.000 % |
 | `sessions` | completeness | `session_date` informada | 0 | 150.000 | 100.000 % |
@@ -174,19 +174,19 @@
 | `promotions` | completeness | `promotion_id` informada | 0 | 300 | 100.000 % |
 | `promotions` | uniqueness | `promotion_id` sin repetir | 0 | 300 | 100.000 % |
 | `promotions` | completeness | `start_date` informada | 0 | 300 | 100.000 % |
-| `session_events` | consistency | El evento no es anterior al inicio de su sesion | 0 | 945.651 | 100.000 % |
-| `session_events` | completeness | `event_timestamp` informada | 0 | 945.651 | 100.000 % |
-| `session_events` | validity | `event_type` en view/add_to_cart | 0 | 945.651 | 100.000 % |
-| `session_events` | completeness | `event_type` informada | 0 | 945.651 | 100.000 % |
-| `session_events` | uniqueness | Sin filas duplicadas exactas | 0 | 945.651 | 100.000 % |
-| `session_events` | integrity | `product_id` existe en `product_id` | 0 | 945.651 | 100.000 % |
-| `session_events` | completeness | `product_id` informada | 0 | 945.651 | 100.000 % |
-| `session_events` | integrity | `session_id` existe en `session_id` | 0 | 945.651 | 100.000 % |
-| `session_events` | completeness | `session_id` informada | 0 | 945.651 | 100.000 % |
+| `session_events` | consistency | El evento no es anterior al inicio de su sesion | 0 | 900.110 | 100.000 % |
+| `session_events` | completeness | `event_timestamp` informada | 0 | 900.110 | 100.000 % |
+| `session_events` | validity | `event_type` en view/add_to_cart | 0 | 900.110 | 100.000 % |
+| `session_events` | completeness | `event_type` informada | 0 | 900.110 | 100.000 % |
+| `session_events` | uniqueness | Sin filas duplicadas exactas | 0 | 900.110 | 100.000 % |
+| `session_events` | integrity | `product_id` existe en `product_id` | 0 | 900.110 | 100.000 % |
+| `session_events` | completeness | `product_id` informada | 0 | 900.110 | 100.000 % |
+| `session_events` | integrity | `session_id` existe en `session_id` | 0 | 900.110 | 100.000 % |
+| `session_events` | completeness | `session_id` informada | 0 | 900.110 | 100.000 % |
 | `sessions` | integrity | `basket_id` existe en `basket_id` | 0 | 52.500 | 100.000 % |
 | `sessions` | consistency | `converted` coincide con tener `basket_id` | 0 | 150.000 | 100.000 % |
 | `sessions` | completeness | `converted` informada | 0 | 150.000 | 100.000 % |
-| `sessions` | integrity | `customer_id` existe en `customer_id` | 0 | 115.521 | 100.000 % |
+| `sessions` | integrity | `customer_id` existe en `customer_id` | 0 | 115.340 | 100.000 % |
 | `sessions` | validity | `device_type` en mobile/desktop/tablet | 0 | 150.000 | 100.000 % |
 | `sessions` | completeness | `device_type` informada | 0 | 150.000 | 100.000 % |
 | `sessions` | completeness | `session_date` informada | 0 | 150.000 | 100.000 % |

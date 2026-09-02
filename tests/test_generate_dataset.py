@@ -104,6 +104,61 @@ def test_tipos_de_evento(dataset: dict) -> None:
     assert set(dataset["session_events"]["event_type"]) <= {"view", "add_to_cart"}
 
 
+def _eventos_de_sesiones_convertidas(dataset: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Eventos de las sesiones que convirtieron, cruzados con el ticket resultante."""
+    conv = dataset["sessions"]
+    conv = conv.loc[conv["converted"], ["session_id", "basket_id"]]
+    items = dataset["basket_items"][["basket_id", "product_id"]].drop_duplicates()
+    eventos = dataset["session_events"].merge(conv, on="session_id")
+    return eventos, items
+
+
+def test_el_carrito_no_es_una_copia_del_ticket(dataset: dict) -> None:
+    """La senal de sesion no puede coincidir con el target del recomendador (Fase 3).
+
+    Si `add_to_cart` fuera exactamente el contenido del ticket, usarlo como *feature* del
+    ranker filtraria el target. El generador introduce abandono de carrito a nivel de
+    linea, vistas que no acaban en compra y lineas que nunca pasan por la web
+    (`_generate_sessions`), asi que las tres probabilidades tienen que quedar por debajo
+    de 1 con holgura -- y a la vez seguir siendo altas, o la senal no valdria para nada.
+    """
+    eventos, items = _eventos_de_sesiones_convertidas(dataset)
+    marcados = eventos.merge(
+        items.assign(en_la_cesta=True), on=["basket_id", "product_id"], how="left"
+    )
+    marcados["en_la_cesta"] = marcados["en_la_cesta"].notna()
+    tasa = marcados.groupby("event_type")["en_la_cesta"].mean()
+
+    assert 0.75 < tasa["add_to_cart"] < 0.97, "el carrito no puede predecir el ticket"
+    assert 0.40 < tasa["view"] < tasa["add_to_cart"], "ver debe ser mas debil que anadir"
+
+    # ... y al reves: hay lineas del ticket que nunca pasaron por la web.
+    del_ticket = items[items["basket_id"].isin(set(eventos["basket_id"]))]
+    vistos = eventos.loc[eventos["event_type"] == "view", ["basket_id", "product_id"]]
+    cobertura = del_ticket.merge(
+        vistos.drop_duplicates().assign(visto=True), on=["basket_id", "product_id"], how="left"
+    )["visto"].notna().mean()
+    assert 0.70 < cobertura < 0.95
+
+
+def test_anadir_al_carrito_va_por_detras_de_ver(dataset: dict) -> None:
+    """Sin ese retardo la senal de sesion seria inservible para el recomendador.
+
+    En un corte temporal a mitad de sesion tiene que haber productos ya vistos y todavia
+    no anadidos: son los candidatos que el ranker de la Fase 3 puede acertar.
+    """
+    eventos, _ = _eventos_de_sesiones_convertidas(dataset)
+    primero = (
+        eventos.groupby(["session_id", "product_id", "event_type"])["event_timestamp"]
+        .min()
+        .unstack("event_type")
+        .dropna()
+    )
+    assert not primero.empty
+    assert (primero["add_to_cart"] >= primero["view"]).all()
+    assert (primero["add_to_cart"] > primero["view"]).mean() > 0.9
+
+
 def test_promociones_con_ventana_valida(dataset: dict) -> None:
     p = dataset["promotions"]
     assert (pd.to_datetime(p["start_date"]) <= pd.to_datetime(p["end_date"])).all()

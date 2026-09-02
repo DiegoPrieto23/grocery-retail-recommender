@@ -84,6 +84,19 @@ class GeneratorConfig:
     # Proporcion de clientes que abandonan dentro del periodo simulado.
     churn_share: float = 0.22
 
+    # --- Embudo online (ver `_generate_sessions`) ---
+    # Que parte del ticket pasa ademas por la navegacion online. Por debajo de 1 para que
+    # "estar en la cesta" no implique "haber dejado rastro en la sesion".
+    session_item_browse_rate: float = 0.85
+    # Media de productos que se anaden al carrito y NO acaban en el ticket (abandono a
+    # nivel de linea). Es lo que rompe la equivalencia add_to_cart == ticket.
+    session_abandoned_adds: float = 0.60
+    # Media de productos que se ven y nunca se anaden.
+    session_view_only: float = 2.50
+    # Segundos entre ver un producto y anadirlo al carrito. El retardo es lo que hace
+    # utilizable la senal: en un corte temporal hay productos ya vistos y aun no anadidos.
+    session_add_lag_s: tuple[int, int] = (20, 240)
+
     # --- Problemas de calidad deliberados (DATA_SPEC.md, "Calidad del dato") ---
     dup_item_share: float = 0.015
     negative_qty_share: float = 0.004
@@ -782,10 +795,25 @@ def _generate_sessions(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Genera la navegacion online y sus eventos.
 
-    Las sesiones que convierten se cuelgan de una cesta online real: sus `add_to_cart`
-    son exactamente los productos de esa cesta, de modo que `session_events` sirve como
-    "cesta en curso" para el recomendador (Tarea 3a). Las que no convierten solo dejan
-    vistas y algun `add_to_cart` suelto.
+    Las sesiones que convierten se cuelgan de una cesta online real, pero la sesion **no
+    es** el ticket escrito de otra forma: eso convertiria `session_events` en una copia
+    del target y cualquier modelo entrenado con esa senal daria metricas falsas. El
+    embudo se genera con las tres fugas que tiene un embudo real:
+
+    - solo `session_item_browse_rate` de las lineas del ticket pasa por la web (el resto
+      entra por lista de la compra, recompra rapida o directamente en tienda), asi que
+      `P(visto | en la cesta) < 1`;
+    - hay `session_abandoned_adds` productos de media que se anaden al carrito y se
+      quedan ahi, asi que `P(en la cesta | add_to_cart) < 1`;
+    - hay `session_view_only` productos de media que se miran y no se anaden, asi que
+      `P(en la cesta | view)` baja todavia mas.
+
+    Ademas, cada `add_to_cart` va `session_add_lag_s` segundos por detras de su `view`.
+    Ese retardo es lo que hace la senal *utilizable* en vez de tautologica: al cortar la
+    sesion en un instante t hay productos ya vistos y todavia no anadidos, que son
+    justamente los que el recomendador de la Fase 3 tiene que adivinar.
+
+    Las sesiones que no convierten solo dejan vistas y algun `add_to_cart` suelto.
     """
     channel = baskets["channel"].to_numpy()
     online = np.where((channel == "app") | (channel == "web"))[0]
@@ -809,6 +837,7 @@ def _generate_sessions(
     b_day = baskets["_day"].to_numpy()
     b_second = baskets["_second"].to_numpy()
     b_customer = baskets["customer_id"].to_numpy()
+    b_id = baskets["basket_id"].to_numpy()
 
     n_total = n_converted + n_open
     session_ids = [f"S{i:07d}" for i in range(1, n_total + 1)]
@@ -827,7 +856,9 @@ def _generate_sessions(
 
     # Duracion de la sesion antes de cerrar la compra (2-40 min).
     conv_len = rng.integers(120, 2400, n_converted)
-    extra_views = rng.poisson(3.0, n_converted)
+    n_abandoned = rng.poisson(cfg.session_abandoned_adds, n_converted)
+    n_view_only = rng.poisson(cfg.session_view_only, n_converted)
+    lag_lo, lag_hi = cfg.session_add_lag_s
     open_views = 1 + rng.poisson(1.4, n_open)
     open_adds = rng.random(n_open) < 0.15
     open_day = rng.integers(0, cal.n_days, n_open)
@@ -846,32 +877,56 @@ def _generate_sessions(
         s_customer.append(b_customer[b])
         s_day[k] = d
         s_second[k] = start
-        s_basket.append(baskets["basket_id"].to_numpy()[b])
+        s_basket.append(b_id[b])
 
         lo, hi = int(offsets[b]), int(offsets[b + 1])
-        in_basket = item_prod[lo:hi]
-        n_extra = int(extra_views[k])
-        browsed = prod_ids[rng.choice(len(prod_ids), size=n_extra, p=pop_p)] if n_extra else []
+        in_basket = pd.unique(item_prod[lo:hi])
 
+        # 1. Que parte del ticket deja rastro online. El resto se compra sin navegar.
+        browsed = in_basket[rng.random(in_basket.size) < cfg.session_item_browse_rate]
+
+        # 2. Productos ajenos al ticket: unos se abandonan en el carrito, otros solo se
+        #    miran. Se sortean por popularidad; si sale uno que ya esta en la cesta o
+        #    repetido, se descarta (se queda con su primer papel).
+        n_ab, n_vo = int(n_abandoned[k]), int(n_view_only[k])
+        n_extra = n_ab + n_vo
+        extra = prod_ids[rng.choice(len(prod_ids), size=n_extra, p=pop_p)] if n_extra else ()
+        seen = set(in_basket.tolist())
+        abandoned: list[str] = []
+        view_only: list[str] = []
+        for i, prod in enumerate(extra):
+            if prod in seen:
+                continue
+            seen.add(prod)
+            (abandoned if i < n_ab else view_only).append(prod)
+
+        added = list(browsed) + abandoned
+        browse = added + view_only
+        n_browse = len(browse)
+        if not n_browse:
+            continue
+
+        # 3. Cronologia: la navegacion ocupa el primer 80 % de la sesion y cada anadido
+        #    va por detras de su vista. Todo se recorta al instante de la compra.
         span = max(int(b_second[b]) - start, 1)
-        n_ev = len(in_basket) * 2 + n_extra
-        offsets_ev = np.sort(rng.integers(0, span, n_ev)) if n_ev else np.empty(0, dtype=int)
-        t = 0
-        # Primero se navega, luego se anade al carrito.
-        for p in list(in_basket) + list(browsed):
+        order = rng.permutation(n_browse)
+        view_at = np.sort(rng.integers(0, max(int(span * 0.8), 1), n_browse))
+        lag = rng.integers(lag_lo, lag_hi, n_browse)
+        added_set = set(added)
+
+        events: list[tuple[int, str, str]] = []
+        for i, pos in enumerate(order):
+            prod = browse[pos]
+            events.append((int(view_at[i]), prod, "view"))
+            if prod in added_set:
+                events.append((min(int(view_at[i]) + int(lag[i]), span), prod, "add_to_cart"))
+        events.sort(key=lambda e: e[0])
+        for second, prod, kind in events:
             ev_session.append(sid)
-            ev_product.append(p)
-            ev_type.append("view")
+            ev_product.append(prod)
+            ev_type.append(kind)
             ev_day.append(d)
-            ev_second.append(start + int(offsets_ev[t]))
-            t += 1
-        for p in in_basket:
-            ev_session.append(sid)
-            ev_product.append(p)
-            ev_type.append("add_to_cart")
-            ev_day.append(d)
-            ev_second.append(start + int(offsets_ev[t]))
-            t += 1
+            ev_second.append(start + second)
 
     # --- Sesiones que no convierten ---
     for j in range(n_open):
@@ -1117,8 +1172,19 @@ TABLE_COLUMNS: dict[str, tuple[tuple[str, str, str], ...]] = {
     "session_events": (
         ("session_id", "string", "FK a sessions."),
         ("product_id", "string", "FK a products."),
-        ("event_type", "string", "view / add_to_cart."),
-        ("event_timestamp", "datetime", "Momento del evento dentro de la sesion."),
+        (
+            "event_type",
+            "string",
+            "view / add_to_cart. Un add_to_cart NO implica compra: hay abandono de "
+            "carrito a nivel de linea (ver _generate_sessions).",
+        ),
+        (
+            "event_timestamp",
+            "datetime",
+            "Momento del evento dentro de la sesion. Cada add_to_cart va por detras de "
+            "su view, de modo que un corte temporal deja productos vistos y aun no "
+            "anadidos.",
+        ),
     ),
 }
 

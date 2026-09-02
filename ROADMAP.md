@@ -52,20 +52,66 @@ Se ejecuta entera con `python -m src.etl.run_etl`, que deja las tablas en
 
 ## Fase 3 — Recomendador de cesta
 
-- [ ] Split train/test por `basket_id` (no por fila) para evitar fuga de datos
-- [ ] Generación de candidatos: popularidad/estacionalidad, co-compra (Fase 2), ALS
+Se ejecuta entera con `python -m src.recommender.pipeline`, que deja el ranker en
+`models/`, las predicciones en `predictions/` y los informes en `reports/recommender/`.
+`python -m src.recommender.demo_profiles` traduce esas salidas a un caso legible de cada
+perfil.
+
+- [x] Split train/test por `basket_id` (no por fila) para evitar fuga de datos
+      · `src/recommender/splits.py` · **temporal y por cesta**, en tres ventanas: fuentes
+      hasta 2025-09-01, queries del ranker sep-oct 2025, test desde 2025-11-01. Las
+      fuentes de candidatos se **reajustan por ventana**, así que ninguna ve el futuro de
+      la cesta que predice · verificado por `tests/test_recommender.py`
+- [x] Generación de candidatos: popularidad/estacionalidad, co-compra (Fase 2), ALS
       (Spark MLlib)
-- [ ] Feature engineering para el ranker: señal de cada fuente de candidatos,
+      · `src/recommender/candidates.py` · cinco fuentes (se añadió co-compra por
+      **categoría**, que cubre la cola larga donde `affinity_product` no llega) · 155
+      candidatos por cesta de media, `pool_recall` = 31,1 %
+- [x] Feature engineering para el ranker: señal de cada fuente de candidatos,
       recency/frequency, promoción, popularidad reciente, señal de sesión
-- [ ] **Deuda detectada en la Fase 2 (Q9 del EDA): la señal de sesión está contaminada.**
-      El generador emite un `add_to_cart` por cada producto de la cesta y ninguno más, así
-      que el solapamiento entre carrito y ticket es del 100 % y usarlo como feature
-      filtraría el target. Antes de entrenar hay que elegir: dejar `add_to_cart` fuera del
-      ranker, o arreglar el generador para que haya carritos abandonados. Los eventos
-      `view` sí tienen ruido real y son utilizables.
-- [ ] Ranking: LightGBM con objetivo `LambdaRank` sobre los candidatos
-- [ ] Lógica de combinación para los 4 perfiles de cliente (Tarea 3a)
-- [ ] Evaluación: NDCG@5, Recall@5 sobre el test
+      · `src/recommender/features.py` · 54 features en 5 familias
+- [x] **Deuda detectada en la Fase 2 (Q9 del EDA): la señal de sesión estaba contaminada.**
+      **Resuelta arreglando el generador.** El problema era peor de lo anotado: no sólo
+      `add_to_cart`, también los `view` cubrían el 100 % de la cesta. `_generate_sessions`
+      produce ahora abandono de carrito a nivel de línea, productos que sólo se miran, y
+      un retardo entre ver y añadir — `P(en la cesta | add_to_cart)` = 87,9 %,
+      `P(en la cesta | view)` = 58,6 %, `P(visto | en la cesta)` = 85,0 % · documentado en
+      `DATA_SPEC.md` → "Embudo online" · fijado por dos tests en
+      `tests/test_generate_dataset.py` · la señal se consume con un corte estricto en
+      `cut_ts` y aporta **+13 % de NDCG@5** sobre la ablación que la excluye
+- [x] Ranking: LightGBM con objetivo `LambdaRank` sobre los candidatos
+      · `src/recommender/ranker.py` · 84 árboles, parada temprana sobre NDCG@5 de validación
+- [x] Lógica de combinación para los 4 perfiles de cliente (Tarea 3a)
+      · el ranker es **el mismo** para los cuatro; lo que cambia es qué fuentes tienen
+      señal. Medido sobre el top-5: el perfil 1 se cubre 100 % con popularidad, el 4
+      combina las cinco · `reports/recommender/profiles_demo.md`
+- [x] Evaluación: NDCG@5, Recall@5 sobre el test
+      · `src/recommender/evaluate.py` · **NDCG@5 = 0,0343 · Recall@5 = 0,0332 ·
+      hit_rate@5 = 11,8 %** sobre 18.000 cestas · baseline de popularidad 0,0200 ·
+      `reports/recommender/metrics.md`
+
+### Lo que limita la métrica (hallazgo de la fase)
+
+El NDCG@5 de SKU es bajo y **no es por la primera etapa**. Dos medidas lo demuestran:
+
+1. **Categoría vs SKU.** El sistema acierta la categoría en el **51,4 %** de las cestas y
+   el SKU exacto sólo en el 11,8 %. De los aciertos de categoría, apenas el 13 % son
+   además el SKU correcto.
+2. **Ampliar el pool no ayuda.** Subir de 92 a 155 candidatos por cesta llevó el
+   `pool_recall` del 21,7 % al 31,1 % (+43 % de target alcanzable) y el NDCG@5 no se movió
+   (0,0344 → 0,0343).
+
+La causa está en el generador: dentro de una categoría hay ~24 referencias y la elección
+es casi aleatoria. Un cliente con tres o más compras en una categoría compra **0,86
+referencias distintas por compra** — es decir, casi nunca repite SKU — y sólo el 29,7 % de
+las líneas de una cesta futura son productos que ya había comprado, frente al **88,6 %**
+cuando se mira la categoría. La fidelidad está en la categoría, no en la referencia.
+
+- [ ] **Deuda para más adelante: dar fidelidad de marca/SKU al generador.** En gran consumo
+      real un cliente repite referencia (siempre la misma leche), y ahí es donde un
+      recomendador de SKU tiene margen. Implica tocar la elección de producto dentro de
+      categoría en `_generate_baskets_and_items`, regenerar el dataset (cambian los
+      `sha256` de `baskets` y `basket_items`) y rehacer la Fase 2 y sus informes.
 
 ## Fase 4 — Next Best Action
 
@@ -80,9 +126,10 @@ Se ejecuta entera con `python -m src.etl.run_etl`, que deja las tablas en
 ## Fase 5 — Empaquetado y storytelling
 
 - [~] README principal con arquitectura, resultados y cómo reproducir
-      · `README.md` cubre ya las Fases 0-2 (generación, lógica inyectada, ETL, features,
-      EDA, tests y notas de entorno). Falta añadir los resultados de las Fases 3-6
-      (NDCG@5, uplift del NBA, Power BI y demo) según vayan saliendo.
+      · `README.md` cubre ya las Fases 0-3 (generación, lógica inyectada, ETL, features,
+      EDA, recomendador con su NDCG@5 y el diagnóstico SKU/categoría, tests y notas de
+      entorno). Falta añadir los resultados de las Fases 4-6 (uplift del NBA, Power BI y
+      demo) según vayan saliendo.
 - [x] Diagrama ER (Mermaid) del modelo relacional de las 7 tablas, con sus claves y
       relaciones, incluido en el README
       · sección "Modelo relacional" del `README.md`; las 14 relaciones están además

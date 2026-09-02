@@ -141,6 +141,29 @@ pico. Fuera de esos meses, multiplicador = 1.0.
 | Bacalao                          | Marzo - Abril               | 3.0x            |
 | Chocolate / huevos de Pascua      | Marzo - Abril               | 3.0x            |
 | Sopas / caldos                    | Noviembre - Febrero          | 1.8x            |
+
+### Embudo online (detalle)
+
+`sessions` y `session_events` son el contexto de la "cesta en curso" de la Tarea 3a, y por
+eso **no pueden ser el ticket escrito de otra forma**: si cada `add_to_cart` acabara en la
+compra, la señal de sesión sería una copia del target y el recomendador daría métricas
+falsas. El generador introduce las tres fugas que tiene un embudo real:
+
+| Parámetro | Valor | Efecto medido |
+| --- | ---: | --- |
+| `session_item_browse_rate` | 0,85 | Solo el 85 % de las líneas del ticket pasa por la web (el resto entra por lista de la compra o en tienda) → `P(visto \| en la cesta) < 1` |
+| `session_abandoned_adds` | 0,60 | Productos por sesión que se añaden al carrito y se quedan ahí → `P(en la cesta \| add_to_cart) = 87,9 %` |
+| `session_view_only` | 2,50 | Productos por sesión que se miran y no se añaden → `P(en la cesta \| view) = 58,6 %` |
+| `session_add_lag_s` | (20, 240) s | Cada `add_to_cart` va por detrás de su `view` |
+
+El retardo entre ver y añadir es lo que hace la señal **utilizable** en vez de tautológica:
+al cortar una sesión en un instante `t`, hay productos ya vistos y todavía no añadidos —
+justo los que el recomendador tiene que adivinar. Medido sobre el dataset, en un corte a
+mitad de cesta ~24 % de los productos que faltan por añadir ya han sido vistos, compitiendo
+con ~1,6 productos vistos que nunca se añadirán.
+
+Las sesiones que no convierten solo dejan vistas y algún `add_to_cart` suelto.
+
 - **Churn progresivo**: para clientes marcados como `churn_label = 1`, reducir
   gradualmente frecuencia de compra y `total_amount` medio en las 6-8 semanas previas a su
   última compra, en vez de cortar en seco — así el patrón es aprendible por un modelo.
