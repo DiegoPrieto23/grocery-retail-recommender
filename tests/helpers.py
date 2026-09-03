@@ -147,3 +147,70 @@ def collect_dicts(df: DataFrame, *order_by: str) -> list[dict]:
     """Materializa un DataFrame como lista de diccionarios, opcionalmente ordenado."""
     frame = df.orderBy(*order_by) if order_by else df
     return [row.asDict() for row in frame.collect()]
+
+
+# --------------------------------------------------------------------------------------
+# Vistas de `data/processed` que consumen las preguntas del EDA (`src/eda/questions.py`)
+# --------------------------------------------------------------------------------------
+# No es el esquema completo de las tablas procesadas: son **las columnas que leen las
+# nueve preguntas**, que es el contrato que hay que fijar. Si el ETL dejara de producir
+# alguna de ellas, o le cambiara el tipo, estos tests fallan antes que el notebook.
+EDA_VIEW_DDL = {
+    "customers": (
+        "customer_id string, loyalty_tier string, household_size_est int, "
+        "churn_label boolean"
+    ),
+    "products": (
+        "product_id string, department string, category string, "
+        "is_private_label boolean, typical_repurchase_days int"
+    ),
+    "promotions": (
+        "promotion_id string, product_id string, promo_type string, "
+        "start_date date, end_date date"
+    ),
+    "baskets": (
+        "basket_id string, customer_id string, channel string, basket_date timestamp, "
+        "basket_day date, total_amount double, n_lines int, n_units int, "
+        "is_anonymous boolean"
+    ),
+    "basket_items": (
+        "basket_id string, product_id string, quantity int, promotion_id string, "
+        "line_amount double, is_promo boolean"
+    ),
+    "sessions": (
+        "session_id string, customer_id string, device_type string, "
+        "converted boolean, basket_id string"
+    ),
+    "session_events": (
+        "session_id string, product_id string, event_type string, "
+        "event_timestamp timestamp"
+    ),
+    "rfm": (
+        "customer_id string, recency_days int, frequency int, monetary double, "
+        "avg_ticket double, avg_days_between_baskets double, rfm_segment string, "
+        "churn_label boolean, has_purchases boolean"
+    ),
+    "repurchase_features": (
+        "customer_id string, category string, typical_repurchase_days int, "
+        "observed_repurchase_days double, due_for_repurchase boolean"
+    ),
+    "affinity_category": (
+        "antecedent string, consequent string, n_baskets_both bigint, "
+        "support double, confidence double, lift double"
+    ),
+}
+
+
+def register_eda_views(spark: SparkSession, **rows: list[dict]) -> dict[str, DataFrame]:
+    """Registra como vistas temporales las tablas que necesita `src.eda.questions`.
+
+    Las tablas que no se mencionen quedan vacias pero con su esquema, para que una
+    consulta que las cruce no reviente por falta de vista.
+    """
+    views = {
+        name: spark_df(spark, rows.get(name, []), ddl)
+        for name, ddl in EDA_VIEW_DDL.items()
+    }
+    for name, df in views.items():
+        df.createOrReplaceTempView(name)
+    return views

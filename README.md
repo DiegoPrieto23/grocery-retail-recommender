@@ -25,18 +25,20 @@ punta.
 | 2 · ETL y features | Limpieza, Data Trust Score, RFM, recompra, afinidad, EDA | ✅ |
 | 3 · Recomendador de cesta | Candidatos (popularidad + co-compra + ALS) → ranker LightGBM | ✅ |
 | 4 · Next Best Action | Modelo de propensión + política de valor esperado | ✅ |
-| 5 · Empaquetado y Power BI | Star schema, `.pbip`, resumen de impacto | ⬜ |
+| 5 · Empaquetado y storytelling | Impacto en €, informe de hallazgos, MLflow | ✅ |
 | 6 · Demo web | Streamlit con simulación de cesta en vivo | ⬜ |
 
-Este README cubre lo que existe hoy (Fases 0-4). El plan completo está en
+Este README cubre lo que existe hoy (Fases 0-5). El plan completo está en
 [`ROADMAP.md`](ROADMAP.md) y el enunciado del reto en [`CHALLENGE.md`](CHALLENGE.md).
 
 **Lo que ya se puede enseñar:** 3,1 M de líneas de ticket generadas de forma reproducible,
 un ETL en PySpark que las limpia y documenta cada corrección, un Data Trust Score que pasa
 de **89,99 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
 [notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL,
-y un recomendador de cesta de dos etapas con su evaluación honesta y su diagnóstico de por
-qué la métrica sale donde sale.
+un recomendador de cesta de dos etapas con su evaluación honesta, una política de Next Best
+Action que decide en euros, y dos documentos que traducen todo eso a negocio: el
+[resumen de impacto](IMPACT.md) y el
+[informe de hallazgos](reports/insights/business_findings.md).
 
 ---
 
@@ -55,14 +57,20 @@ python -m src.etl.run_etl                             # ~8 min  → data/process
 python -m src.recommender.pipeline                    # ~33 min → models/ + predictions/ + reports/recommender/
 python -m src.recommender.demo_profiles               # los 4 perfiles, con un caso de cada uno
 python -m src.nba.pipeline                            # ~8 min  → models/ + predictions/ + reports/nba/
-pytest                                                # 183 tests
+python -m src.impact.pipeline                         # ~10 s   → IMPACT.md + reports/impact/
+python -m src.eda.findings                            # ~2 min  → reports/insights/ (informe + 8 figuras)
+pytest                                                # 259 tests
 ```
 
 El dataset **no se versiona** (`data/` está en `.gitignore`): se regenera con la semilla
 fija y sale byte a byte idéntico. Lo que sí está en el repo son los informes de
-`reports/etl/` y el notebook ya ejecutado con sus figuras.
+`reports/`, el notebook ya ejecutado con sus figuras, y los dos documentos de negocio
+([`IMPACT.md`](IMPACT.md) y
+[`reports/insights/business_findings.md`](reports/insights/business_findings.md)).
 
-Para abrir el notebook hace falta además `pip install jupyterlab`.
+Para abrir el notebook hace falta además `pip install jupyterlab`. Y con
+`pip install mlflow`, las Fases 3 y 4 registran además cada ejecución como un experimento
+— ver [Registro de experimentos](#registro-de-experimentos-mlflow).
 
 ---
 
@@ -84,6 +92,14 @@ grocery-retail-recommender/
 │   │   ├── repurchase.py     #   due_for_repurchase (Tarea 2)
 │   │   ├── affinity.py       #   co-ocurrencia y FP-Growth
 │   │   └── run_etl.py        #   orquestador
+│   ├── eda/                  # FASE 2/5 — las 9 preguntas de negocio, como funciones
+│   │   ├── questions.py      #   Tarea 1: una función por pregunta, con tests
+│   │   └── findings.py       #   el informe de hallazgos de la Fase 5
+│   ├── impact/               # FASE 5 — de NDCG y AUC a euros
+│   │   ├── config.py         #   los supuestos económicos, todos juntos
+│   │   ├── model.py          #   la aritmética, en funciones puras
+│   │   └── pipeline.py       #   mide, aplica y escribe IMPACT.md
+│   ├── tracking.py           # FASE 5 — MLflow opcional; sin él, no-op
 │   ├── recommender/          # FASE 3 — dos etapas
 │   │   ├── config.py         #   ventanas temporales, tamaños de pool, hiperparámetros
 │   │   ├── splits.py         #   split por cesta, prefijo/target y los 4 perfiles
@@ -101,12 +117,15 @@ grocery-retail-recommender/
 │       ├── policy.py         #   valor esperado, baselines y sensibilidad
 │       └── pipeline.py       #   orquestador
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 183 tests
+├── tests/                    # 259 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
 ├── reports/recommender/      # métricas de la Fase 3 y demo de los 4 perfiles
 ├── reports/nba/              # métricas de la Fase 4 y barridos de sensibilidad
+├── reports/impact/           # el detalle numérico de IMPACT.md
+├── reports/insights/         # informe de hallazgos de negocio + sus 8 figuras
 ├── docs/CLEANING.md          # el porqué de cada decisión de limpieza
 ├── data/{raw,processed}/     # generados, no versionados
+├── IMPACT.md                 # el impacto de negocio estimado, en euros
 ├── DATA_SPEC.md              # esquema columna a columna, crudo y procesado
 ├── CHALLENGE.md              # el reto
 ├── ROADMAP.md                # plan por fases
@@ -347,7 +366,17 @@ Las dos desviaciones grandes tienen explicación, y son más interesantes que lo
 salidas y las figuras guardadas. Abre con un **reconocimiento de las tablas** (esquema,
 primeras filas, estadísticos y verificación de las 14 relaciones por las que se unen), sigue
 con el **Data Trust Score** y después resuelve nueve preguntas de negocio, cada una con su
-consulta Spark SQL sobre vistas temporales y su visualización:
+consulta Spark SQL sobre vistas temporales y su visualización.
+
+Las nueve consultas **no viven en el cuaderno**: viven en
+[`src/eda/questions.py`](src/eda/questions.py), una función por pregunta, y el notebook las
+invoca. El motivo es que una consulta dentro de una celda no se puede comprobar más que
+mirándola — y una que esté mal devuelve igualmente una tabla con pinta razonable. Sacadas a
+funciones, las nueve están fijadas por
+[`tests/test_eda_questions.py`](tests/test_eda_questions.py) sobre un dataset diminuto donde
+cada respuesta se calcula a mano, y las reutiliza el
+[informe de hallazgos](reports/insights/business_findings.md) de la Fase 5 sin duplicar una
+línea de SQL.
 
 | # | Pregunta | Alimenta a |
 | --- | --- | --- |
@@ -573,25 +602,135 @@ tamaño del premio, no el signo.
 
 ---
 
+## Fase 5 — Empaquetado y storytelling
+
+Las dos fases anteriores dejan métricas. Esta las convierte en algo que se pueda contar:
+qué valen en euros, qué dicen del negocio, y cómo se comparan dos ejecuciones entre sí.
+
+### El impacto de negocio, en euros
+
+`python -m src.impact.pipeline` escribe [`IMPACT.md`](IMPACT.md) y el detalle en
+[`reports/impact/impact.json`](reports/impact/impact.json). No es un documento redactado a
+mano: lee las métricas de las Fases 3 y 4 y mide el resto sobre `data/processed`.
+
+La estructura es la misma que la de la Fase 4 — separar lo medido de lo supuesto — porque
+el problema es el mismo. **El `hit_rate@5` mide relevancia, no causalidad**: un acierto
+significa que el producto estaba en la cesta de test, es decir que el cliente iba a
+comprarlo igualmente. Convertir eso en venta extra exige una **tasa de incrementalidad**
+que este dataset no permite estimar (haría falta un A/B con el panel apagado), así que va
+declarada en `src/impact/config.py` y barrida entera en el informe.
+
+Por **100.000 clientes activos y 100.000 cestas online al mes**:
+
+| Pieza | Al mes | Al año |
+| --- | ---: | ---: |
+| Cross-sell del recomendador (margen, con incrementalidad al 10 %) | 477 € | 5.721 € |
+| Política de Next Best Action | 21.421 € | 257.056 € |
+| **Total** | **21.898 €** | **262.777 €** |
+
+Dos lecturas que conviene no maquillar:
+
+- **Casi todo el valor viene del NBA, no del recomendador.** En parte tiene sentido — la
+  política decide sobre el cliente entero y el recomendador sólo sobre cinco huecos de una
+  cesta — pero sobre todo es consecuencia del techo de dato de la Fase 3.
+- **La cifra que no lleva supuestos dentro es la relativa**: el ranker deja una sugerencia
+  relevante en un **42 % más de cestas** que el baseline de popularidad (11,8 % frente a
+  8,3 %). El resto de la cadena hasta el euro son multiplicaciones sobre esa base.
+
+### El informe de hallazgos de negocio
+
+`python -m src.eda.findings` escribe
+[`reports/insights/business_findings.md`](reports/insights/business_findings.md) con ocho
+hallazgos y sus figuras, cruzando el dato de la Fase 2 con lo que hacen los modelos. Los
+tres que no estaban en ninguna fase anterior:
+
+- **La política no responde a quien se va, sino a quien todavía vale algo.** La correlación
+  entre el valor esperado de la acción y `P(churn)` es **−0,63** — negativa — y con el gasto
+  de los últimos 90 días, **+0,96**. En el decil de más riesgo de fuga la política actúa
+  sólo sobre el 24 % de los clientes y saca 0,007 € por cabeza; en el de menos riesgo actúa
+  sobre todos y saca 0,727 €. Un AUC de 0,85 invita a perseguir al que más riesgo tiene, y
+  la economía no lo sostiene: el valor de retener es `P(churn) × valor_de_retener`, y en un
+  cliente hibernado el segundo factor es casi cero. **Un buen modelo de churn no es, por sí
+  solo, una política de retención.**
+- **La política se va al margen.** Droguería e Higiene son el 17,2 % de la venta y se llevan
+  el 53,6 % de las acciones; Frescos, más de un tercio de la venta, se queda en un índice de
+  0,23. Es aritmética: un cupón de 2,54 € se paga con el margen del ticket que provoque, y
+  al 18 % de Frescos harían falta más de 14 € de compra sólo para empatar.
+- **⚠️ Y ahí aparece un punto ciego nuevo.** La categoría que más elige la política es
+  **protector solar**, que en la semana del corte (noviembre) vende **5,5 veces menos** que
+  en su pico de junio. El modelo de propensión **no tiene ni una feature de calendario**, así
+  que no puede descontar una categoría de temporada fuera de temporada, y la economía
+  (precio unitario de 11,46 € × 35 % de margen) hace el resto. Queda anotado como deuda en
+  el [`ROADMAP.md`](ROADMAP.md); es barato de arreglar, porque el índice estacional ya se
+  calcula en la Fase 2.
+
+### Registro de experimentos (MLflow)
+
+[`src/tracking.py`](src/tracking.py). Opcional y desacoplado: si MLflow está instalado, las
+Fases 3 y 4 registran cada ejecución; si no, no hacen nada y corren igual — que es lo que
+pasa en la CI, donde MLflow no se instala.
+
+```bash
+pip install mlflow -c constraints.txt
+python -m src.nba.pipeline
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+El diseño separa **qué** se registra de **dónde**. Los constructores de parámetros y
+métricas son funciones puras sobre la configuración y el resultado del pipeline, así que
+están cubiertos por `tests/test_tracking.py` sin necesidad de MLflow; el gestor de contexto
+`track` abre el run o devuelve uno inerte, y los pipelines llaman igual en los dos casos.
+
+Se registran las tres variantes del recomendador en el **mismo** run — modelo completo,
+ablación sin señal de sesión y baseline de popularidad — porque la comparación entre ellas
+*es* el resultado. Y en el NBA se registran los supuestos económicos (`coupon_discount`,
+`coupon_conversion_uplift`, `coupon_churn_reduction`) como parámetros: sin ellos, comparar
+dos runs de la política sería adivinar.
+
+Tres cosas que sólo aparecen al enchufarlo de verdad, y que están en el docstring del
+módulo con su porqué:
+
+- **El backend por defecto es SQLite**, no el almacén de ficheros: en MLflow 3 ese almacén
+  está en modo mantenimiento y lanza una excepción, y además su URI `file://` no sobrevive a
+  una ruta con espacios (`C:\Users\Diego Prieto\…` acaba en `PermissionError` sobre
+  `C:\Users\Diego%20Prieto`).
+- **MLflow no admite `@` en el nombre de una métrica.** Las métricas de ranking de este
+  proyecto se llaman `ndcg@5`, así que el primer intento tumbó el pipeline *después* de
+  haber escrito modelos e informes. `sanitize_name` traduce la arroba a `_at_`.
+- **Y por eso el registro es ahora a prueba de fallos.** Cualquier error de MLflow se avisa
+  por consola y se traga: es un canal lateral, y no puede llevarse por delante 33 minutos de
+  entrenamiento ya terminado. Hay tests para las dos cosas.
+
+---
+
 ## Tests
 
-**183 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17.
+**259 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17.
 
-| Fichero | Qué fija |
-| --- | ---: |
-| `test_generate_dataset.py` | Reproducibilidad, volúmenes, patrones del generador y el embudo online |
-| `test_cleaning.py` | Cada regla de limpieza con un caso mínimo comprobable a mano |
-| `test_data_trust.py` | Un defecto → la dimensión que le toca, sobre un dataset impecable |
-| `test_repurchase.py` | Cadencias de 7 y 4 días, efecto del hogar, tolerancia |
-| `test_affinity.py` | Soporte, confianza y lift calculados a mano sobre 10 cestas |
-| `test_rfm.py` | Quintiles, segmentos y clientes sin compras |
-| `test_schemas.py` | Tipos al leer, ida y vuelta a Parquet por los dos motores |
-| `test_recommender.py` | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte |
-| `test_nba.py` | Que las features no miran tras el corte, y la aritmética del valor esperado a mano |
+| Fichero | Tests | Qué fija |
+| --- | ---: | --- |
+| `test_generate_dataset.py` | 32 | Reproducibilidad, volúmenes, patrones del generador y el embudo online |
+| `test_cleaning.py` | 23 | Cada regla de limpieza con un caso mínimo comprobable a mano |
+| `test_data_trust.py` | 26 | Un defecto → la dimensión que le toca, sobre un dataset impecable |
+| `test_eda_questions.py` | 39 | Las 9 preguntas de negocio de la Tarea 1, con las respuestas calculadas a mano |
+| `test_repurchase.py` | 19 | Cadencias de 7 y 4 días, efecto del hogar, tolerancia (Tarea 2) |
+| `test_affinity.py` | 13 | Soporte, confianza y lift calculados a mano sobre 10 cestas |
+| `test_rfm.py` | 13 | Quintiles, segmentos y clientes sin compras |
+| `test_schemas.py` | 16 | Tipos al leer, ida y vuelta a Parquet por los dos motores |
+| `test_recommender.py` | 16 | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte |
+| `test_nba.py` | 25 | Que las features no miran tras el corte, y la aritmética del valor esperado a mano |
+| `test_impact.py` | 18 | La cadena de multiplicaciones que lleva de `hit_rate@5` a euros |
+| `test_tracking.py` | 19 | Qué se registra en MLflow, y que ni su ausencia ni sus fallos estorban |
 
-Los tests de calidad no comprueban "el score bajó": parten de un dataset diminuto y
-perfecto que puntúa 100 e introducen **un solo** defecto, verificando que lo detecta la
-comprobación concreta que le corresponde.
+Dos criterios que se repiten en toda la suite:
+
+- **Los tests de calidad no comprueban "el score bajó".** Parten de un dataset diminuto y
+  perfecto que puntúa 100 e introducen **un solo** defecto, verificando que lo detecta la
+  comprobación concreta que le corresponde.
+- **Las funciones de las Tareas 1 y 2 se ejercitan sobre datasets construidos para que cada
+  cifra se pueda recalcular de cabeza**: cadencias de 7 y 4 días exactos en el ciclo de
+  recompra, cinco cestas con importes redondos en las preguntas de negocio. Si un test
+  falla, el número esperado se comprueba a mano en un minuto.
 
 ---
 
@@ -621,16 +760,24 @@ correctos. Conviene extraer la fecha o la hora **dentro** de Spark.
 
 ## Qué viene ahora
 
-La **Fase 5** empaqueta: exportar el star schema a `reports/powerbi/`, generar el proyecto
-Power BI (`.pbip`) que lo lee en local, y escribir el resumen de impacto de negocio. La
-**Fase 6** es la demo en Streamlit, que sólo hace inferencia sobre los modelos ya guardados.
+La **Fase 6** es el entregable que queda: una demo en Streamlit que simula la cesta de la
+compra y enseña en vivo el top-5 del recomendador y la siguiente mejor acción del cliente,
+con los productos como tarjetas y un icono por departamento. Sólo hace inferencia sobre los
+modelos ya guardados en `models/`; no reentrena nada.
 
-Dos deudas anotadas en el `ROADMAP.md`, ninguna de ellas bloqueante:
+Un **dashboard en Power BI** estuvo planteado como pieza de BI Engineering de la Tarea 4 y
+queda **fuera de alcance por ahora** a favor de la demo — está declarado como tal en el
+[`ROADMAP.md`](ROADMAP.md), no es trabajo a medias.
+
+Tres deudas anotadas, ninguna de ellas bloqueante:
 
 - **Dar fidelidad de marca/SKU al generador**, que es el techo real del recomendador
   (Fase 3). Implica regenerar el dataset y rehacer la Fase 2 con sus informes.
 - **El "modelo de churn" es en realidad un modelo de inactividad a 4 semanas** (Fase 4). Un
   target honesto pediría una ventana más larga o condicionar por la cadencia de cada cliente.
+- **El modelo de propensión no tiene features de calendario** (detectado en la Fase 5). Por
+  eso la política elige protector solar en noviembre. El índice estacional ya se calcula en
+  la Fase 2: es meterlo en `src/nba/features.py`.
 
 ---
 
@@ -640,15 +787,18 @@ Dos deudas anotadas en el `ROADMAP.md`, ninguna de ellas bloqueante:
 | --- | --- | --- | --- |
 | **0 · Setup** | Estructura del repo, entorno con `constraints.txt` y CI en GitHub Actions | El workflow instala y ejecuta la suite | ✅ |
 | **1 · Generador** | `data_generation/generate_dataset.py`: 7 tablas, 3,1 M de líneas de ticket, con ciclos de reposición, afinidad de cesta, estacionalidad, uplift de promoción, churn progresivo, embudo online y defectos de calidad inyectados a propósito | 32 tests; dos ejecuciones dan `sha256` idénticos | ✅ |
-| **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta | 94 tests; informes regenerables en `reports/etl/` | Data Trust **89,99 (C) → 100,00 (A)** |
+| **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta y las 9 preguntas de negocio como funciones | 133 tests; informes regenerables en `reports/etl/` | Data Trust **89,99 (C) → 100,00 (A)** |
 | **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank`. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | 16 tests centrados en fuga de datos; `reports/recommender/` | **NDCG@5 = 0,0343** · Recall@5 = 0,0332 (baseline 0,0200) |
 | **4 · Next Best Action** | Dos modelos de propensión (churn a 4 semanas, compra en categoría a 7 días) sobre cortes temporales, y política de valor esperado con catálogo de acciones y economía por departamento | 25 tests, incluida la aritmética del valor esperado a mano; `reports/nba/` | **AUC 0,8531 / 0,7634** · política **+4.012 €** vs. no actuar |
-| **5 · Power BI** | Star schema y proyecto `.pbip` | — | ⬜ pendiente |
+| **5 · Empaquetado** | Resumen de impacto en euros con su barrido de supuestos, informe de 8 hallazgos de negocio con figuras, y registro opcional de experimentos en MLflow | 37 tests; `IMPACT.md` y `reports/insights/` se regeneran con un comando | **262.777 €/año** por cada 100.000 clientes y 100.000 cestas online/mes |
 | **6 · Demo** | Streamlit con simulación de cesta en vivo | — | ⬜ pendiente |
 
-### Los tres hallazgos que dan forma al proyecto
+Fuera de alcance por ahora, declarado y no a medias: el **dashboard en Power BI** de la
+Tarea 4.
 
-Cada fase produjo algo que no estaba en el plan y que cambió lo que vino después. Los tres
+### Los cuatro hallazgos que dan forma al proyecto
+
+Cada fase produjo algo que no estaba en el plan y que cambió lo que vino después. Los cuatro
 tienen la misma estructura: una métrica que parecía buena o mala resultó estar midiendo otra
 cosa.
 
@@ -666,8 +816,13 @@ cosa.
    uplift es un supuesto declarado, y al barrerlo apareció lo importante: el cupón sólo se
    justifica por retención, nunca por margen, porque su valor facial supera al margen que
    persigue.
+4. **Un buen modelo de churn no es una política de retención** (Fase 5). La correlación
+   entre el valor esperado de la acción y `P(churn)` sale **negativa** (−0,63), y con el
+   gasto reciente **+0,96**. Con un AUC de 0,85 la tentación es perseguir al que más riesgo
+   tiene; la economía dice lo contrario, porque en un cliente hibernado ya no queda nada que
+   salvar.
 
-Lo que estos tres tienen en común es el criterio que sigue todo el repo: **ninguna cifra del
-README se copia a mano de un notebook**. Todas salen de ejecutar un script — `run_etl`,
-`recommender.pipeline`, `nba.pipeline` — y las que sostienen una afirmación de negocio están
-fijadas por un test.
+Lo que estos cuatro tienen en común es el criterio que sigue todo el repo: **ninguna cifra
+del README se copia a mano de un notebook**. Todas salen de ejecutar un script — `run_etl`,
+`recommender.pipeline`, `nba.pipeline`, `impact.pipeline`, `eda.findings` — y las que
+sostienen una afirmación de negocio están fijadas por un test.

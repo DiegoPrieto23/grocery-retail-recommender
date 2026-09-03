@@ -37,7 +37,9 @@ Se ejecuta entera con `python -m src.etl.run_etl`, que deja las tablas en
 - [x] Notebook de EDA: preguntas de negocio de la Tarea 1 resueltas con Spark SQL y
       visualizaciones, una por pregunta
       · `notebooks/01_eda.ipynb` · 9 preguntas, cada una con su `spark.sql` y su figura ·
-      ejecutado de principio a fin, con salidas guardadas
+      ejecutado de principio a fin, con salidas guardadas · **en la Fase 5 las consultas se
+      extrajeron a `src/eda/questions.py`** (una función por pregunta) para poder testearlas;
+      el notebook las invoca y se reejecutó entero dando los mismos resultados
 - [x] RFM por cliente
       · `src/etl/rfm.py` · tabla `data/processed/rfm` · verificado por `tests/test_rfm.py`
 - [x] Función `due_for_repurchase` por cliente-categoría (Tarea 2)
@@ -185,43 +187,97 @@ supuesto es el tamaño del premio, no el signo.
 
 ## Fase 5 — Empaquetado y storytelling
 
-- [~] README principal con arquitectura, resultados y cómo reproducir
-      · `README.md` cubre ya las Fases 0-4 (generación, lógica inyectada, ETL, features,
-      EDA, recomendador con su NDCG@5 y el diagnóstico SKU/categoría, NBA con sus AUC y el
-      barrido de sensibilidad, tests y notas de entorno), y cierra con un resumen fase a
-      fase. Falta añadir los resultados de las Fases 5-6 (Power BI y demo).
+Se ejecuta con `python -m src.impact.pipeline` (impacto) y `python -m src.eda.findings`
+(hallazgos). El dashboard de Power BI que la Tarea 4 de `CHALLENGE.md` plantea queda
+**fuera de alcance** por decisión explícita, no a medias — ver la sección del final.
+
+- [x] README principal con arquitectura, resultados y cómo reproducir
+      · `README.md` cubre las Fases 0-5 (generación, lógica inyectada, ETL, features, EDA,
+      recomendador con su NDCG@5 y el diagnóstico SKU/categoría, NBA con sus AUC y el
+      barrido de sensibilidad, impacto en euros, hallazgos de negocio, MLflow, tests y
+      notas de entorno) y cierra con un resumen fase a fase. Los resultados de la demo se
+      añadirán al cerrar la Fase 6.
 - [x] Diagrama ER (Mermaid) del modelo relacional de las 7 tablas, con sus claves y
       relaciones, incluido en el README
       · sección "Modelo relacional" del `README.md`; las 14 relaciones están además
       verificadas empíricamente en `notebooks/01_eda.ipynb` (0 claves huérfanas)
-- [ ] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
+- [x] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
       impacto estimado (ej. cross-sell extra en €/mes)
-- [ ] Exportar a `reports/powerbi/` el modelo dimensional de `DATA_SPEC.md` (`dim_customers`,
-      `dim_products`, `dim_date`, `dim_actions`, `fact_basket_items`,
-      `fact_recommendations`, `fact_nba`) en Parquet o CSV
-- [ ] Generar el proyecto Power BI (`.pbip`): modelo TMDL con las relaciones del star schema
-      y medidas DAX básicas, e informe PBIR con Power Query apuntando a los ficheros
-      locales (parámetro de carpeta, sin BBDD en la nube) — se abre directo en Power BI
-      Desktop
-- [ ] Notebook o informe con los hallazgos de negocio (estilo "vistazo al análisis" del
+      · `src/impact/` → `IMPACT.md` + `reports/impact/impact.json` · **262.777 €/año** por
+      cada 100.000 clientes activos y 100.000 cestas online/mes, de los que 257.056 € son
+      del NBA y 5.721 € del cross-sell · la **incrementalidad** del recomendador es un
+      supuesto declarado y barrido (2 % → 30 %), porque `hit_rate@5` mide relevancia y no
+      causalidad · la única cifra sin supuestos es la relativa: **+42 % de cestas con una
+      sugerencia relevante** frente al baseline · verificado por `tests/test_impact.py`
+- [x] Notebook o informe con los hallazgos de negocio (estilo "vistazo al análisis" del
       otro proyecto)
-- [ ] Tests de las funciones de Tarea 1 y Tarea 2
-- [ ] (Opcional) MLflow para registrar experimentos del recomendador y de propensión —
+      · `src/eda/findings.py` → `reports/insights/business_findings.md` + 8 figuras · ocho
+      hallazgos que cruzan la Fase 2 con las Fases 3 y 4 · tres son nuevos: la política
+      responde al gasto reciente y **no** al riesgo de fuga (corr. −0,63 con `P(churn)`,
+      +0,96 con el gasto de 90 días), se va al margen (Droguería + Higiene son el 17,2 % de
+      la venta y el 53,6 % de las acciones), y elige protector solar en noviembre
+- [x] Tests de las funciones de Tarea 1 y Tarea 2
+      · **Tarea 2** ya estaba cubierta (`tests/test_repurchase.py`, 19 tests) y el Data
+      Trust Score de la Tarea 1 también (`tests/test_data_trust.py`, 26). Lo que faltaba
+      eran las **9 preguntas de negocio**, que vivían como SQL suelto dentro del notebook y
+      no se podían comprobar. Se han extraído a `src/eda/questions.py` (el notebook las
+      invoca, reejecutado de principio a fin con los mismos resultados) y fijado con
+      `tests/test_eda_questions.py` — **39 tests** sobre cinco cestas de importes redondos.
+      Suite total: **259 tests**
+- [x] (Opcional) MLflow para registrar experimentos del recomendador y de propensión —
       aporta un ángulo de MLOps/BI que no está en los otros dos proyectos
+      · `src/tracking.py` · **opcional y desacoplado**: si MLflow no está instalado no
+      registra nada y el pipeline corre igual, que es lo que pasa en la CI · lo que se
+      registra son funciones puras con tests (`tests/test_tracking.py`, 19) y lo que las
+      envía es un gestor de contexto que puede ser inerte · las tres variantes del
+      recomendador van en el **mismo** run, y los supuestos económicos del NBA como
+      parámetros · verificado ejecutando las dos fases con MLflow instalado · tres cosas
+      que sólo salieron al enchufarlo: el backend por defecto tiene que ser **SQLite** (el
+      almacén de ficheros está en modo mantenimiento en MLflow 3, y su URI `file://` no
+      sobrevive a una ruta con espacios), **MLflow no admite `@` en el nombre de una
+      métrica** — `ndcg@5` tumbó el primer intento *después* de escribir los modelos —, y
+      por eso ahora cualquier fallo del registro se avisa y se traga en vez de propagarse
+
+### Deuda detectada en esta fase
+
+- [ ] **El modelo de propensión no tiene ni una feature de calendario.** Se ve en el
+      hallazgo 8 del informe: la categoría que más elige la política es **protector solar**,
+      que en la semana del corte de test (noviembre) vende 5,5 veces menos que en su pico de
+      junio. Sin mes ni índice estacional entre las features, el modelo no puede descontar
+      una categoría de temporada fuera de temporada, y la economía (11,46 € de precio
+      unitario × 35 % de margen de Droguería) hace el resto. El índice estacional ya se
+      calcula en la Fase 2 (`src/eda/questions.q3_seasonal_index`): es meterlo en
+      `src/nba/features.py` y reentrenar.
 
 ## Fase 6 — Demo web interactiva
 
+Es ahora el entregable central del proyecto: la pieza que hace tangibles el recomendador
+(Fase 3) y el NBA (Fase 4) para cualquiera que la abra, sin tener que leer métricas. Con la
+Fase 5 cerrada, es **lo único que queda abierto** de la Tarea 4 de `CHALLENGE.md`: su otra
+mitad, el resumen de impacto de negocio, ya está en `IMPACT.md`.
+
 - [ ] App Streamlit en local: selector de cliente (existente / nuevo simulado) para cubrir
       los 4 perfiles del recomendador
-- [ ] Simulación de cesta: añadir productos y ver el top-5 de recomendaciones (Fase 3)
-      actualizarse en vivo
-- [ ] Banner de Next Best Action (Fase 4) para el cliente simulado
+- [ ] Catálogo de productos visual: cada producto se muestra como tarjeta con un icono
+      representativo por departamento — dato sintético, no hay fotos reales, así que un
+      emoji/icono fijo por departamento es suficiente y evita dependencias externas (ej.
+      🥦 Frescos, 🥫 Despensa, 🥤 Bebidas, 🧴 Droguería, 🧼 Higiene, 🍼 Bebé, 🐾 Mascotas,
+      🧊 Congelados) — nombre, categoría y precio, no una tabla de texto plano
+- [ ] Simulación de cesta visual: los productos añadidos se muestran con el mismo estilo de
+      tarjeta que el catálogo; al cambiar la cesta, el top-5 de recomendaciones (Fase 3) se
+      actualiza en vivo, también como tarjetas con icono y un motivo breve por
+      recomendación cuando se pueda derivar de las features del ranker (ej. "porque te toca
+      reponerlo", "co-compra habitual con lo que llevas")
+- [ ] Banner de Next Best Action (Fase 4) para el cliente simulado, visualmente destacado
+      (color/icono), no solo texto plano
 - [ ] La demo solo hace inferencia sobre los modelos ya guardados en `models/`, no
       reentrena nada
 - [ ] README corto de la demo: cómo lanzarla en local
 
 ## Fuera de alcance (por ahora)
 
+- Dashboard en Power BI (Tarea 4 de `CHALLENGE.md`) — el foco pasa a la demo de la Fase 6;
+  se retoma más adelante si el proyecto da más de sí
 - Servir el modelo en producción/cloud como API pública (la demo de la Fase 6 es solo local)
 - Multi-país (se queda en España para esta primera versión)
 - Optimización de precios/promociones (posible fase futura si el proyecto da más de sí)

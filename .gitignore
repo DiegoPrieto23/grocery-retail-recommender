@@ -19,3 +19,8 @@ predictions/*
 spark-warehouse/
 metastore_db/
 derby.log
+
+# MLflow (src/tracking.py). Es opcional: solo aparece si esta instalado.
+mlflow.db
+mlruns/
+mlartifacts/

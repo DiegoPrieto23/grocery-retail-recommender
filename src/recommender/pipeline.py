@@ -33,6 +33,7 @@ import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from src import tracking
 from src.etl.repurchase import repurchase_features
 from src.etl.schemas import read_processed
 from src.etl.session import get_spark
@@ -367,8 +368,20 @@ def run(
         )
         _write_reports(cfg, result)
         timer.step("Modelo, predicciones e informes escritos")
+        _track(cfg, result)
 
     return result
+
+
+def _track(cfg: RecommenderConfig, result: dict[str, object]) -> None:
+    """Registra el run en MLflow si esta instalado; si no, no hace nada (`src/tracking.py`)."""
+    with tracking.track("grocery-recommender", f"lambdarank-{cfg.test_start}") as run:
+        run.set_tags({"fase": "3", "tarea": "3a"})
+        run.log_params(tracking.recommender_params(cfg))
+        run.log_metrics(tracking.recommender_metrics(result, k=cfg.top_k))
+        for name in ("metrics.json", "metrics.md"):
+            run.log_artifact(Path(cfg.reports_dir) / name)
+        run.log_artifact(Path(cfg.models_dir) / rk.MODEL_FILENAME)
 
 
 def _table(df: pd.DataFrame) -> str:

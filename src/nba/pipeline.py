@@ -30,6 +30,7 @@ import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from src import tracking
 from src.etl.schemas import read_processed
 from src.etl.session import get_spark
 from src.nba import features as feat
@@ -284,8 +285,21 @@ def run(spark: SparkSession, cfg: NBAConfig, *, write: bool = True) -> dict[str,
         actions.to_parquet(Path(cfg.predictions_dir) / "nba_actions.parquet", index=False)
         _write_reports(cfg, result)
         timer.step("Modelos, tabla de acciones e informes escritos")
+        _track(cfg, result)
 
     return result
+
+
+def _track(cfg: NBAConfig, result: dict[str, object]) -> None:
+    """Registra el run en MLflow si esta instalado; si no, no hace nada (`src/tracking.py`)."""
+    with tracking.track("grocery-nba", f"propension-{cfg.test_cutoff}") as run:
+        run.set_tags({"fase": "4", "tarea": "3b"})
+        run.log_params(tracking.nba_params(cfg))
+        run.log_metrics(tracking.nba_metrics(result))
+        for name in ("metrics.json", "metrics.md"):
+            run.log_artifact(Path(cfg.reports_dir) / name)
+        run.log_artifact(Path(cfg.models_dir) / prop.CHURN_MODEL_FILENAME)
+        run.log_artifact(Path(cfg.models_dir) / prop.PURCHASE_MODEL_FILENAME)
 
 
 def _table(df: pd.DataFrame) -> str:

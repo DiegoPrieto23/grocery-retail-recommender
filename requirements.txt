@@ -30,3 +30,8 @@ lightgbm
 
 # --- Tests ---
 pytest
+
+# --- Opcional: registro de experimentos (Fase 5) ---
+# MLflow no esta aqui a proposito: es pesado y la CI no lo necesita. `src/tracking.py`
+# detecta si esta instalado y, si no, no registra nada y el pipeline corre igual.
+#   pip install mlflow -c constraints.txt
