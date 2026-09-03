@@ -35,3 +35,12 @@ pytest
 # MLflow no esta aqui a proposito: es pesado y la CI no lo necesita. `src/tracking.py`
 # detecta si esta instalado y, si no, no registra nada y el pipeline corre igual.
 #   pip install mlflow -c constraints.txt
+
+# --- Preparacion visual del catalogo (Fase 6a, src/catalog/) ---
+# Es la unica parte del proyecto que sale a internet, y se ejecuta una sola vez: las
+# fotos quedan cacheadas y comiteadas en assets/. La clave de Pexels se lee de `.env`.
+requests
+python-dotenv
+# Pillow solo se usa para la huella perceptual que evita repetir foto entre dos grupos
+# visuales (src/catalog/image_hash.py).
+Pillow

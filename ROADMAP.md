@@ -37,9 +37,7 @@ Se ejecuta entera con `python -m src.etl.run_etl`, que deja las tablas en
 - [x] Notebook de EDA: preguntas de negocio de la Tarea 1 resueltas con Spark SQL y
       visualizaciones, una por pregunta
       · `notebooks/01_eda.ipynb` · 9 preguntas, cada una con su `spark.sql` y su figura ·
-      ejecutado de principio a fin, con salidas guardadas · **en la Fase 5 las consultas se
-      extrajeron a `src/eda/questions.py`** (una función por pregunta) para poder testearlas;
-      el notebook las invoca y se reejecutó entero dando los mismos resultados
+      ejecutado de principio a fin, con salidas guardadas
 - [x] RFM por cliente
       · `src/etl/rfm.py` · tabla `data/processed/rfm` · verificado por `tests/test_rfm.py`
 - [x] Función `due_for_repurchase` por cliente-categoría (Tarea 2)
@@ -187,91 +185,96 @@ supuesto es el tamaño del premio, no el signo.
 
 ## Fase 5 — Empaquetado y storytelling
 
-Se ejecuta con `python -m src.impact.pipeline` (impacto) y `python -m src.eda.findings`
-(hallazgos). El dashboard de Power BI que la Tarea 4 de `CHALLENGE.md` plantea queda
-**fuera de alcance** por decisión explícita, no a medias — ver la sección del final.
-
-- [x] README principal con arquitectura, resultados y cómo reproducir
-      · `README.md` cubre las Fases 0-5 (generación, lógica inyectada, ETL, features, EDA,
-      recomendador con su NDCG@5 y el diagnóstico SKU/categoría, NBA con sus AUC y el
-      barrido de sensibilidad, impacto en euros, hallazgos de negocio, MLflow, tests y
-      notas de entorno) y cierra con un resumen fase a fase. Los resultados de la demo se
-      añadirán al cerrar la Fase 6.
+- [~] README principal con arquitectura, resultados y cómo reproducir
+      · `README.md` cubre ya las Fases 0-4 (generación, lógica inyectada, ETL, features,
+      EDA, recomendador con su NDCG@5 y el diagnóstico SKU/categoría, NBA con sus AUC y el
+      barrido de sensibilidad, tests y notas de entorno), y cierra con un resumen fase a
+      fase. Falta añadir los resultados de la Fase 6 (demo).
 - [x] Diagrama ER (Mermaid) del modelo relacional de las 7 tablas, con sus claves y
       relaciones, incluido en el README
       · sección "Modelo relacional" del `README.md`; las 14 relaciones están además
       verificadas empíricamente en `notebooks/01_eda.ipynb` (0 claves huérfanas)
-- [x] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
+- [ ] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
       impacto estimado (ej. cross-sell extra en €/mes)
-      · `src/impact/` → `IMPACT.md` + `reports/impact/impact.json` · **262.777 €/año** por
-      cada 100.000 clientes activos y 100.000 cestas online/mes, de los que 257.056 € son
-      del NBA y 5.721 € del cross-sell · la **incrementalidad** del recomendador es un
-      supuesto declarado y barrido (2 % → 30 %), porque `hit_rate@5` mide relevancia y no
-      causalidad · la única cifra sin supuestos es la relativa: **+42 % de cestas con una
-      sugerencia relevante** frente al baseline · verificado por `tests/test_impact.py`
-- [x] Notebook o informe con los hallazgos de negocio (estilo "vistazo al análisis" del
+- [ ] Notebook o informe con los hallazgos de negocio (estilo "vistazo al análisis" del
       otro proyecto)
-      · `src/eda/findings.py` → `reports/insights/business_findings.md` + 8 figuras · ocho
-      hallazgos que cruzan la Fase 2 con las Fases 3 y 4 · tres son nuevos: la política
-      responde al gasto reciente y **no** al riesgo de fuga (corr. −0,63 con `P(churn)`,
-      +0,96 con el gasto de 90 días), se va al margen (Droguería + Higiene son el 17,2 % de
-      la venta y el 53,6 % de las acciones), y elige protector solar en noviembre
-- [x] Tests de las funciones de Tarea 1 y Tarea 2
-      · **Tarea 2** ya estaba cubierta (`tests/test_repurchase.py`, 19 tests) y el Data
-      Trust Score de la Tarea 1 también (`tests/test_data_trust.py`, 26). Lo que faltaba
-      eran las **9 preguntas de negocio**, que vivían como SQL suelto dentro del notebook y
-      no se podían comprobar. Se han extraído a `src/eda/questions.py` (el notebook las
-      invoca, reejecutado de principio a fin con los mismos resultados) y fijado con
-      `tests/test_eda_questions.py` — **39 tests** sobre cinco cestas de importes redondos.
-      Suite total: **259 tests**
-- [x] (Opcional) MLflow para registrar experimentos del recomendador y de propensión —
+- [ ] Tests de las funciones de Tarea 1 y Tarea 2
+- [ ] (Opcional) MLflow para registrar experimentos del recomendador y de propensión —
       aporta un ángulo de MLOps/BI que no está en los otros dos proyectos
-      · `src/tracking.py` · **opcional y desacoplado**: si MLflow no está instalado no
-      registra nada y el pipeline corre igual, que es lo que pasa en la CI · lo que se
-      registra son funciones puras con tests (`tests/test_tracking.py`, 19) y lo que las
-      envía es un gestor de contexto que puede ser inerte · las tres variantes del
-      recomendador van en el **mismo** run, y los supuestos económicos del NBA como
-      parámetros · verificado ejecutando las dos fases con MLflow instalado · tres cosas
-      que sólo salieron al enchufarlo: el backend por defecto tiene que ser **SQLite** (el
-      almacén de ficheros está en modo mantenimiento en MLflow 3, y su URI `file://` no
-      sobrevive a una ruta con espacios), **MLflow no admite `@` en el nombre de una
-      métrica** — `ndcg@5` tumbó el primer intento *después* de escribir los modelos —, y
-      por eso ahora cualquier fallo del registro se avisa y se traga en vez de propagarse
 
-### Deuda detectada en esta fase
+## Fase 6a — Preparación visual del catálogo
 
-- [ ] **El modelo de propensión no tiene ni una feature de calendario.** Se ve en el
-      hallazgo 8 del informe: la categoría que más elige la política es **protector solar**,
-      que en la semana del corte de test (noviembre) vende 5,5 veces menos que en su pico de
-      junio. Sin mes ni índice estacional entre las features, el modelo no puede descontar
-      una categoría de temporada fuera de temporada, y la economía (11,46 € de precio
-      unitario × 35 % de margen de Droguería) hace el resto. El índice estacional ya se
-      calcula en la Fase 2 (`src/eda/questions.q3_seasonal_index`): es meterlo en
-      `src/nba/features.py` y reentrenar.
+Paso previo a la app, se ejecuta una sola vez. Es la única parte del proyecto que necesita
+internet — el resultado se cachea en `assets/` y a partir de ahí todo vuelve a ser local.
 
-## Fase 6 — Demo web interactiva
+Se construye con `python -m src.catalog.build_assets` y se verifica con
+`pytest tests/test_catalog.py` (29 tests, ninguno llama a Pexels). El porqué de cada
+decisión está en `docs/VISUAL_CATALOG.md`.
+
+- [x] `.env` con `PEXELS_API_KEY` (en `.gitignore`, nunca comiteado) + `.env.example` sin
+      valores reales, comiteado como documentación de qué variable hace falta
+      · los dos ficheros estaban como `env` / `env.example`, sin punto, y por tanto fuera
+      de cualquier regla de `.gitignore`: renombrados e ignorados (`.env`, `.env.*`, con
+      excepción explícita para `.env.example`)
+- [x] Analizar `products` (department, category, brand) y decidir si `category` ya es
+      suficientemente granular o hace falta una columna `visual_group` nueva — ni tan
+      amplia como el departamento ni tan específica como el SKU (p.ej. `leche_entera`,
+      `yogur_griego`, `salmón`, no `Lácteos` ni un `product_id` concreto)
+      · `category` (62 valores) es ya el grano correcto; `visual_group` existe igualmente
+      como columna propia porque es un slug ASCII apto para nombre de fichero y porque
+      absorbe dos fusiones (62 → 60). No se parte más fino: el dataset no tiene ninguna
+      columna de variedad o formato con la que hacerlo sin inventarse el dato
+- [x] CSV `visual_group, search_term` (término de búsqueda en inglés, que es donde Pexels
+      tiene mejor cobertura, aunque el resto del proyecto esté en español)
+      · `assets/visual_groups.csv`, generado desde `CATEGORY_TO_GROUP`
+- [x] Revisar recuento de productos por `visual_group` y fusionar los grupos demasiado
+      pequeños
+      · 2 fusiones (`Bacalao` → `pescado_blanco`, `Limpiacristales` → `limpiadores_hogar`).
+      Otros 5 grupos quedan por debajo del umbral de 15 productos y siguen solos a
+      propósito (turrón, torrijas, cava, protector solar, marisco): ninguna hermana los
+      representa sin mentir, y son los que cargan la estacionalidad del dataset
+- [x] Descargar vía la API de Pexels (`PEXELS_API_KEY` en variable de entorno, nunca
+      hardcodeada) una imagen representativa por `visual_group` — priorizando fondo limpio
+      o blanco, aspecto ecommerce/supermercado, sin personas, sin composiciones complejas,
+      sin fotos de cocina o restaurante
+      · selección en tres pasos: consulta en inglés con tres variantes, puntuación sobre
+      el texto alternativo y el color medio, y huella perceptual (dHash) para que dos
+      grupos no acaben con la misma foto. La heurística no basta sola: la revisión final
+      fue visual sobre un contact sheet de las 60, con tres tandas de correcciones
+- [x] Guardar las imágenes en `assets/` (`assets/leche_entera.jpg`, etc.)
+      · 60/60 grupos con foto, recortadas a 800x800 y por debajo de 400 KB cada una
+- [x] CSV final `product_id, product_name, visual_group, image_path` — `product_name` se
+      deriva de department/category/brand (el dataset no tiene un nombre de producto
+      propio; no hace falta tocar `DATA_SPEC.md` ni el generador para esto)
+      · `assets/product_catalog.csv`, 1.500 filas, `product_name` único
+- [x] Comitear `assets/` y los CSV de mapeo — no se regeneran en cada ejecución, se tratan
+      como un fixture cacheado (los resultados de búsqueda de Pexels no son reproducibles
+      por semilla)
+      · el script no vuelve a pedir a Pexels ninguna foto que ya esté en `assets/` salvo
+      con `--force`, y `--offline` regenera los CSV sin tocar la red
+
+## Fase 6b — Demo web interactiva
 
 Es ahora el entregable central del proyecto: la pieza que hace tangibles el recomendador
-(Fase 3) y el NBA (Fase 4) para cualquiera que la abra, sin tener que leer métricas. Con la
-Fase 5 cerrada, es **lo único que queda abierto** de la Tarea 4 de `CHALLENGE.md`: su otra
-mitad, el resumen de impacto de negocio, ya está en `IMPACT.md`.
+(Fase 3) y el NBA (Fase 4) para cualquiera que la abra, sin tener que leer métricas.
+Prioridad sobre lo que quede pendiente de la Fase 5. Antes de empezar, instalar la skill
+`developing-with-streamlit` (repo `streamlit/agent-skills`) en `.claude/skills/`.
 
 - [ ] App Streamlit en local: selector de cliente (existente / nuevo simulado) para cubrir
       los 4 perfiles del recomendador
-- [ ] Catálogo de productos visual: cada producto se muestra como tarjeta con un icono
-      representativo por departamento — dato sintético, no hay fotos reales, así que un
-      emoji/icono fijo por departamento es suficiente y evita dependencias externas (ej.
-      🥦 Frescos, 🥫 Despensa, 🥤 Bebidas, 🧴 Droguería, 🧼 Higiene, 🍼 Bebé, 🐾 Mascotas,
-      🧊 Congelados) — nombre, categoría y precio, no una tabla de texto plano
+- [ ] Catálogo de productos visual: cada producto se muestra como tarjeta con la foto real
+      de su `visual_group` (de la Fase 6a, vía `image_path`) — nombre, categoría y precio,
+      no una tabla de texto plano ni iconos/emoji
 - [ ] Simulación de cesta visual: los productos añadidos se muestran con el mismo estilo de
       tarjeta que el catálogo; al cambiar la cesta, el top-5 de recomendaciones (Fase 3) se
-      actualiza en vivo, también como tarjetas con icono y un motivo breve por
+      actualiza en vivo, también como tarjetas con foto y un motivo breve por
       recomendación cuando se pueda derivar de las features del ranker (ej. "porque te toca
       reponerlo", "co-compra habitual con lo que llevas")
 - [ ] Banner de Next Best Action (Fase 4) para el cliente simulado, visualmente destacado
       (color/icono), no solo texto plano
-- [ ] La demo solo hace inferencia sobre los modelos ya guardados en `models/`, no
-      reentrena nada
+- [ ] Tema propio en `.streamlit/config.toml` (colores, fuente) en vez del tema por defecto
+- [ ] La demo solo hace inferencia sobre los modelos ya guardados en `models/` y las
+      imágenes ya descargadas en `assets/` — no reentrena nada ni vuelve a llamar a Pexels
 - [ ] README corto de la demo: cómo lanzarla en local
 
 ## Fuera de alcance (por ahora)

@@ -24,3 +24,9 @@ derby.log
 mlflow.db
 mlruns/
 mlartifacts/
+
+# Secretos (Fase 6a: PEXELS_API_KEY). .env.example si se comitea, .env nunca.
+.env
+.env.*
+!.env.example
+env
