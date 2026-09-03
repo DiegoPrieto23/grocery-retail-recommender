@@ -125,23 +125,25 @@ test simulado.
 
 ---
 
-### Tarea 4 — Storytelling, BI y demo
+### Tarea 4 — Storytelling y demo
 
-Más allá de los notebooks y las métricas, el proyecto se cierra con tres piezas orientadas
-a comunicar el trabajo — ninguna reentrena nada, todas consumen lo ya construido en las
+Más allá de los notebooks y las métricas, el proyecto se cierra con dos piezas orientadas a
+comunicar el trabajo — ninguna reentrena nada, ambas consumen lo ya construido en las
 Tareas 1-3:
 
-- **Dashboard en Power BI**: proyecto Power BI (`.pbip`, modelo TMDL + informe PBIR)
-  generado sobre las tablas de hechos y dimensiones de `DATA_SPEC.md`, cargadas en local vía
-  Power Query — sin conectar a ninguna base de datos en la nube. Es la pieza de BI
-  Engineering que no está presente en los otros dos proyectos del portfolio.
 - **Resumen de impacto de negocio** (medio folio, no un proyecto aparte): traducir NDCG@5 y
   el uplift del NBA a impacto estimado — por ejemplo, si el recomendador sube el cross-sell
   un X %, sobre Y cestas/mes son Z € extra.
-- **Demo web interactiva** (en local): simulación de cesta de la compra donde, al añadir
-  productos, aparecen en vivo las recomendaciones del sistema (Tarea 3a) y la próxima mejor
-  acción para ese cliente (Tarea 3b), cubriendo los 4 perfiles de cliente de forma
-  interactiva.
+- **Demo web interactiva** (en local, Streamlit): simulación de cesta de la compra donde, al
+  añadir productos, aparecen en vivo las recomendaciones del sistema (Tarea 3a) y la próxima
+  mejor acción para ese cliente (Tarea 3b), cubriendo los 4 perfiles de cliente de forma
+  interactiva. Es el entregable central de esta tarea: gráfica e intuitiva, con los
+  productos mostrados como tarjetas con un icono por departamento (dato sintético, sin
+  fotos reales) en vez de tablas de texto.
+
+Un dashboard en Power BI estuvo planteado aquí como pieza de BI Engineering, pero queda
+aparcado por ahora a favor de dedicar el esfuerzo a la demo — ver "Fuera de alcance" en
+`ROADMAP.md`.
 
 ---
 

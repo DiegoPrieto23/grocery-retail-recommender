@@ -271,7 +271,10 @@ DATA_SPEC.md), pregúntame antes de asumir un número arbitrario.
 Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
 revisa todo el trabajo de las Fases 1 a 4.
 
-Vamos a ejecutar la Fase 5 del ROADMAP.md — empaquetado:
+Vamos a ejecutar la Fase 5 del ROADMAP.md — empaquetado. El dashboard de Power BI que
+menciona la Tarea 4 de CHALLENGE.md queda fuera de alcance por ahora (ver "Fuera de
+alcance" en ROADMAP.md) — no lo implementes aunque CHALLENGE.md todavía lo describa; el
+foco del proyecto pasa a la demo de la Fase 6.
 
 1. README.md principal: qué es el proyecto, arquitectura (diagrama en texto o Mermaid está
    bien), cómo reproducirlo de principio a fin, y un resumen de resultados del recomendador
@@ -282,27 +285,19 @@ Vamos a ejecutar la Fase 5 del ROADMAP.md — empaquetado:
 3. Resumen de impacto de negocio (medio folio, en el README o en IMPACT.md aparte): traduce
    el NDCG@5 y el uplift del NBA a impacto estimado (ej. cross-sell extra en €/mes sobre el
    volumen de cestas simulado).
-4. Exporta a reports/powerbi/ (Parquet o CSV) el modelo dimensional de DATA_SPEC.md:
-   dim_customers, dim_products, dim_date, dim_actions, fact_basket_items,
-   fact_recommendations, fact_nba.
-5. Genera el proyecto Power BI como Power BI Project (.pbip): modelo semántico en TMDL
-   (tablas, relaciones del star schema, medidas DAX básicas como NDCG@5 medio, valor
-   esperado total del NBA, cesta media) e informe en PBIR con unas pocas páginas (Overview,
-   Recomendador, NBA). El Power Query de cada tabla debe leer de reports/powerbi/ en local
-   usando un parámetro de carpeta (DataFolderPath) — nada de conexión a base de datos en la
-   nube. El resultado debe abrirse directo con Power BI Desktop sin montar nada a mano.
-6. Notebook o informe con los hallazgos de negocio más interesantes (estacionalidad,
+4. Notebook o informe con los hallazgos de negocio más interesantes (estacionalidad,
    afinidad de cesta, qué perfiles de cliente responden mejor al NBA) — con el mismo
    espíritu narrativo del informe de sports-rental-analytics.
-7. Revisa que existan tests para las funciones clave de las Tareas 1 y 2, y añade los que
+5. Revisa que existan tests para las funciones clave de las Tareas 1 y 2, y añade los que
    falten.
-8. (Opcional, si te sobra tiempo) Integra MLflow para registrar los experimentos del
+6. (Opcional, si te sobra tiempo) Integra MLflow para registrar los experimentos del
    recomendador y del modelo de propensión.
 
-Al terminar, marca los checkboxes de la Fase 5 en ROADMAP.md.
+Al terminar, marca los checkboxes de la Fase 5 en ROADMAP.md (el dashboard de Power BI no
+cuenta como pendiente: está fuera de alcance, no a medias).
 
-Antes de darla por cerrada, dime si algo de la Tarea 4 del CHALLENGE.md se quedó sin
-cubrir y por qué.
+Antes de darla por cerrada, dime qué quedó sin cubrir de la Tarea 4 del CHALLENGE.md más
+allá de Power BI, y por qué.
 ```
 
 ### Fase 6 — Demo web interactiva
@@ -312,23 +307,34 @@ Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md c
 revisa el estado actual del repo (modelos guardados en models/ de las Fases 3 y 4, y el
 README de la Fase 5).
 
-Vamos a ejecutar la Fase 6 del ROADMAP.md — demo web interactiva (Tarea 4 del CHALLENGE.md):
+Vamos a ejecutar la Fase 6 del ROADMAP.md — demo web interactiva (Tarea 4 del CHALLENGE.md).
+Es ahora el entregable central del proyecto: tiene que ser gráfica e intuitiva, no una
+lista de texto con botones.
 
 1. App en Streamlit, en local, que:
    - Deja elegir un customer_id existente (cliente recurrente) o simular "cliente nuevo"
      (sin historial), para cubrir los 4 perfiles del recomendador.
-   - Simula una cesta: buscar/añadir productos uno a uno.
+   - Muestra el catálogo/resultado de búsqueda de productos como tarjetas visuales: cada
+     producto lleva un icono representativo de su departamento (son datos sintéticos, no
+     hay fotos reales — usa un emoji/icono fijo por departamento, no busques imágenes
+     externas), nombre, categoría y precio.
+   - Simula una cesta: buscar/añadir productos uno a uno; la cesta se muestra con el mismo
+     estilo de tarjeta, no como una tabla.
    - Tras cada cambio en la cesta, llama al pipeline de candidatos + ranking (Fase 3, ya
-     entrenado) y muestra el top-5 de recomendaciones actualizado.
+     entrenado) y muestra el top-5 de recomendaciones actualizado, también como tarjetas
+     con icono, y un motivo breve por recomendación cuando se pueda derivar de las features
+     del ranker (ej. "porque te toca reponerlo", "co-compra habitual con lo que llevas").
    - Muestra un banner con la Next Best Action (Fase 4, ya entrenada) para el cliente
-     simulado (ej. "cupón 10% en Detergente").
+     simulado (ej. "cupón 10% en Detergente"), destacado visualmente (color/icono), no como
+     texto plano perdido en la página.
 2. La demo solo hace inferencia: carga los artefactos ya entrenados de models/, no
    reentrena nada en caliente.
 3. Añade un README corto dentro de la carpeta de la demo explicando cómo lanzarla en local
    (streamlit run ...).
 
 No despliegues nada en la nube ni montes una API pública — sigue fuera de alcance del
-proyecto, esto es solo para local.
+proyecto, esto es solo para local. Tampoco busques imágenes de producto reales ni conectes
+a ningún servicio externo de imágenes — los iconos por departamento son suficientes.
 
 Al terminar, marca los checkboxes de la Fase 6 en ROADMAP.md.
 

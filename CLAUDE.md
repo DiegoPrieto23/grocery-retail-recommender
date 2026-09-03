@@ -17,14 +17,15 @@ a propósito.
   + popularidad; ranking final con **LightGBM** (objetivo `LambdaRank`). Sin deep learning:
   es el patrón habitual en recomendadores de retail reales y corre bien en CPU.
 - **NBA**: scikit-learn / LightGBM para el modelo de propensión.
-- **Storytelling**: Power BI para el dashboard de la Fase 5 — Claude Code genera el
-  proyecto completo como Power BI Project (`.pbip`: modelo TMDL + informe PBIR), con Power
-  Query leyendo los ficheros locales de `reports/powerbi/` a través de un parámetro de
-  carpeta. Sin conexión a ninguna base de datos en la nube; se abre directo en Power BI
-  Desktop.
-- **Demo**: Streamlit para la app interactiva de la Fase 6 — carga los modelos ya
-  entrenados, no reentrena nada en caliente.
+- **Demo**: Streamlit para la app interactiva de la Fase 6 — es el entregable central del
+  proyecto (Tarea 4 de `CHALLENGE.md`). Carga los modelos ya entrenados, no reentrena nada
+  en caliente. Interfaz gráfica e intuitiva: productos mostrados como tarjetas con un icono
+  fijo por departamento (dato sintético, sin fotos reales ni servicios de imagen externos),
+  nunca como tablas de texto plano.
 - Python 3.10+.
+
+Un dashboard en Power BI estuvo planteado como pieza de BI Engineering, pero queda aparcado
+por ahora a favor de la demo — ver "Fuera de alcance" en `ROADMAP.md`.
 
 ## Reproducibilidad
 
