@@ -207,74 +207,72 @@ supuesto es el tamaño del premio, no el signo.
 Paso previo a la app, se ejecuta una sola vez. Es la única parte del proyecto que necesita
 internet — el resultado se cachea en `assets/` y a partir de ahí todo vuelve a ser local.
 
-Se construye con `python -m src.catalog.build_assets` y se verifica con
-`pytest tests/test_catalog.py` (29 tests, ninguno llama a Pexels). El porqué de cada
-decisión está en `docs/VISUAL_CATALOG.md`.
-
-- [x] `.env` con `PEXELS_API_KEY` (en `.gitignore`, nunca comiteado) + `.env.example` sin
+- [ ] `.env` con `PEXELS_API_KEY` (en `.gitignore`, nunca comiteado) + `.env.example` sin
       valores reales, comiteado como documentación de qué variable hace falta
-      · los dos ficheros estaban como `env` / `env.example`, sin punto, y por tanto fuera
-      de cualquier regla de `.gitignore`: renombrados e ignorados (`.env`, `.env.*`, con
-      excepción explícita para `.env.example`)
-- [x] Analizar `products` (department, category, brand) y decidir si `category` ya es
+- [ ] Analizar `products` (department, category, brand) y decidir si `category` ya es
       suficientemente granular o hace falta una columna `visual_group` nueva — ni tan
       amplia como el departamento ni tan específica como el SKU (p.ej. `leche_entera`,
       `yogur_griego`, `salmón`, no `Lácteos` ni un `product_id` concreto)
-      · `category` (62 valores) es ya el grano correcto; `visual_group` existe igualmente
-      como columna propia porque es un slug ASCII apto para nombre de fichero y porque
-      absorbe dos fusiones (62 → 60). No se parte más fino: el dataset no tiene ninguna
-      columna de variedad o formato con la que hacerlo sin inventarse el dato
-- [x] CSV `visual_group, search_term` (término de búsqueda en inglés, que es donde Pexels
+- [ ] CSV `visual_group, search_term` (término de búsqueda en inglés, que es donde Pexels
       tiene mejor cobertura, aunque el resto del proyecto esté en español)
-      · `assets/visual_groups.csv`, generado desde `CATEGORY_TO_GROUP`
-- [x] Revisar recuento de productos por `visual_group` y fusionar los grupos demasiado
+- [ ] Revisar recuento de productos por `visual_group` y fusionar los grupos demasiado
       pequeños
-      · 2 fusiones (`Bacalao` → `pescado_blanco`, `Limpiacristales` → `limpiadores_hogar`).
-      Otros 5 grupos quedan por debajo del umbral de 15 productos y siguen solos a
-      propósito (turrón, torrijas, cava, protector solar, marisco): ninguna hermana los
-      representa sin mentir, y son los que cargan la estacionalidad del dataset
-- [x] Descargar vía la API de Pexels (`PEXELS_API_KEY` en variable de entorno, nunca
+- [ ] Descargar vía la API de Pexels (`PEXELS_API_KEY` en variable de entorno, nunca
       hardcodeada) una imagen representativa por `visual_group` — priorizando fondo limpio
       o blanco, aspecto ecommerce/supermercado, sin personas, sin composiciones complejas,
       sin fotos de cocina o restaurante
-      · selección en tres pasos: consulta en inglés con tres variantes, puntuación sobre
-      el texto alternativo y el color medio, y huella perceptual (dHash) para que dos
-      grupos no acaben con la misma foto. La heurística no basta sola: la revisión final
-      fue visual sobre un contact sheet de las 60, con tres tandas de correcciones
-- [x] Guardar las imágenes en `assets/` (`assets/leche_entera.jpg`, etc.)
-      · 60/60 grupos con foto, recortadas a 800x800 y por debajo de 400 KB cada una
-- [x] CSV final `product_id, product_name, visual_group, image_path` — `product_name` se
+- [ ] Guardar las imágenes en `assets/` (`assets/leche_entera.jpg`, etc.)
+- [ ] CSV final `product_id, product_name, visual_group, image_path` — `product_name` se
       deriva de department/category/brand (el dataset no tiene un nombre de producto
       propio; no hace falta tocar `DATA_SPEC.md` ni el generador para esto)
-      · `assets/product_catalog.csv`, 1.500 filas, `product_name` único
-- [x] Comitear `assets/` y los CSV de mapeo — no se regeneran en cada ejecución, se tratan
+- [ ] Comitear `assets/` y los CSV de mapeo — no se regeneran en cada ejecución, se tratan
       como un fixture cacheado (los resultados de búsqueda de Pexels no son reproducibles
       por semilla)
-      · el script no vuelve a pedir a Pexels ninguna foto que ya esté en `assets/` salvo
-      con `--force`, y `--offline` regenera los CSV sin tocar la red
 
 ## Fase 6b — Demo web interactiva
 
 Es ahora el entregable central del proyecto: la pieza que hace tangibles el recomendador
 (Fase 3) y el NBA (Fase 4) para cualquiera que la abra, sin tener que leer métricas.
-Prioridad sobre lo que quede pendiente de la Fase 5. Antes de empezar, instalar la skill
-`developing-with-streamlit` (repo `streamlit/agent-skills`) en `.claude/skills/`.
+Prioridad sobre lo que quede pendiente de la Fase 5. Se construye en tres versiones
+incrementales — cada una cabe en una sesión de la suscripción Pro sin arriesgar quedarse a
+medias. No pasar a la siguiente versión sin haber cerrado y verificado la anterior.
 
-- [ ] App Streamlit en local: selector de cliente (existente / nuevo simulado) para cubrir
-      los 4 perfiles del recomendador
-- [ ] Catálogo de productos visual: cada producto se muestra como tarjeta con la foto real
-      de su `visual_group` (de la Fase 6a, vía `image_path`) — nombre, categoría y precio,
-      no una tabla de texto plano ni iconos/emoji
-- [ ] Simulación de cesta visual: los productos añadidos se muestran con el mismo estilo de
-      tarjeta que el catálogo; al cambiar la cesta, el top-5 de recomendaciones (Fase 3) se
-      actualiza en vivo, también como tarjetas con foto y un motivo breve por
-      recomendación cuando se pueda derivar de las features del ranker (ej. "porque te toca
-      reponerlo", "co-compra habitual con lo que llevas")
-- [ ] Banner de Next Best Action (Fase 4) para el cliente simulado, visualmente destacado
-      (color/icono), no solo texto plano
+### V1 — Carrito, sin recomendaciones
+
+- [ ] Comprobar que `streamlit`, `python-dotenv` y `requests` están en `requirements.txt`
+      (no estaban en el `requirements.txt` original de la Fase 0) e instalarlos; verificar
+      que `streamlit run` arranca antes de seguir
+- [ ] Instalar la skill `developing-with-streamlit` (repo `streamlit/agent-skills`) en
+      `.claude/skills/`
 - [ ] Tema propio en `.streamlit/config.toml` (colores, fuente) en vez del tema por defecto
-- [ ] La demo solo hace inferencia sobre los modelos ya guardados en `models/` y las
-      imágenes ya descargadas en `assets/` — no reentrena nada ni vuelve a llamar a Pexels
+- [ ] Selector de cliente: existente (`customer_id` real) o "nuevo simulado" (sin historial)
+- [ ] Cargar un carrito existente de un cliente (una cesta real de `basket_items` de test) o
+      simular uno nuevo eligiendo productos manualmente
+- [ ] Catálogo de productos visual: tarjetas con la foto real de su `visual_group` (Fase
+      6a, vía `image_path`), nombre, categoría y precio
+- [ ] La cesta (cargada o simulada) se muestra con el mismo estilo de tarjeta que el
+      catálogo
+- [ ] Sin llamadas al recomendador ni al NBA todavía — solo navegación de catálogo y cesta
+
+### V2 — Recomendaciones en vivo
+
+- [ ] Integrar el pipeline de candidatos + ranking (Fase 3, ya entrenado): al cambiar la
+      cesta, se recalcula y muestra el top-5 de recomendaciones
+- [ ] Las recomendaciones se muestran como tarjetas con foto (mismo estilo que el catálogo)
+      y un motivo breve cuando se pueda derivar de las features del ranker (ej. "porque te
+      toca reponerlo", "co-compra habitual con lo que llevas")
+- [ ] Verificar que los 4 perfiles de cliente funcionan correctamente (nuevo sin cesta,
+      nuevo con cesta, recurrente sin cesta, recurrente con cesta)
+- [ ] Sigue sin NBA
+
+### V3 — Next Best Action
+
+- [ ] Cargar los modelos de propensión (Fase 4) y calcular la acción recomendada para el
+      cliente activo
+- [ ] Banner de Next Best Action visualmente destacado (color/icono), no solo texto plano
+- [ ] La demo completa (V1+V2+V3) solo hace inferencia sobre los modelos ya guardados en
+      `models/` y las imágenes ya descargadas en `assets/` — no reentrena nada ni vuelve a
+      llamar a Pexels
 - [ ] README corto de la demo: cómo lanzarla en local
 
 ## Fuera de alcance (por ahora)

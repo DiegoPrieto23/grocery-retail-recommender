@@ -30,3 +30,6 @@ mlartifacts/
 .env.*
 !.env.example
 env
+
+# Bundle de serving de la demo (Fase 6b): lo regenera `python -m src.serving.export_bundle`.
+data/serving/

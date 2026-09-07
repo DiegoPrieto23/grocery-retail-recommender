@@ -32,19 +32,10 @@ from pyspark.sql import functions as F
 
 from src.etl.affinity import cooccurrence_affinity
 from src.recommender.config import ALSConfig, CandidateConfig
+# Definidos en `schema` para que la demo (pandas, sin Spark) use las mismas columnas.
+from src.recommender.schema import SOURCE_COLUMNS, SOURCE_NAMES
 
 # Columnas que aporta cada fuente al pool unificado. El orden es el del informe.
-SOURCE_COLUMNS: dict[str, tuple[str, ...]] = {
-    "pop": ("pop_score", "pop_rank"),
-    "aff": ("aff_lift_max", "aff_conf_sum", "aff_n_support"),
-    "cataff": ("cataff_lift_max", "cataff_conf_max"),
-    # El historial aporta solo su puesto: cuantas veces y cuando lo compro el cliente son
-    # *features* que se cruzan con todos los candidatos, no solo con los que propuso esta
-    # fuente (`features.add_customer_product_history`).
-    "hist": ("hist_rank",),
-    "als": ("als_score", "als_rank"),
-}
-SOURCE_NAMES: tuple[str, ...] = tuple(SOURCE_COLUMNS)
 
 
 # --------------------------------------------------------------------------------------

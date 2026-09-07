@@ -41,15 +41,11 @@ from __future__ import annotations
 import datetime as dt
 
 from pyspark.sql import DataFrame, Window
+
+from src.recommender.schema import PROFILE_LABELS  # noqa: F401  (reexportado)
 from pyspark.sql import functions as F
 
 # Etiquetas de los cuatro perfiles de CHALLENGE.md, indexadas por `profile`.
-PROFILE_LABELS: dict[int, str] = {
-    1: "1 - nuevo, carrito vacio",
-    2: "2 - nuevo, con articulos",
-    3: "3 - recurrente, carrito vacio",
-    4: "4 - recurrente, con articulos",
-}
 
 
 def _as_date_literal(value: dt.date | str):

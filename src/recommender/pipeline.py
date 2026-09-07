@@ -134,7 +134,25 @@ def fit_sources(
     )
 
 
-def build_window(
+@dataclass
+class WindowInputs:
+    """Todo lo que define una ventana antes de generar candidatos.
+
+    Existe para que el exportador de la Fase 6b (`src/serving/export_bundle.py`) pueda
+    volcar exactamente las mismas queries, carrito y tablas de sesion que uso la Fase 3,
+    sin duplicar aqui la logica: el test de paridad de la demo no valdria de nada si la
+    ruta de pandas se comparase contra una ventana construida de otra forma.
+    """
+
+    queries: DataFrame
+    prefix: DataFrame
+    target: DataFrame
+    cart: DataFrame
+    session_product: DataFrame
+    session_query: DataFrame
+
+
+def build_window_inputs(
     tables: dict[str, DataFrame],
     bundle: SourceBundle,
     *,
@@ -142,16 +160,8 @@ def build_window(
     end: dt.date | None,
     n_queries: int | None,
     salt: str,
-    cfg: RecommenderConfig,
-    products_indexed: DataFrame,
-) -> tuple[DataFrame, DataFrame, DataFrame]:
-    """Construye las queries de una ventana, su matriz de features y su contexto.
-
-    Returns:
-        `(queries, feature_matrix, context)`, donde `context` es una fila por producto de
-        cada cesta con `role` = `prefix` (lo que el cliente ya llevaba) o `target` (lo que
-        habia que adivinar). Es lo que hace legible la demo de los cuatro perfiles.
-    """
+) -> WindowInputs:
+    """Queries, prefijo, target, carrito y sesion de una ventana."""
     window = splits.baskets_between(tables["baskets"], start, end)
     add_to_cart = splits.basket_add_to_cart(tables["sessions"], tables["session_events"])
     query_items = splits.build_query_items(window, tables["basket_items"], add_to_cart)
@@ -176,6 +186,40 @@ def build_window(
     events_before.count()
     session_product, session_query = feat.session_features(events_before)
     cart = cand.in_cart(prefix, feat.session_cart(events_before))
+
+    return WindowInputs(
+        queries=queries,
+        prefix=prefix,
+        target=target,
+        cart=cart,
+        session_product=session_product,
+        session_query=session_query,
+    )
+
+
+def build_window(
+    tables: dict[str, DataFrame],
+    bundle: SourceBundle,
+    *,
+    start: dt.date,
+    end: dt.date | None,
+    n_queries: int | None,
+    salt: str,
+    cfg: RecommenderConfig,
+    products_indexed: DataFrame,
+) -> tuple[DataFrame, DataFrame, DataFrame]:
+    """Construye las queries de una ventana, su matriz de features y su contexto.
+
+    Returns:
+        `(queries, feature_matrix, context)`, donde `context` es una fila por producto de
+        cada cesta con `role` = `prefix` (lo que el cliente ya llevaba) o `target` (lo que
+        habia que adivinar). Es lo que hace legible la demo de los cuatro perfiles.
+    """
+    win = build_window_inputs(
+        tables, bundle, start=start, end=end, n_queries=n_queries, salt=salt
+    )
+    queries, prefix, target = win.queries, win.prefix, win.target
+    session_product, session_query, cart = win.session_product, win.session_query, win.cart
 
     sources = {
         "pop": cand.candidates_popularity(queries, bundle.popularity, cfg=cfg.candidates),

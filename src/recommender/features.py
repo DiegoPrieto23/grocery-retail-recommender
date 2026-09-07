@@ -34,89 +34,23 @@ from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 from src.recommender.candidates import SOURCE_COLUMNS, SOURCE_NAMES
-
-# Orden fijo de las columnas que ve LightGBM. Es parte del contrato del modelo guardado:
-# al predecir hay que presentar exactamente estas columnas y en este orden.
-SOURCE_FEATURES: tuple[str, ...] = tuple(
-    [c for cols in SOURCE_COLUMNS.values() for c in cols]
-    + [f"src_{s}" for s in SOURCE_NAMES]
-    + ["n_sources"]
+from src.recommender.schema import (
+    CATEGORICAL_FEATURES,
+    CHANNELS,
+    CONTEXT_FEATURES,
+    CUSTOMER_CATEGORY_FEATURES,
+    CUSTOMER_PRODUCT_FEATURES,
+    FEATURE_COLUMNS,
+    LOYALTY,
+    PRODUCT_FEATURES,
+    SESSION_FEATURES,
+    SOURCE_FEATURES,
 )
 
-CUSTOMER_PRODUCT_FEATURES: tuple[str, ...] = (
-    "hist_n_baskets",
-    "hist_units",
-    "hist_days_since",
-    "hist_ever_bought",
-)
-
-CUSTOMER_CATEGORY_FEATURES: tuple[str, ...] = (
-    "cat_n_purchase_days",
-    "cat_days_since",
-    "cat_expected_days",
-    "cat_overdue_ratio",
-    "cat_due",
-)
-
-PRODUCT_FEATURES: tuple[str, ...] = (
-    "prod_pop_all",
-    "prod_pop_recent",
-    "prod_seasonal_index",
-    "prod_month_rank",
-    "unit_price",
-    "pack_size",
-    "typical_repurchase_days",
-    "is_private_label",
-    "is_perishable",
-    "department_idx",
-    "category_idx",
-)
-
-CONTEXT_FEATURES: tuple[str, ...] = (
-    "prefix_size",
-    "basket_month",
-    "basket_dow",
-    "channel_idx",
-    "is_known_customer",
-    "cust_frequency",
-    "cust_recency_days",
-    "cust_avg_ticket",
-    "cust_n_products",
-    "household_size_est",
-    "loyalty_idx",
-    "is_on_promo",
-    "promo_discount",
-)
-
-SESSION_FEATURES: tuple[str, ...] = (
-    "has_session",
-    "sess_viewed",
-    "sess_n_views",
-    "sess_secs_since_view",
-    "sess_n_events_before",
-)
-
-FEATURE_COLUMNS: tuple[str, ...] = (
-    SOURCE_FEATURES
-    + CUSTOMER_PRODUCT_FEATURES
-    + CUSTOMER_CATEGORY_FEATURES
-    + PRODUCT_FEATURES
-    + CONTEXT_FEATURES
-    + SESSION_FEATURES
-)
-
-# Las que LightGBM debe tratar como categoricas y no como numeros ordenados.
-CATEGORICAL_FEATURES: tuple[str, ...] = (
-    "channel_idx",
-    "loyalty_idx",
-    "department_idx",
-    "category_idx",
-    "basket_month",
-    "basket_dow",
-)
-
-_CHANNELS = ("app", "web", "store")
-_LOYALTY = ("bronze", "silver", "gold")
+# El esquema vive en `schema` (sin PySpark) para que la ruta de serving de la Fase 6b
+# use exactamente las mismas columnas y en el mismo orden.
+_CHANNELS = CHANNELS
+_LOYALTY = LOYALTY
 
 
 def _code(column: str, values: tuple[str, ...]):

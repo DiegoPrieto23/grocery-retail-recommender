@@ -127,19 +127,28 @@ test simulado.
 
 ### Tarea 4 — Storytelling y demo
 
-Más allá de los notebooks y las métricas, el proyecto se cierra con dos piezas orientadas a
-comunicar el trabajo — ninguna reentrena nada, ambas consumen lo ya construido en las
+Más allá de los notebooks y las métricas, el proyecto se cierra con tres piezas orientadas
+a comunicar el trabajo — ninguna reentrena nada, todas consumen lo ya construido en las
 Tareas 1-3:
 
 - **Resumen de impacto de negocio** (medio folio, no un proyecto aparte): traducir NDCG@5 y
   el uplift del NBA a impacto estimado — por ejemplo, si el recomendador sube el cross-sell
   un X %, sobre Y cestas/mes son Z € extra.
+- **Preparación visual del catálogo** (paso previo, una sola vez, con conexión a internet):
+  analizar `products` y agrupar los productos en `visual_group` — categorías visuales
+  reutilizables, ni tan amplias como el departamento ni tan específicas como el SKU (p.ej.
+  `leche_entera`, `yogur_griego`, `salmón`), buscar y descargar vía la API de Pexels una
+  foto real representativa de cada `visual_group` (fondo limpio, estilo ecommerce, sin
+  personas ni composiciones complejas), y generar el mapeo `product_id → visual_group →
+  image_path`. Es la única parte del proyecto que sale del entorno 100 % offline/sintético
+  — se ejecuta una vez, las imágenes se cachean en `assets/` y a partir de ahí la demo
+  vuelve a ser local.
 - **Demo web interactiva** (en local, Streamlit): simulación de cesta de la compra donde, al
   añadir productos, aparecen en vivo las recomendaciones del sistema (Tarea 3a) y la próxima
   mejor acción para ese cliente (Tarea 3b), cubriendo los 4 perfiles de cliente de forma
   interactiva. Es el entregable central de esta tarea: gráfica e intuitiva, con los
-  productos mostrados como tarjetas con un icono por departamento (dato sintético, sin
-  fotos reales) en vez de tablas de texto.
+  productos mostrados como tarjetas con la foto real de su `visual_group` (de la
+  preparación anterior) — sin iconos, sin SVGs, sin imágenes generadas por IA.
 
 Un dashboard en Power BI estuvo planteado aquí como pieza de BI Engineering, pero queda
 aparcado por ahora a favor de dedicar el esfuerzo a la demo — ver "Fuera de alcance" en

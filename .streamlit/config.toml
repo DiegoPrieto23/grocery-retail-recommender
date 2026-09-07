@@ -1,0 +1,45 @@
+# Tema propio de la demo (Fase 6b). El reto pide no dejar el tema por defecto.
+#
+# La paleta busca el registro de un supermercado online: fondo claro y limpio para que las
+# fotos de producto de `assets/` manden, verde de frescos como color primario y un ambar
+# para las promociones. Todo el estilo va aqui y no en CSS inyectado: los tokens del tema
+# se aplican a todos los elementos y sobreviven a una actualizacion de Streamlit, mientras
+# que un selector CSS apunta a nombres de clase internos que cambian sin avisar.
+
+[theme]
+base = "light"
+primaryColor = "#1a7f4b"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f7f4"
+textColor = "#16261d"
+linkColor = "#1a7f4b"
+borderColor = "#dde5de"
+codeBackgroundColor = "#f4f7f4"
+
+baseRadius = "10px"
+buttonRadius = "8px"
+showWidgetBorder = true
+linkUnderline = false
+
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontSizes = ["30px", "23px", "19px", "16px", "14px", "13px"]
+headingFontWeights = [700, 600, 600, 600, 500, 500]
+
+# Semanticos: el ambar es "promocion", el verde "te toca reponer", el violeta "co-compra".
+greenColor = "#1a7f4b"
+blueColor = "#2563a8"
+violetColor = "#6d4aa8"
+orangeColor = "#b3690b"
+yellowColor = "#a8790b"
+redColor = "#b3261e"
+grayColor = "#5c6b60"
+
+chartCategoricalColors = ["#1a7f4b", "#2563a8", "#6d4aa8", "#b3690b", "#b3261e", "#5c6b60"]
+
+[theme.sidebar]
+backgroundColor = "#f4f7f4"
+secondaryBackgroundColor = "#ffffff"
+borderColor = "#dde5de"

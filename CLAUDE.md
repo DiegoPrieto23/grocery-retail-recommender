@@ -17,11 +17,21 @@ a propósito.
   + popularidad; ranking final con **LightGBM** (objetivo `LambdaRank`). Sin deep learning:
   es el patrón habitual en recomendadores de retail reales y corre bien en CPU.
 - **NBA**: scikit-learn / LightGBM para el modelo de propensión.
-- **Demo**: Streamlit para la app interactiva de la Fase 6 — es el entregable central del
+- **Demo**: Streamlit para la app interactiva de la Fase 6b — es el entregable central del
   proyecto (Tarea 4 de `CHALLENGE.md`). Carga los modelos ya entrenados, no reentrena nada
-  en caliente. Interfaz gráfica e intuitiva: productos mostrados como tarjetas con un icono
-  fijo por departamento (dato sintético, sin fotos reales ni servicios de imagen externos),
-  nunca como tablas de texto plano.
+  en caliente. Interfaz gráfica e intuitiva: productos mostrados como tarjetas con una foto
+  real de su `visual_group` (una por grupo, no por producto ni generada por IA), nunca como
+  tablas de texto plano ni iconos/emoji.
+- **Preparación de imágenes** (Fase 6a, `assets/`): API de Pexels vía `requests`. La
+  `PEXELS_API_KEY` vive en `.env` (cargada con `python-dotenv`), nunca hardcodeada ni
+  comiteada — `.env` está en `.gitignore`; `.env.example` (sin valores reales) sí se
+  comitea, como documentación de qué variables hacen falta. Es la única parte del proyecto
+  con dependencia de internet; se ejecuta una vez y su resultado (`assets/` + el CSV de
+  mapeo) se cachea/comitea, así que la demo en sí vuelve a arrancar en local sin red.
+- **Estilo de la demo**: skill `developing-with-streamlit` (oficial, repo
+  `streamlit/agent-skills`) para theming y estilizado — instalarla en `.claude/skills/`
+  antes de empezar la Fase 6b. Complementarla con un tema propio en
+  `.streamlit/config.toml` (colores, fuente) en vez de dejar el tema por defecto.
 - Python 3.10+.
 
 Un dashboard en Power BI estuvo planteado como pieza de BI Engineering, pero queda aparcado
@@ -33,6 +43,10 @@ por ahora a favor de la demo — ver "Fuera de alcance" en `ROADMAP.md`.
 - Dos ejecuciones del generador deben producir ficheros idénticos (mismo criterio que en
   `sports-rental-analytics` — verificarlo con un test o un check de CI).
 - Fijar versiones de librerías en `constraints.txt` una vez el dataset esté estable.
+- Excepción: las imágenes de `assets/` (Fase 6a, vía Pexels) no son reproducibles por
+  semilla — el resultado de una búsqueda puede cambiar con el tiempo. Por eso se descargan
+  una sola vez y se tratan como un fixture cacheado, no como algo que se regenera en cada
+  ejecución del pipeline.
 
 ## Estilo
 

@@ -16,7 +16,7 @@ Modulos:
 # Solo se reexporta lo que no comparte nombre con un submodulo: `from ... import evaluate`
 # devolveria la funcion en vez del modulo `evaluate` y romperia a quien importe asi.
 from src.recommender.config import RecommenderConfig
-from src.recommender.splits import PROFILE_LABELS
+from src.recommender.schema import PROFILE_LABELS
 
 __all__ = [
     "PROFILE_LABELS",

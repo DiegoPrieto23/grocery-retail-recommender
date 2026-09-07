@@ -300,43 +300,144 @@ Antes de darla por cerrada, dime qué quedó sin cubrir de la Tarea 4 del CHALLE
 allá de Power BI, y por qué.
 ```
 
-### Fase 6 — Demo web interactiva
+### Fase 6a — Preparación visual del catálogo
 
 ```text
 Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado actual del repo (modelos guardados en models/ de las Fases 3 y 4, y el
-README de la Fase 5).
+revisa el esquema real de la tabla products (data/processed/ o donde la dejó la Fase 2).
 
-Vamos a ejecutar la Fase 6 del ROADMAP.md — demo web interactiva (Tarea 4 del CHALLENGE.md).
-Es ahora el entregable central del proyecto: tiene que ser gráfica e intuitiva, no una
-lista de texto con botones.
+Vamos a ejecutar la Fase 6a del ROADMAP.md — preparación visual del catálogo. Es un paso
+previo a la demo, se ejecuta una sola vez y es la única parte del proyecto que necesita
+internet.
 
-1. App en Streamlit, en local, que:
+1. Analiza las columnas de products (department, category, brand) y decide si category ya
+   es suficientemente granular para agrupar visualmente los productos, o si hace falta una
+   columna nueva visual_group. No uses el departamento (muy amplio) ni el product_id o la
+   marca (muy específico) — el objetivo son grupos reutilizables tipo "leche_entera",
+   "yogur_griego", "salmón".
+2. Genera un CSV visual_group, search_term con el término de búsqueda en inglés para cada
+   grupo (Pexels tiene mejor cobertura en inglés aunque el resto del proyecto esté en
+   español).
+3. Cuenta productos por visual_group y fusiona los grupos demasiado pequeños; documenta qué
+   fusionaste y por qué.
+4. Usa la API de Pexels para buscar y descargar una imagen representativa por
+   visual_group. Prioriza imágenes de producto sobre fondo limpio o blanco, con aspecto de
+   ecommerce/supermercado — evita personas, composiciones complejas o fotografías de
+   cocinas y restaurantes en la query de búsqueda.
+5. Guarda las imágenes en assets/ (assets/leche_entera.jpg, etc.).
+6. Genera el CSV final product_id, product_name, visual_group, image_path. Como el dataset
+   no tiene un nombre de producto propio, deriva product_name de department/category/brand
+   — no hace falta tocar DATA_SPEC.md ni el generador para esto.
+7. Comitea assets/ y los CSV de mapeo. No se regeneran en cada ejecución del pipeline: son
+   un fixture cacheado, porque los resultados de Pexels no son reproducibles por semilla.
+
+La PEXELS_API_KEY ya está en un .env en la raíz del proyecto. Cárgala con python-dotenv
+(añádelo a requirements.txt si no está) — nunca la imprimas por pantalla, la metas en un
+commit, un log o una celda de notebook, ni la hardcodees en el código. Antes de nada,
+comprueba que .env está en .gitignore; si no lo está, añádelo tú antes de continuar (y
+confirma que .env.example sí queda comiteado, como documentación de qué variable hace
+falta, sin el valor real).
+
+Al terminar, marca los checkboxes de la Fase 6a en ROADMAP.md y déjame un resumen: cuántos
+visual_group salieron, cuáles fusionaste, y si algún grupo se quedó sin imagen válida.
+```
+
+### Fase 6b — V1: Carrito, sin recomendaciones
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el estado actual del repo (README de la Fase 5, y el CSV de imágenes de la Fase 6a
+en assets/).
+
+Antes de nada, comprueba que streamlit, python-dotenv y requests están en
+requirements.txt (el requirements.txt original de la Fase 0 no los incluía) e instálalos
+si falta alguno. Verifica que streamlit run funciona (aunque sea sobre un app.py vacío)
+antes de seguir — si da un error tipo "command not found" (127), es casi seguro que
+streamlit no está instalado en el entorno activo.
+
+Si no tienes ya instalada la skill developing-with-streamlit (repo streamlit/agent-skills)
+en .claude/skills/, instálala ahora — la vamos a necesitar para el theming y estilizado.
+
+Vamos a ejecutar la V1 de la Fase 6b del ROADMAP.md: una primera versión de la demo SIN
+recomendaciones ni NBA todavía, solo catálogo y cesta. Es la primera de tres versiones
+incrementales — hazlo así de acotado a propósito, no adelantes trabajo de la V2 o la V3.
+
+1. Define un tema propio en .streamlit/config.toml (colores, fuente) en vez de dejar el
+   tema por defecto de Streamlit.
+2. App en Streamlit, en local, que:
    - Deja elegir un customer_id existente (cliente recurrente) o simular "cliente nuevo"
-     (sin historial), para cubrir los 4 perfiles del recomendador.
+     (sin historial).
+   - Si es un cliente existente, permite cargar una cesta real suya de basket_items de
+     test como punto de partida.
+   - Si es un cliente nuevo (o si se prefiere empezar de cero), permite construir una
+     cesta manualmente eligiendo productos del catálogo.
    - Muestra el catálogo/resultado de búsqueda de productos como tarjetas visuales: cada
-     producto lleva un icono representativo de su departamento (son datos sintéticos, no
-     hay fotos reales — usa un emoji/icono fijo por departamento, no busques imágenes
-     externas), nombre, categoría y precio.
-   - Simula una cesta: buscar/añadir productos uno a uno; la cesta se muestra con el mismo
-     estilo de tarjeta, no como una tabla.
-   - Tras cada cambio en la cesta, llama al pipeline de candidatos + ranking (Fase 3, ya
-     entrenado) y muestra el top-5 de recomendaciones actualizado, también como tarjetas
-     con icono, y un motivo breve por recomendación cuando se pueda derivar de las features
-     del ranker (ej. "porque te toca reponerlo", "co-compra habitual con lo que llevas").
-   - Muestra un banner con la Next Best Action (Fase 4, ya entrenada) para el cliente
-     simulado (ej. "cupón 10% en Detergente"), destacado visualmente (color/icono), no como
-     texto plano perdido en la página.
-2. La demo solo hace inferencia: carga los artefactos ya entrenados de models/, no
-   reentrena nada en caliente.
-3. Añade un README corto dentro de la carpeta de la demo explicando cómo lanzarla en local
+     producto lleva la foto real de su visual_group (columna image_path del CSV de la Fase
+     6a), nombre, categoría y precio.
+   - La cesta (cargada o construida a mano) se muestra con el mismo estilo de tarjeta, no
+     como una tabla.
+3. Todavía NO llames al recomendador ni al NBA — eso es la V2 y la V3. Esta versión es solo
+   navegación de catálogo y gestión de cesta.
+4. Añade un README corto dentro de la carpeta de la demo explicando cómo lanzarla en local
    (streamlit run ...).
 
-No despliegues nada en la nube ni montes una API pública — sigue fuera de alcance del
-proyecto, esto es solo para local. Tampoco busques imágenes de producto reales ni conectes
-a ningún servicio externo de imágenes — los iconos por departamento son suficientes.
+Al terminar, marca los checkboxes de la V1 en ROADMAP.md y déjame confirmación de que
+streamlit run arranca sin errores antes de que sigamos con la V2 en otra sesión.
 
-Al terminar, marca los checkboxes de la Fase 6 en ROADMAP.md.
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
+### Fase 6b — V2: Recomendaciones en vivo
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el estado actual del repo — en particular la app de la V1 de la Fase 6b (catálogo y
+cesta ya funcionando) y el ranker entrenado en models/ de la Fase 3.
+
+Vamos a ejecutar la V2 de la Fase 6b del ROADMAP.md: añadir recomendaciones en vivo sobre
+la app de la V1. No reescribas ni rehagas lo de la V1 — amplíalo.
+
+1. Integra el pipeline de candidatos + ranking (Fase 3, ya entrenado): carga el modelo una
+   vez al arrancar la app (no en cada interacción), y recalcula el top-5 cada vez que
+   cambie la cesta.
+2. Muestra las recomendaciones como tarjetas con el mismo estilo visual que el catálogo
+   (foto real del visual_group), y añade un motivo breve por recomendación cuando se pueda
+   derivar de las features del ranker (ej. "porque te toca reponerlo", "co-compra habitual
+   con lo que llevas").
+3. Verifica explícitamente que los 4 perfiles de cliente funcionan: nuevo sin cesta, nuevo
+   con cesta, recurrente sin cesta, recurrente con cesta — prueba los cuatro casos y
+   dime qué fuentes de candidatos tiene señal en cada uno.
+4. Todavía NO implementes el NBA — eso es la V3.
+
+Al terminar, marca los checkboxes de la V2 en ROADMAP.md.
+
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
+### Fase 6b — V3: Next Best Action
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el estado actual del repo — en particular la app de la V1+V2 de la Fase 6b (catálogo,
+cesta y recomendaciones ya funcionando) y los modelos de propensión en models/ de la Fase 4.
+
+Vamos a ejecutar la V3 de la Fase 6b del ROADMAP.md: añadir el Next Best Action sobre la
+app de la V1+V2. No reescribas lo anterior — amplíalo.
+
+1. Carga los modelos de propensión (Fase 4) una vez al arrancar la app, y calcula la acción
+   recomendada (Tarea 3b del CHALLENGE.md) para el cliente activo.
+2. Muestra un banner con esa acción, visualmente destacado (color/icono), no como texto
+   plano perdido en la página.
+3. Comprueba que la demo completa (V1+V2+V3) solo hace inferencia: carga los artefactos ya
+   entrenados de models/ y las imágenes ya descargadas en assets/, sin reentrenar nada ni
+   volver a llamar a la API de Pexels en caliente.
+4. Actualiza el README de la demo si hace falta, con el flujo completo.
+
+No despliegues nada en la nube ni montes una API pública — sigue fuera de alcance del
+proyecto, esto es solo para local.
+
+Al terminar, marca los checkboxes de la V3 en ROADMAP.md — con esto, la Fase 6b queda
+cerrada del todo.
 
 Si algo es ambiguo, pregúntame antes de asumir.
 ```
