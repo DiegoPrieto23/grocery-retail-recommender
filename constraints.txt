@@ -2,6 +2,11 @@
 # El hash del dataset generado solo esta garantizado con estas versiones.
 #
 # Nota: pyspark 3.5.x no soporta oficialmente Python 3.13; la CI usa Python 3.11.
+# pyspark 3.5.3 aun importa `distutils`, que Python 3.12 elimino de la libreria estandar.
+# setuptools reinstala el shim (`distutils-precedence.pth`), asi que en un entorno con
+# Python >= 3.12 es obligatorio: sin el, todo test que toque Spark falla al importar.
+setuptools==84.0.0
+
 numpy==2.2.0
 pandas==2.2.3
 Faker==33.1.0
@@ -40,3 +45,21 @@ certifi==2024.8.30
 urllib3==2.2.3
 charset-normalizer==3.4.0
 idna==3.10
+
+# --- Fase 6b: demo web interactiva ---
+# streamlit arrastra bastante cadena propia (altair para los graficos, pydeck, el servidor
+# uvicorn/starlette). Se fijan aqui las que traen binarios o rompen entre versiones
+# menores; las de solo texto se dejan resolver a pip.
+streamlit==1.63.0
+altair==6.2.2
+narwhals==2.25.0
+protobuf==7.36.1
+pydeck==0.9.3
+watchdog==6.0.0
+uvicorn==0.52.4
+starlette==1.6.0
+websockets==16.1.1
+jsonschema==4.26.0
+Jinja2==3.1.6
+click==8.5.0
+toml==0.10.2

@@ -169,6 +169,58 @@ Cada sesión nueva de Claude Code no recuerda la anterior por defecto, así que 
 empieza igual: relee los 4 documentos y repasa qué hay ya hecho en el repo antes de avanzar.
 Van en orden — no pegues el de la Fase 3 si la Fase 2 no está terminada y verificada.
 
+### Estado: qué prompts ya se han ejecutado
+
+Los prompts de abajo se conservan como registro de cómo se construyó el proyecto, pero la
+mayoría ya están gastados. El detalle fase a fase, con su verificación, está en
+`ROADMAP.md`; este es el resumen para saber cuál toca:
+
+| Fase | Estado | Nota |
+| --- | --- | --- |
+| 0 · Setup | ✅ | |
+| 1 · Generador | ✅ | |
+| 2 · ETL y features | ✅ | |
+| 3 · Recomendador | ✅ | queda una deuda anotada (fidelidad de SKU en el generador) |
+| 4 · Next Best Action | ✅ | queda una deuda anotada (el churn es inactividad a 4 semanas) |
+| 5 · Empaquetado | 🟡 **a medias** | faltan impacto de negocio, informe de hallazgos y los resultados de la Fase 6 en el README |
+| 6a · Preparación visual | ✅ | 60 `visual_group`, 60 fotos cacheadas en `assets/` |
+| 6b · Demo (V1+V2+V3) | 🟡 **casi** | la app funciona entera; quedan 2 cosas, ver abajo |
+
+**Lo único pendiente de la Fase 6b** (los prompts V1/V2/V3 de abajo ya no aplican tal cual:
+las tres versiones aterrizaron juntas en el commit `55116b3`):
+
+1. Sembrar la cesta con una cesta real de `basket_items` de test para el cliente elegido
+   — hoy solo se construye a mano desde el catálogo.
+2. El README de la demo, y el `tests/test_demo.py` que los docstrings ya citan pero que no
+   existe.
+
+### Prompt para retomar la Fase 6b
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el estado actual del repo: la demo de la Fase 6b ya funciona entera (catálogo, cesta,
+recomendaciones del ranker y banner de Next Best Action), así que NO la reescribas.
+
+Quedan dos cosas abiertas en la Fase 6b del ROADMAP.md:
+
+1. Permitir sembrar la cesta con una cesta real del cliente elegido, tomada de basket_items
+   en la ventana de test (la misma que usa el split del recomendador, para no meter fuga).
+   Debe convivir con la construcción manual que ya existe, no sustituirla: elegir cliente
+   recurrente → poder cargar una de sus cestas reales → y desde ahí seguir añadiendo o
+   quitando productos a mano.
+2. Un README corto de la demo: cómo lanzarla en local, qué artefactos necesita
+   (data/serving/, models/, predictions/, assets/) y qué ejecutar si falta alguno.
+
+Añade además el tests/test_demo.py que los docstrings de streamlit_app.py y
+src/demo/__init__.py ya citan pero que no existe: debe cubrir el buscador, el escaparate por
+departamento y el motivo de una recomendación, sin levantar la app.
+
+Al terminar, marca los checkboxes que cierres en ROADMAP.md y confirma que la app sigue
+arrancando y que la batería de tests sigue en verde.
+
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
 ### Fase 2 — ETL y feature engineering
 
 ```text
@@ -302,6 +354,8 @@ allá de Power BI, y por qué.
 
 ### Fase 6a — Preparación visual del catálogo
 
+✅ **Ya ejecutada** (commit `b810bd5`). Se conserva como registro.
+
 ```text
 Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
 revisa el esquema real de la tabla products (data/processed/ o donde la dejó la Fase 2).
@@ -343,6 +397,8 @@ visual_group salieron, cuáles fusionaste, y si algún grupo se quedó sin image
 ```
 
 ### Fase 6b — V1: Carrito, sin recomendaciones
+
+✅ **Ya ejecutada** (commit `55116b3`), salvo sembrar la cesta desde `basket_items`.
 
 ```text
 Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
@@ -389,6 +445,8 @@ Si algo es ambiguo, pregúntame antes de asumir.
 
 ### Fase 6b — V2: Recomendaciones en vivo
 
+✅ **Ya ejecutada** (commit `55116b3`). Los 4 perfiles quedaron verificados.
+
 ```text
 Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
 revisa el estado actual del repo — en particular la app de la V1 de la Fase 6b (catálogo y
@@ -415,6 +473,8 @@ Si algo es ambiguo, pregúntame antes de asumir.
 ```
 
 ### Fase 6b — V3: Next Best Action
+
+✅ **Ya ejecutada** (commit `55116b3`), salvo el README de la demo.
 
 ```text
 Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y

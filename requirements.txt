@@ -9,6 +9,8 @@ Faker
 
 # --- ETL y feature engineering (Fase 2) ---
 pyspark
+# Obligatorio con Python >= 3.12: devuelve el `distutils` que pyspark 3.5.x aun importa.
+setuptools
 # Arrow es el unico puente pandas <-> Spark que no levanta un worker de Python; en Windows
 # con Python 3.13 ese worker esta roto, asi que aqui no es opcional (ver src/etl/session.py).
 pyarrow
@@ -44,3 +46,10 @@ python-dotenv
 # Pillow solo se usa para la huella perceptual que evita repetir foto entre dos grupos
 # visuales (src/catalog/image_hash.py).
 Pillow
+
+# --- Demo web interactiva (Fase 6b, streamlit_app.py) ---
+# Es el entregable central del proyecto. Solo hace inferencia sobre los modelos ya
+# entrenados de `models/` y el bundle de `data/serving/`; no reentrena ni sale a internet.
+#   .venv/Scripts/streamlit run streamlit_app.py     # Windows
+#   .venv/bin/streamlit run streamlit_app.py         # macOS / Linux
+streamlit

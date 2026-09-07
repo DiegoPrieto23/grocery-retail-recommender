@@ -204,76 +204,173 @@ supuesto es el tamaño del premio, no el signo.
 
 ## Fase 6a — Preparación visual del catálogo
 
-Paso previo a la app, se ejecuta una sola vez. Es la única parte del proyecto que necesita
-internet — el resultado se cachea en `assets/` y a partir de ahí todo vuelve a ser local.
+Paso previo a la app, se ejecuta una sola vez con `python -m src.catalog.build_assets`.
+Es la única parte del proyecto que necesita internet — el resultado se cachea en `assets/`
+y a partir de ahí todo vuelve a ser local. La lógica vive en `src/catalog/` y está
+verificada por `tests/test_catalog.py` (29 tests).
 
-- [ ] `.env` con `PEXELS_API_KEY` (en `.gitignore`, nunca comiteado) + `.env.example` sin
+- [x] `.env` con `PEXELS_API_KEY` (en `.gitignore`, nunca comiteado) + `.env.example` sin
       valores reales, comiteado como documentación de qué variable hace falta
-- [ ] Analizar `products` (department, category, brand) y decidir si `category` ya es
+      · `.gitignore` ignora `.env` y `.env.*` con la excepción `!.env.example` ·
+      comprobado con `git ls-files`: `.env` **no** está trackeado, `.env.example` sí y va
+      con la clave vacía
+- [x] Analizar `products` (department, category, brand) y decidir si `category` ya es
       suficientemente granular o hace falta una columna `visual_group` nueva — ni tan
       amplia como el departamento ni tan específica como el SKU (p.ej. `leche_entera`,
       `yogur_griego`, `salmón`, no `Lácteos` ni un `product_id` concreto)
-- [ ] CSV `visual_group, search_term` (término de búsqueda en inglés, que es donde Pexels
+      · **`category` es el nivel correcto** (1.500 productos en 62 categorías, 24 por
+      grupo de media): `department` son 8 valores demasiado amplios y `brand` son 144
+      razones sociales de Faker sin aspecto propio. `visual_group` se mantiene como
+      columna propia y no como alias porque es un slug ASCII usable como nombre de
+      fichero y porque el mapa es 62 → 60, no 1:1 · razonamiento en el docstring de
+      `src/catalog/visual_groups.py` y en `docs/VISUAL_CATALOG.md`
+- [x] CSV `visual_group, search_term` (término de búsqueda en inglés, que es donde Pexels
       tiene mejor cobertura, aunque el resto del proyecto esté en español)
-- [ ] Revisar recuento de productos por `visual_group` y fusionar los grupos demasiado
+      · `assets/visual_groups.csv` · 60 filas
+- [x] Revisar recuento de productos por `visual_group` y fusionar los grupos demasiado
       pequeños
-- [ ] Descargar vía la API de Pexels (`PEXELS_API_KEY` en variable de entorno, nunca
+      · `MIN_GROUP_SIZE = 15` y la lista `MERGES` en `src/catalog/visual_groups.py` · dos
+      fusiones aplicadas (Bacalao → `pescado_blanco`, Limpiacristales →
+      `limpiadores_hogar`), cada una con su motivo escrito · el criterio exige además una
+      hermana que represente **el mismo objeto físico** en el mismo departamento, así que
+      grupos pequeños como turrón, torrijas, cava, marisco o protector solar se quedan
+      sin fusionar a propósito
+- [x] Descargar vía la API de Pexels (`PEXELS_API_KEY` en variable de entorno, nunca
       hardcodeada) una imagen representativa por `visual_group` — priorizando fondo limpio
       o blanco, aspecto ecommerce/supermercado, sin personas, sin composiciones complejas,
       sin fotos de cocina o restaurante
-- [ ] Guardar las imágenes en `assets/` (`assets/leche_entera.jpg`, etc.)
-- [ ] CSV final `product_id, product_name, visual_group, image_path` — `product_name` se
+      · `src/catalog/pexels.py` · `score_photo` **descarta** la foto si el texto
+      alternativo contiene una palabra de `PEOPLE_WORDS` y puntúa el resto por brillo,
+      vocabulario de estudio/producto, y penalización de escena, composición y
+      panorámicas · búsqueda en cascada (`color=white` primero, luego sin filtro) · la
+      foto elegida, su autor y su puntuación quedan en `assets/image_credits.csv`
+- [x] Guardar las imágenes en `assets/` (`assets/leche_entera.jpg`, etc.)
+      · 60 `.jpg`, uno por `visual_group` · `src/catalog/image_hash.py` usa una huella
+      perceptual para que dos grupos no acaben con la misma foto
+- [x] CSV final `product_id, product_name, visual_group, image_path` — `product_name` se
       deriva de department/category/brand (el dataset no tiene un nombre de producto
       propio; no hace falta tocar `DATA_SPEC.md` ni el generador para esto)
-- [ ] Comitear `assets/` y los CSV de mapeo — no se regeneran en cada ejecución, se tratan
+      · `assets/product_catalog.csv` · 1.500 filas, **0 con `image_path` vacío**
+- [x] Comitear `assets/` y los CSV de mapeo — no se regeneran en cada ejecución, se tratan
       como un fixture cacheado (los resultados de búsqueda de Pexels no son reproducibles
       por semilla)
+      · 63 ficheros trackeados en `assets/` (60 fotos + `visual_groups.csv`,
+      `product_catalog.csv`, `image_credits.csv`)
+
+Verificado además **de punta a punta sobre la app**: ejecutando `streamlit_app.py` con
+`AppTest`, las fotos que sirve son byte-idénticas a los ficheros de `assets/` (13 fotos
+distintas en la primera carga, 0 recodificadas, 0 inventadas).
 
 ## Fase 6b — Demo web interactiva
 
-Es ahora el entregable central del proyecto: la pieza que hace tangibles el recomendador
-(Fase 3) y el NBA (Fase 4) para cualquiera que la abra, sin tener que leer métricas.
-Prioridad sobre lo que quede pendiente de la Fase 5. Se construye en tres versiones
-incrementales — cada una cabe en una sesión de la suscripción Pro sin arriesgar quedarse a
-medias. No pasar a la siguiente versión sin haber cerrado y verificado la anterior.
+Es el entregable central del proyecto: la pieza que hace tangibles el recomendador (Fase 3)
+y el NBA (Fase 4) para cualquiera que la abra, sin tener que leer métricas.
 
-### V1 — Carrito, sin recomendaciones
+Se ejecuta con:
 
-- [ ] Comprobar que `streamlit`, `python-dotenv` y `requests` están en `requirements.txt`
+```bash
+.venv/Scripts/streamlit run streamlit_app.py     # Windows
+.venv/bin/streamlit run streamlit_app.py         # macOS / Linux
+```
+
+`streamlit_app.py` solo dibuja; la lógica vive en `src/serving/` (inferencia del
+recomendador fuera de Spark) y `src/demo/` (catálogo, buscador y el motivo de cada
+recomendación), que es lo que permite probarla sin levantar la app.
+
+**Nota sobre cómo salió**: estaba planeada en tres versiones incrementales, una por sesión.
+En la práctica las tres aterrizaron juntas en el commit `55116b3`, así que los checkboxes
+de abajo se marcan sobre lo verificado, no sobre el orden en que se hizo. Los dos que
+siguen abiertos están al final, agrupados.
+
+### V1 — Carrito
+
+- [x] Comprobar que `streamlit`, `python-dotenv` y `requests` están en `requirements.txt`
       (no estaban en el `requirements.txt` original de la Fase 0) e instalarlos; verificar
       que `streamlit run` arranca antes de seguir
-- [ ] Instalar la skill `developing-with-streamlit` (repo `streamlit/agent-skills`) en
+      · `requests` y `python-dotenv` entraron con la Fase 6a; **`streamlit` faltaba en
+      `requirements.txt` y en `constraints.txt`** y se añadió después, fijado a `1.63.0`
+      con sus transitivas · `streamlit run` verificado: el servidor responde `200` en `/`
+      y `ok` en `/_stcore/health`
+- [x] Instalar la skill `developing-with-streamlit` (repo `streamlit/agent-skills`) en
       `.claude/skills/`
-- [ ] Tema propio en `.streamlit/config.toml` (colores, fuente) en vez del tema por defecto
-- [ ] Selector de cliente: existente (`customer_id` real) o "nuevo simulado" (sin historial)
-- [ ] Cargar un carrito existente de un cliente (una cesta real de `basket_items` de test) o
-      simular uno nuevo eligiendo productos manualmente
-- [ ] Catálogo de productos visual: tarjetas con la foto real de su `visual_group` (Fase
+- [x] Tema propio en `.streamlit/config.toml` (colores, fuente) en vez del tema por defecto
+      · paleta de supermercado (verde `#1a7f4b` de frescos, ámbar de promoción), fuente
+      Inter y colores semánticos reutilizados por las insignias de la app · todo en tokens
+      del tema y **sin CSS inyectado**, que apuntaría a clases internas de Streamlit
+- [x] Selector de cliente: existente (`customer_id` real) o "nuevo simulado" (sin historial)
+      · `st.segmented_control` Recurrente / Nuevo · en modo recurrente se ofrecen los
+      clientes con más historial y se muestra su ficha (cestas, referencias, ticket medio)
+- [x] Catálogo de productos visual: tarjetas con la foto real de su `visual_group` (Fase
       6a, vía `image_path`), nombre, categoría y precio
-- [ ] La cesta (cargada o simulada) se muestra con el mismo estilo de tarjeta que el
+      · buscador sobre todo el catálogo (AND entre palabras, insensible a tildes) y
+      navegación por departamento → categoría · el escaparate de un departamento enseña
+      **una referencia por categoría**, porque la foto es una por `visual_group` y si no
+      saldría la misma imagen quince veces
+- [x] La cesta (cargada o simulada) se muestra con el mismo estilo de tarjeta que el
       catálogo
-- [ ] Sin llamadas al recomendador ni al NBA todavía — solo navegación de catálogo y cesta
+      · misma función `product_card`, cambiando solo el botón (Añadir / Quitar)
+- [x] ~~Sin llamadas al recomendador ni al NBA todavía~~ — restricción de andamiaje de la
+      V1, superada: la app llegó con las tres versiones a la vez
 
 ### V2 — Recomendaciones en vivo
 
-- [ ] Integrar el pipeline de candidatos + ranking (Fase 3, ya entrenado): al cambiar la
+- [x] Integrar el pipeline de candidatos + ranking (Fase 3, ya entrenado): al cambiar la
       cesta, se recalcula y muestra el top-5 de recomendaciones
-- [ ] Las recomendaciones se muestran como tarjetas con foto (mismo estilo que el catálogo)
+      · `src/serving/recommend.py` reimplementa la inferencia **sin Spark** sobre el bundle
+      de `data/serving/` · la equivalencia con el pipeline offline no se supone: la fija
+      `tests/test_serving_parity.py` con 6 tests (mismas cestas, mismo top-5 producto a
+      producto, mismo orden, mismos scores del booster, mismas fuentes atribuidas)
+- [x] Las recomendaciones se muestran como tarjetas con foto (mismo estilo que el catálogo)
       y un motivo breve cuando se pueda derivar de las features del ranker (ej. "porque te
       toca reponerlo", "co-compra habitual con lo que llevas")
-- [ ] Verificar que los 4 perfiles de cliente funcionan correctamente (nuevo sin cesta,
+      · `explain()` en `src/demo/catalog.py` · el motivo sale de las **mismas columnas que
+      el ranker usó para ordenar** (`cat_due`, `cat_overdue_ratio`, las cinco `src_*`), no
+      de una racionalización escrita a posteriori · la reposición manda sobre la fuente
+- [x] Verificar que los 4 perfiles de cliente funcionan correctamente (nuevo sin cesta,
       nuevo con cesta, recurrente sin cesta, recurrente con cesta)
-- [ ] Sigue sin NBA
+      · comprobado sobre el bundle real: los 4 devuelven 5 recomendaciones con foto (5/5)
+      y **activan fuentes progresivamente**, que es justo lo que la Fase 3 predecía:
+
+      | Perfil | Fuentes con señal | Motivos que salen |
+      | --- | --- | --- |
+      | 1 · nuevo, sin cesta | `src_pop` | top ventas ahora |
+      | 2 · nuevo, con cesta | `src_aff`, `src_cataff`, `src_pop` | va con tu cesta |
+      | 3 · recurrente, sin cesta | `src_hist`, `src_pop` | lo compras a menudo · te toca reponerlo |
+      | 4 · recurrente, con cesta | las cinco | encaja con tu cesta · lo compras a menudo · te toca reponerlo |
+
+- [x] ~~Sigue sin NBA~~ — restricción de andamiaje, superada por el mismo motivo que en la V1
 
 ### V3 — Next Best Action
 
-- [ ] Cargar los modelos de propensión (Fase 4) y calcular la acción recomendada para el
+- [x] Cargar los modelos de propensión (Fase 4) y calcular la acción recomendada para el
       cliente activo
-- [ ] Banner de Next Best Action visualmente destacado (color/icono), no solo texto plano
-- [ ] La demo completa (V1+V2+V3) solo hace inferencia sobre los modelos ya guardados en
+      · la app lee la tabla ya resuelta `predictions/nba_actions.parquet` (que produce
+      `python -m src.nba.pipeline`) en vez de invocar los modelos en caliente: la política
+      es determinista dado el corte, así que recalcularla por pulsación no cambiaría el
+      resultado y sí la latencia
+- [x] Banner de Next Best Action visualmente destacado (color/icono), no solo texto plano
+      · `nba_banner()` · título con icono y color por acción, categoría objetivo, valor
+      esperado en € y las dos probabilidades (compra 7 d, churn 4 sem) como métricas · un
+      cliente nuevo no entra en la política y el banner lo dice explícitamente en vez de
+      quedarse vacío
+- [x] La demo completa (V1+V2+V3) solo hace inferencia sobre los modelos ya guardados en
       `models/` y las imágenes ya descargadas en `assets/` — no reentrena nada ni vuelve a
       llamar a Pexels
-- [ ] README corto de la demo: cómo lanzarla en local
+      · verificado ejecutando la app con `AppTest`: corre sin excepciones y las fotos que
+      sirve son **byte-idénticas** a los ficheros de `assets/` (13 distintas en la primera
+      carga, 0 recodificadas) · sin tráfico a Pexels: `src/catalog/` no se importa desde
+      la app
+
+### Lo que queda abierto de la Fase 6b
+
+- [ ] **Cargar una cesta real del cliente como punto de partida.** Hoy la cesta solo se
+      construye a mano desde el catálogo. Falta poder sembrarla con una cesta real de
+      `basket_items` de la ventana de test para el `customer_id` elegido, que es lo que
+      enseña el perfil 4 sin tener que clicar productos uno a uno.
+- [ ] **README corto de la demo**: cómo lanzarla en local, qué artefactos necesita
+      (`data/serving/`, `models/`, `predictions/`, `assets/`) y qué hacer si falta alguno.
+      Los docstrings de `streamlit_app.py` y `src/demo/__init__.py` ya citan un
+      `tests/test_demo.py` que **tampoco existe todavía**.
 
 ## Fuera de alcance (por ahora)
 
