@@ -4,7 +4,7 @@ Recomendador de cesta y capa de *Next Best Action* sobre un supermercado online 
 El proyecto empieza donde suelen empezar los problemas reales — **no hay dataset**: se
 genera, con sus ciclos de reposición, su estacionalidad, su señal de abandono y sus
 defectos de calidad deliberados — y sigue con el ETL, el modelado y la comunicación de
-resultados.
+resultados, hasta una demo web que enseña el sistema funcionando.
 
 Es la **fase 2 del ciclo de vida del cliente en retail** que empezó en
 [`sports-rental-analytics`](https://github.com/DiegoPrieto23/sports-rental-analytics), con
@@ -26,19 +26,22 @@ punta.
 | 3 · Recomendador de cesta | Candidatos (popularidad + co-compra + ALS) → ranker LightGBM | ✅ |
 | 4 · Next Best Action | Modelo de propensión + política de valor esperado | ✅ |
 | 5 · Empaquetado y storytelling | Impacto en €, informe de hallazgos, MLflow | ✅ |
-| 6 · Demo web | Streamlit con simulación de cesta en vivo | ⬜ |
+| 6 · Demo web | Catálogo con fotos reales + Streamlit con la cesta en vivo | ✅ |
+| 7 · Fidelidad de producto | Fidelidad de marca en el generador y todo lo anterior rehecho encima | ✅ |
 
-Este README cubre lo que existe hoy (Fases 0-5). El plan completo está en
-[`ROADMAP.md`](ROADMAP.md) y el enunciado del reto en [`CHALLENGE.md`](CHALLENGE.md).
+El plan completo, con cómo se verifica cada punto, está en [`ROADMAP.md`](ROADMAP.md), y el
+enunciado del reto en [`CHALLENGE.md`](CHALLENGE.md). **Todas las cifras de este README son
+las del dataset de la Fase 7**; donde se comparan con las anteriores, se dice.
 
 **Lo que ya se puede enseñar:** 3,1 M de líneas de ticket generadas de forma reproducible,
 un ETL en PySpark que las limpia y documenta cada corrección, un Data Trust Score que pasa
-de **89,99 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
+de **91,42 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
 [notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL,
-un recomendador de cesta de dos etapas con su evaluación honesta, una política de Next Best
-Action que decide en euros, y dos documentos que traducen todo eso a negocio: el
+un recomendador de cesta de dos etapas con **NDCG@5 = 0,1752**, una política de Next Best
+Action que decide en euros, dos documentos que traducen todo eso a negocio — el
 [resumen de impacto](IMPACT.md) y el
-[informe de hallazgos](reports/insights/business_findings.md).
+[informe de hallazgos](reports/insights/business_findings.md) — y una
+[demo en Streamlit](#fase-6--demo-web) donde se ve todo funcionando sobre cestas reales.
 
 ---
 
@@ -51,22 +54,27 @@ pega conocida: ver [Notas de entorno](#notas-de-entorno).
 python -m venv .venv && .venv\Scripts\activate        # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt -c constraints.txt
 
-python -m data_generation.generate_dataset            # ~3 min  → data/raw/    (7 CSV, ~155 MB)
+python -m data_generation.generate_dataset            # ~3 min  → data/raw/    (7 CSV)
 python -m data_generation.verify_dataset              # comprueba los patrones inyectados
-python -m src.etl.run_etl                             # ~8 min  → data/processed/ + reports/etl/
-python -m src.recommender.pipeline                    # ~33 min → models/ + predictions/ + reports/recommender/
+python -m src.etl.run_etl                             # ~4 min  → data/processed/ + reports/etl/
+python -m src.recommender.pipeline                    # ~23 min → models/ + predictions/ + reports/recommender/
 python -m src.recommender.demo_profiles               # los 4 perfiles, con un caso de cada uno
-python -m src.nba.pipeline                            # ~8 min  → models/ + predictions/ + reports/nba/
-python -m src.impact.pipeline                         # ~10 s   → IMPACT.md + reports/impact/
-python -m src.eda.findings                            # ~2 min  → reports/insights/ (informe + 8 figuras)
-pytest                                                # 259 tests
+python -m src.nba.pipeline                            # ~6 min  → models/ + predictions/ + reports/nba/
+python -m src.impact.pipeline                         # ~5 s    → IMPACT.md + reports/impact/
+python -m src.eda.findings                            # ~1 min  → reports/insights/ (informe + 8 figuras)
+python -m src.serving.export_bundle                   # fuentes de candidatos para servir sin Spark → data/serving/
+python -m src.catalog.build_assets --offline          # mapeo producto → foto (las fotos ya están en assets/)
+streamlit run streamlit_app.py                        # la demo, en http://localhost:8501
+pytest                                                # 323 tests
 ```
 
 El dataset **no se versiona** (`data/` está en `.gitignore`): se regenera con la semilla
 fija y sale byte a byte idéntico. Lo que sí está en el repo son los informes de
-`reports/`, el notebook ya ejecutado con sus figuras, y los dos documentos de negocio
+`reports/`, el notebook ya ejecutado con sus figuras, los dos documentos de negocio
 ([`IMPACT.md`](IMPACT.md) y
-[`reports/insights/business_findings.md`](reports/insights/business_findings.md)).
+[`reports/insights/business_findings.md`](reports/insights/business_findings.md)) y las
+fotos del catálogo en `assets/`, que se descargaron una sola vez de Pexels y no se
+regeneran (ver [Fase 6](#fase-6--demo-web)).
 
 Para abrir el notebook hace falta además `pip install jupyterlab`. Y con
 `pip install mlflow`, las Fases 3 y 4 registran además cada ejecución como un experimento
@@ -79,7 +87,7 @@ Para abrir el notebook hace falta además `pip install jupyterlab`. Y con
 ```
 grocery-retail-recommender/
 ├── data_generation/          # FASE 1 — el dataset no se descarga, se genera
-│   ├── catalog.py            #   parametrización de dominio: 62 categorías, afinidad, estacionalidad
+│   ├── catalog.py            #   parametrización de dominio: 62 categorías, lealtad, afinidad, estacionalidad
 │   ├── generate_dataset.py   #   las 7 tablas + los defectos de calidad deliberados
 │   └── verify_dataset.py     #   recalcula desde los CSV cada patrón que dice haber inyectado
 ├── src/
@@ -95,36 +103,44 @@ grocery-retail-recommender/
 │   ├── eda/                  # FASE 2/5 — las 9 preguntas de negocio, como funciones
 │   │   ├── questions.py      #   Tarea 1: una función por pregunta, con tests
 │   │   └── findings.py       #   el informe de hallazgos de la Fase 5
-│   ├── impact/               # FASE 5 — de NDCG y AUC a euros
-│   │   ├── config.py         #   los supuestos económicos, todos juntos
-│   │   ├── model.py          #   la aritmética, en funciones puras
-│   │   └── pipeline.py       #   mide, aplica y escribe IMPACT.md
-│   ├── tracking.py           # FASE 5 — MLflow opcional; sin él, no-op
 │   ├── recommender/          # FASE 3 — dos etapas
 │   │   ├── config.py         #   ventanas temporales, tamaños de pool, hiperparámetros
 │   │   ├── splits.py         #   split por cesta, prefijo/target y los 4 perfiles
 │   │   ├── candidates.py     #   popularidad, co-compra (SKU y categoría), historial, ALS
 │   │   ├── features.py       #   54 features del par (query, candidato)
 │   │   ├── ranker.py         #   LightGBM LambdaRank
-│   │   ├── evaluate.py       #   NDCG@5, Recall@5 y el desglose SKU / categoría
+│   │   ├── evaluate.py       #   NDCG@5, Recall@5, Precision@5, F1@5 y el desglose SKU / categoría
 │   │   ├── pipeline.py       #   orquestador
 │   │   └── demo_profiles.py  #   un caso legible de cada perfil
-│   └── nba/                  # FASE 4 — propensión + política
-│       ├── config.py         #   cortes, catálogo de acciones y TODOS los supuestos
-│       ├── targets.py        #   las dos etiquetas, construidas por corte
-│       ├── features.py       #   features de cliente y de cliente × categoría
-│       ├── propensity.py     #   los dos LightGBM binarios y sus métricas
-│       ├── policy.py         #   valor esperado, baselines y sensibilidad
-│       └── pipeline.py       #   orquestador
+│   ├── nba/                  # FASE 4 — propensión + política
+│   │   ├── config.py         #   cortes, catálogo de acciones y TODOS los supuestos
+│   │   ├── targets.py        #   las dos etiquetas, construidas por corte
+│   │   ├── features.py       #   features de cliente y de cliente × categoría
+│   │   ├── propensity.py     #   los dos LightGBM binarios y sus métricas
+│   │   ├── policy.py         #   valor esperado, baselines y sensibilidad
+│   │   └── pipeline.py       #   orquestador
+│   ├── impact/               # FASE 5 — de NDCG y AUC a euros
+│   │   ├── config.py         #   los supuestos económicos, todos juntos
+│   │   ├── model.py          #   la aritmética, en funciones puras
+│   │   └── pipeline.py       #   mide, aplica y escribe IMPACT.md
+│   ├── tracking.py           # FASE 5 — MLflow opcional; sin él, no-op
+│   ├── catalog/              # FASE 6a — grupos visuales y fotos de Pexels (se ejecuta una vez)
+│   ├── serving/              # FASE 6b — inferencia del recomendador sin Spark
+│   │   ├── export_bundle.py  #   vuelca las fuentes de candidatos ya ajustadas a data/serving/
+│   │   └── recommend.py      #   el mismo top-5 que el pipeline, con pandas
+│   └── demo/                 # FASE 6b — lo que la app pinta: catálogo, motivos, cestas reales, aciertos
+├── streamlit_app.py          # FASE 6b — la demo (solo dibuja; la lógica está en src/)
+├── assets/                   # FASE 6a — 60 fotos + el mapeo producto → foto (versionados)
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 259 tests
+├── tests/                    # 323 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
-├── reports/recommender/      # métricas de la Fase 3 y demo de los 4 perfiles
-├── reports/nba/              # métricas de la Fase 4 y barridos de sensibilidad
+├── reports/recommender/      # métricas de la Fase 3, demo de los 4 perfiles y la referencia pre-Fase 7
+├── reports/nba/              # métricas de la Fase 4, barridos de sensibilidad y la referencia pre-Fase 7
 ├── reports/impact/           # el detalle numérico de IMPACT.md
 ├── reports/insights/         # informe de hallazgos de negocio + sus 8 figuras
 ├── docs/CLEANING.md          # el porqué de cada decisión de limpieza
-├── data/{raw,processed}/     # generados, no versionados
+├── docs/VISUAL_CATALOG.md    # cómo se agruparon los productos y se eligieron las fotos
+├── data/{raw,processed,serving}/  # generados, no versionados
 ├── IMPACT.md                 # el impacto de negocio estimado, en euros
 ├── DATA_SPEC.md              # esquema columna a columna, crudo y procesado
 ├── CHALLENGE.md              # el reto
@@ -142,12 +158,12 @@ años completos de operación (2024-2025) de un supermercado con canal físico y
 | Tabla | Filas | Grano |
 | --- | ---: | --- |
 | `customers` | 20.000 | Un cliente |
-| `products` | 1.500 | Un producto (8 departamentos, 62 categorías) |
+| `products` | 496 | Un producto (8 departamentos, 62 categorías, 8 referencias en cada una) |
 | `promotions` | 300 | Una promoción con su ventana de vigencia |
 | `baskets` | 600.174 | Un ticket |
-| `basket_items` | 3.103.684 | Una línea de ticket |
+| `basket_items` | 3.103.685 | Una línea de ticket |
 | `sessions` | 150.000 | Una sesión online |
-| `session_events` | 945.676 | Un evento (`view` / `add_to_cart`) dentro de una sesión |
+| `session_events` | 897.674 | Un evento (`view` / `add_to_cart`) dentro de una sesión |
 
 ### Modelo relacional
 
@@ -231,13 +247,21 @@ inyectan, todas parametrizadas en `catalog.py` con los valores exactos de `DATA_
   del típico de la categoría (leche ~6 días, detergente ~45, protector solar ~200),
   escalado por el tamaño del hogar y con ruido gaussiano. La probabilidad de que una
   categoría entre en la cesta crece según se acerca la fecha de reposición.
+- **Fidelidad de marca** (Fase 7a). La primera compra de un cliente en una categoría le
+  fija una referencia preferida, que repite después con la lealtad de esa categoría: 0,75-0,85
+  en las de hábito (café, detergente, champú, pienso) y 0,25-0,40 en las de exploración
+  (fruta, snacks, vino). Es lo que hace un cliente real con su leche de siempre, y es la
+  señal que un recomendador de SKU necesita. Sin ella, el cliente cambiaba de referencia
+  casi en cada compra (ver [Fase 7](#fase-7--fidelidad-de-producto)).
 - **Afinidad de cesta.** 10 pares de categorías cuya probabilidad conjunta se multiplica
   cuando la disparadora ya está en la cesta: cerveza→snacks (3,0x), pañales→toallitas
   (4,0x), detergente→suavizante (3,5x)... Es la señal que explota el recomendador.
 - **Estacionalidad.** 9 categorías con multiplicador en su mes pico: turrón en diciembre
   (8,0x), protector solar en verano (6,0x), torrijas en Cuaresma (5,0x).
-- **Uplift de promoción.** Un producto en promoción triplica su probabilidad de entrar en
-  la cesta mientras la ventana está activa.
+- **Uplift de promoción.** Un producto en promoción triplica su peso dentro de su categoría
+  mientras la ventana está activa. Como se aplica encima de la fidelidad de marca, solo
+  puede llevarse la parte no fiel de la categoría, y el uplift observado se queda en
+  **1,97x** — que es lo que pasa en gran consumo al promocionar contra un hábito.
 - **Restricciones de hogar.** Sólo los hogares con bebé compran pañales, sólo los que
   tienen mascota compran pienso. Esto hace que el bloque de bebé sea una señal real y no
   ruido — y tiene una consecuencia medible que aparece en el EDA.
@@ -255,9 +279,9 @@ independiente por etapa. Dos ejecuciones producen ficheros idénticos, y el mani
 guarda el `sha256` de cada tabla. Hay un test que lo comprueba.
 
 `verify_dataset.py` cierra el círculo: recalcula desde los CSV el lift de cada par de
-afinidad, el índice estacional, el uplift promocional, los ciclos observados y la señal de
-churn, y los compara con el objetivo. Cualquier cifra de este README sale de ahí o del
-ETL, nunca copiada a mano de un notebook.
+afinidad, el índice estacional, el uplift promocional, los ciclos observados, la
+repetición de referencia y la señal de churn, y los compara con el objetivo. Cualquier
+cifra de este README sale de ahí o de otro script, nunca copiada a mano de un notebook.
 
 ---
 
@@ -279,22 +303,23 @@ par `(+2, −2)` deja de ser un duplicado exacto y sobrevive a cualquier `dropDu
 
 | Orden | Filas resultantes | `(basket_id, product_id)` duplicados |
 | --- | ---: | ---: |
-| Deduplicar → corregir signo | 3.058.178 | **353** |
+| Deduplicar → corregir signo | 3.058.211 | **386** |
 | Corregir signo → deduplicar | 3.057.825 | **0** |
 
 **2. Las cantidades negativas se corrigen, no se descartan.** Una devolución real tiene
-enfrente la venta que anula. De las 12.308 líneas negativas, sólo 353 tienen una línea
-positiva del mismo producto en la misma cesta — y esas 353 se explican por el mecanismo de
+enfrente la venta que anula. De las 12.314 líneas negativas, sólo 386 tienen una línea
+positiva del mismo producto en la misma cesta — y esas 386 se explican por el mecanismo de
 duplicados. El 97 % restante no anula nada: son ventas mal firmadas. Descartarlas sesgaría
 los ciclos de recompra de la Tarea 2.
 
-**3. `total_amount` se recalcula desde el detalle.** Un filtro por IQR marcaba 3.227 cestas
-(0,54 %) cuando los outliers inyectados son 1.192 (0,2 %): dos de cada tres serían cestas
-grandes legítimas. Recalculando desde las líneas limpias no hace falta adivinar, y quedan
-descuadradas exactamente esas **1.192** — el resto de descuadres los causaban los
-duplicados y los signos.
+**3. `total_amount` se recalcula desde el detalle.** Incluso con la valla de valores
+extremos (`Q3 + 3·IQR`), un filtro por IQR marca 3.477 cestas (0,58 %) cuando los outliers
+inyectados son 1.192 (0,2 %): dos de cada tres serían cestas grandes legítimas.
+Recalculando desde las líneas limpias no hace falta adivinar, y quedan descuadradas
+exactamente esas **1.192** — el resto de descuadres los causaban los duplicados y los
+signos.
 
-Además: las 116 grafías de categoría se normalizan a las 62 canónicas deduciéndolas del
+Además: las 82 grafías de categoría se normalizan a las 62 canónicas deduciéndolas del
 propio dato (la mayoritaria de cada clave normalizada), sin mirar el catálogo del
 generador; se corrigen 58 altas posteriores a la primera compra; y **no se descarta ni una
 fila** por tener un nulo legítimo — las 18.000 compras anónimas siguen ahí.
@@ -307,13 +332,17 @@ integrity*. Informe completo en
 
 | Dataset | Score | Nota | Comprobaciones con fallos |
 | --- | ---: | :---: | ---: |
-| `data/raw` | 89,99 | **C** | 10 de 79 |
+| `data/raw` | 91,42 | **C** | 9 de 79 |
 | `data/processed` | 100,00 | **A** | 0 de 79 |
 
 Cada dimensión mezcla a partes iguales dos lecturas: la **tasa de filas** que pasan cada
 regla y la **tasa de reglas** que pasan sin una sola fila mala. Sólo con la primera, cuatro
 defectos que afectan al 1-9 % de las filas quedan diluidos entre setenta reglas que pasan y
 el dataset crudo saca un 99,6 con nota A — que no sirve para decidir nada.
+
+(Con el dataset anterior a la Fase 7 el crudo sacaba 89,99 con 10 fallos. No es que se
+inyecten menos defectos: al mover las altas corregidas, ninguna cae ya fuera del periodo
+simulado, así que una comprobación deja de fallar. El detalle está en el `ROADMAP.md`, 7b.)
 
 ### Tablas de features
 
@@ -322,7 +351,7 @@ el dataset crudo saca un 99,6 con nota A — que no sirve para decidir nada.
 | `rfm` | 20.000 | Recencia, frecuencia, gasto, quintiles y segmento por cliente |
 | `repurchase_features` | 608.885 | `due_for_repurchase` por cliente y categoría (Tarea 2) |
 | `affinity_category` | 3.780 | Pares de categorías con soporte, confianza, lift y Jaccard |
-| `affinity_product` | 9.281 | Top-20 consecuentes por producto, para los candidatos de la Fase 3 |
+| `affinity_product` | 8.438 | Top-20 consecuentes por producto, para los candidatos de la Fase 3 |
 
 **`due_for_repurchase`** usa la cadencia observada del propio cliente cuando hay al menos
 dos compras previas de esa categoría (el 76,5 % de los pares), y cae al intervalo típico de
@@ -357,6 +386,10 @@ Las dos desviaciones grandes tienen explicación, y son más interesantes que lo
 - **Cereales → Leche se queda en 1,96** por efecto techo: la leche ya está en más de una de
   cada cuatro cestas, y cuando el consecuente es tan habitual el lift no tiene margen. La
   confianza (>50 %) sí refleja la asociación.
+
+La fidelidad de marca de la Fase 7 no movió ni un decimal de esta tabla: decide *qué
+referencia* se lleva el cliente dentro de una categoría ya elegida, y la afinidad se mide
+entre categorías.
 
 ---
 
@@ -394,7 +427,7 @@ Tres hallazgos que condicionan lo que viene:
 
 - **El nivel de fidelidad no cambia el ticket, cambia la frecuencia.** Los clientes `gold`
   son el 13,2 % de la base y traen el 21,7 % de la facturación, pero su ticket medio
-  (29,17 €) es casi idéntico al de un `bronze` (28,99 €). La palanca sobre un cliente
+  (28,95 €) es casi idéntico al de un `bronze` (28,82 €). La palanca sobre un cliente
   valioso es que vuelva antes, no que se lleve más.
 - **El ciclo observado reproduce el teórico** con una correlación de rangos de Spearman de
   **0,978**, y se acorta de forma monótona al crecer el hogar. Eso es lo que respalda el
@@ -439,25 +472,31 @@ compró" — y en test se desplomaría.
 | Historial + recompra | Lo que el cliente compra, priorizando lo que "toca" (Tarea 2) | 3 y 4 |
 | ALS implícito (Spark MLlib) | `customer_id × product_id` | 3 y 4 |
 
-Unidas dan **155 candidatos por cesta** de los 1.500 del catálogo. Sobre ellos, un
-**LightGBM `LambdaRank`** con 54 *features* devuelve el top-5.
+Unidas dan **139 candidatos por cesta** de los 496 del catálogo, y el pool contiene ya el
+**76,9 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 87
+árboles con 54 *features* devuelve el top-5.
 
 ### La señal de sesión, que obligó a arreglar el generador
 
 Se resolvió la deuda del EDA regenerando `sessions` y `session_events` con abandono de
-carrito, productos que sólo se miran y un retardo entre ver y añadir. Ahora
-`P(en la cesta | add_to_cart)` = 87,9 % y `P(visto | en la cesta)` = 85,0 %, ninguna de las
-dos es 1. El ranker la consume con un **corte temporal estricto** (`cut_ts`): sólo entran
-los eventos anteriores al último `add_to_cart` del carrito simulado. Un test lo fija.
+carrito, productos que sólo se miran y un retardo entre ver y añadir. Ahora acaba en el
+ticket el 88,0 % de lo añadido al carrito y el 59,0 % de lo que solo se mira, y sólo el
+85,0 % de las líneas del ticket deja rastro online: ninguna de las tres cifras es 1. El
+ranker la consume con un **corte temporal estricto** (`cut_ts`): sólo entran los eventos
+anteriores al último `add_to_cart` del carrito simulado. Un test lo fija.
 
 Aporta, y de forma medible pero modesta — lo que debe ser, porque sólo el 9 % de las cestas
 tiene sesión detrás:
 
 | Sistema | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: |
-| Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0200 | 0,0221 | 8,3 % |
-| LambdaRank sin señal de sesión | 0,0303 | 0,0302 | 11,1 % |
-| **LambdaRank completo** | **0,0343** | **0,0332** | **11,8 %** |
+| Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0868 | 0,0783 | 26,7 % |
+| LambdaRank sin señal de sesión | 0,1667 | 0,1606 | 48,3 % |
+| **LambdaRank completo** | **0,1752** | **0,1678** | **49,5 %** |
+
+La sesión suma un **+5,1 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
+historial prediciendo bien la referencia, lo que el cliente mira en la web aporta menos
+información nueva.
 
 ### Resultado por perfil
 
@@ -466,42 +505,46 @@ cambia es qué fuentes tienen algo que decir.
 
 | Perfil | Cestas | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 521 | 0,0212 | 0,0191 | 7,3 % |
-| 2 · nuevo, con artículos | 421 | 0,0149 | 0,0168 | 4,5 % |
-| 3 · recurrente, carrito vacío | 8.713 | 0,0352 | 0,0304 | 14,1 % |
-| 4 · recurrente, con artículos | 8.345 | 0,0351 | 0,0378 | 10,1 % |
-| **Total** | **18.000** | **0,0343** | **0,0332** | **11,8 %** |
+| 1 · nuevo, carrito vacío | 521 | 0,1185 | 0,1070 | 37,2 % |
+| 2 · nuevo, con artículos | 421 | 0,0835 | 0,0924 | 20,9 % |
+| 3 · recurrente, carrito vacío | 8.713 | 0,1886 | 0,1593 | 57,5 % |
+| 4 · recurrente, con artículos | 8.345 | 0,1694 | 0,1844 | 43,3 % |
+| **Total** | **18.000** | **0,1752** | **0,1678** | **49,5 %** |
 
 El cold-start rinde peor, como se esperaba, pero no se desploma: **el perfil 2 es el peor**
-(NDCG@5 0,0149, un 58 % por debajo del 4). Tiene sentido — es el único que no puede tirar
+(NDCG@5 0,0835, un 51 % por debajo del 4). Tiene sentido — es el único que no puede tirar
 ni de historial ni de ALS, y encima su cesta ya va por la mitad, así que lo fácil de
-acertar ya está dentro. Y el perfil 3 es el mejor en `hit_rate` (14,1 %) porque evalúa la
+acertar ya está dentro. Y el perfil 3 es el mejor en `hit_rate` (57,5 %) porque evalúa la
 cesta entera: cinco huecos contra 5,0 productos por adivinar en vez de 2,9.
 
-### Por qué el número es bajo: no es el modelo, es el dato
+### Categoría frente a SKU
 
-Esta es la parte interesante. El sistema **acierta la categoría en el 51,4 % de las cestas**
-y el SKU exacto sólo en el 11,8 %:
+La misma lista, puntuada dos veces. "Acierta la categoría" es recomendar un producto de una
+categoría que el cliente sí compró, aunque fuera otra referencia:
 
 | | Acierta la categoría | Acierta el SKU |
 | --- | ---: | ---: |
-| Al menos uno en el top-5 | **51,4 %** | 11,8 % |
-| Precisión media del top-5 | **18,3 %** | 2,5 % |
+| Al menos uno en el top-5 | **60,0 %** | **49,5 %** |
+| Precisión media del top-5 | 17,6 % | 12,8 % |
 
-Dos comprobaciones más lo confirman:
+La distancia entre las dos columnas es la parte del error que está en *elegir la
+referencia* y no en *saber qué categoría toca*. Hoy es pequeña: el 82 % de las cestas que
+aciertan la categoría aciertan también el SKU. **Antes de la Fase 7 era el 23 %**, y esa
+brecha es la historia de la [Fase 7](#fase-7--fidelidad-de-producto).
 
-- **Ampliar el pool no sirve de nada.** Pasar de 92 a 155 candidatos por cesta subió el
-  `pool_recall` del 21,7 % al 31,1 % — un 43 % más de target alcanzable — y el NDCG@5 se
-  quedó donde estaba (0,0344 → 0,0343). El sistema no está limitado por la primera etapa.
-- **La fidelidad del cliente está en la categoría, no en la referencia.** El 88,6 % de las
-  líneas de una cesta futura son de una categoría que ese cliente ya compró, pero sólo el
-  29,7 % son un producto que ya compró. Con ~24 referencias por categoría, un cliente con
-  tres o más compras en una categoría se lleva **0,86 referencias distintas por compra**:
-  casi nunca repite SKU.
+### F1@5 frente a Kaggle
 
-Es decir: el generador elige el SKU dentro de la categoría casi al azar, y eso pone el
-techo. Queda anotado en el `ROADMAP.md` como la siguiente mejora del generador — dar
-fidelidad de marca, que es lo que hace un cliente real con su leche de siempre.
+Para tener un orden de magnitud externo, el pipeline calcula también Precision@5
+(**0,1282**) y F1@5 (**0,1454**; **0,1367** promediando el F1 de cada cesta) y lo pone al
+lado del primer puesto de *Instacart Market Basket Analysis* (F1 ≈ 0,41).
+
+**No es una comparación equivalente**, y el
+[informe](reports/recommender/metrics.md#f15-frente-a-kaggle-instacart-market-basket-analysis)
+lo dice al lado de la tabla: Instacart predice solo recompras, con un conjunto de tamaño
+variable elegido para maximizar el F1 de cada pedido; aquí el top-5 es fijo, mezcla
+recompra con descubrimiento, el ranker optimiza NDCG y se predice a mitad de cesta. Con
+3,9 productos por adivinar de media, un top-5 fijo pone techo a la vez a la precisión y al
+recall.
 
 ### Un caso de cada perfil
 
@@ -512,9 +555,12 @@ recomendación. La tabla que lo resume:
 | Perfil | Popularidad | Co-compra SKU | Co-compra categoría | Historial | ALS |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 1 · nuevo, carrito vacío | 100 % | 0 % | 0 % | 0 % | 0 % |
-| 2 · nuevo, con artículos | 84 % | 47 % | 48 % | 0 % | 0 % |
-| 3 · recurrente, carrito vacío | 86 % | 0 % | 0 % | 49 % | 65 % |
-| 4 · recurrente, con artículos | 79 % | 34 % | 39 % | 42 % | 57 % |
+| 2 · nuevo, con artículos | 92 % | 20 % | 33 % | 0 % | 0 % |
+| 3 · recurrente, carrito vacío | 57 % | 0 % | 0 % | 99 % | 42 % |
+| 4 · recurrente, con artículos | 56 % | 15 % | 17 % | 98 % | 41 % |
+
+Con fidelidad de marca, el historial personal está detrás de casi todas las
+recomendaciones a clientes recurrentes (antes, del 42-49 %).
 
 ---
 
@@ -541,8 +587,8 @@ comprobación de cordura: coinciden en el **83,4 %**.
 
 | Modelo | Grano | Tasa base | AUC | PR-AUC | Lift decil 1 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Churn a 4 semanas | cliente | 0,4759 | **0,8531** | 0,8556 | 2,07x |
-| Compra en categoría a 7 días | cliente × categoría | 0,0619 | **0,7634** | 0,2190 | 3,51x |
+| Churn a 4 semanas | cliente | 0,4759 | **0,8527** | 0,8550 | 2,07x |
+| Compra en categoría a 7 días | cliente × categoría | 0,0619 | **0,7630** | 0,2185 | 3,50x |
 
 El PR-AUC se lee contra la tasa base, no contra 0,5. Y conviene un matiz honesto sobre el
 primero: con una cadencia media de visita de ~24 días, **no comprar en 4 semanas le pasa a
@@ -567,11 +613,11 @@ Con tres decisiones de diseño que evitan hacer trampa:
 | Política | Valor incremental | Actúa sobre |
 | --- | ---: | ---: |
 | No actuar siempre | 0 € | 0 % |
-| Actuar siempre: recomendar | 930 € | 83,2 % |
-| Actuar siempre: cupón | **−1.430 €** | 83,2 % |
-| **Política de valor esperado** | **4.012 €** | **75,6 %** |
+| Actuar siempre: recomendar | 907 € | 83,2 % |
+| Actuar siempre: cupón | **−1.592 €** | 83,2 % |
+| **Política de valor esperado** | **3.938 €** | **75,2 %** |
 
-Sobre 18.729 clientes: **+4.012 €** frente a no actuar y **+3.082 €** frente a la mejor
+Sobre 18.729 clientes: **+3.938 €** frente a no actuar y **+3.030 €** frente a la mejor
 alternativa trivial. Mandar el cupón a todo el mundo **destruye valor**.
 
 ### Lo que este dataset no puede medir
@@ -583,22 +629,26 @@ propensiones se miden; el efecto de cada acción es un **supuesto declarado**.
 
 Barrer ese supuesto cambió la lectura del resultado. El barrido obvio — el uplift de
 conversión del cupón — resultó ser el parámetro equivocado: moverlo de 1,00 a 2,00 lleva el
-total de 3.938 € a 4.721 €, apenas nada. La razón es económica: con un cupón de 2,54 €
+total de 3.866 € a 4.761 €, apenas nada. La razón es económica: con un cupón de 2,54 €
 persiguiendo un margen esperado de ~1,4 €, **el descuento es mayor que el margen**, así que
 por cross-sell el cupón destruye valor haga lo que haga la conversión. Todo lo que aporta
 viene de la retención, y el barrido que importa es el de `churn_reduction`:
 
 | `churn_reduction` | Valor de la política | Cupones repartidos |
 | ---: | ---: | ---: |
-| **0,00** (no retiene a nadie) | **1.210 €** | 0 % |
-| 0,05 | 1.734 € | 41,7 % |
-| **0,10** (el supuesto) | **4.012 €** | 64,8 % |
-| 0,20 | 8.862 € | 71,7 % |
+| **0,00** (no retiene a nadie) | **1.189 €** | 0 % |
+| 0,05 | 1.706 € | 43,7 % |
+| **0,10** (el supuesto) | **3.938 €** | 66,2 % |
+| 0,20 | 8.662 € | 72,0 % |
 
 La conclusión robusta es la primera fila: **incluso suponiendo que el cupón no retenga a
-nadie, la política sigue ganando** — 1.210 € frente a los 930 € de "recomendar siempre" —, y
+nadie, la política sigue ganando** — 1.189 € frente a los 907 € de "recomendar siempre" —, y
 en ese escenario deja de repartir cupones por completo. Lo que depende del supuesto es el
 tamaño del premio, no el signo.
+
+Rehacer la fase sobre el dataset de la Fase 7 no movió nada de esto (AUC 0,8531 → 0,8527,
+política 4.012 € → 3.938 €): el NBA trabaja a nivel de cliente y categoría, y la fidelidad
+de marca cambia qué referencia se compra, no cuándo ni en qué categoría.
 
 ---
 
@@ -624,18 +674,20 @@ Por **100.000 clientes activos y 100.000 cestas online al mes**:
 
 | Pieza | Al mes | Al año |
 | --- | ---: | ---: |
-| Cross-sell del recomendador (margen, con incrementalidad al 10 %) | 477 € | 5.721 € |
-| Política de Next Best Action | 21.421 € | 257.056 € |
-| **Total** | **21.898 €** | **262.777 €** |
+| Cross-sell del recomendador (margen, con incrementalidad al 10 %) | 3.095 € | 37.143 € |
+| Política de Next Best Action | 21.024 € | 252.286 € |
+| **Total** | **24.119 €** | **289.430 €** |
 
 Dos lecturas que conviene no maquillar:
 
-- **Casi todo el valor viene del NBA, no del recomendador.** En parte tiene sentido — la
+- **La mayor parte del valor sigue viniendo del NBA** (87 % del total). Tiene sentido: la
   política decide sobre el cliente entero y el recomendador sólo sobre cinco huecos de una
-  cesta — pero sobre todo es consecuencia del techo de dato de la Fase 3.
+  cesta. Antes de la Fase 7 el recomendador ponía el 2 % (5.721 €/año); el cambio lo cuenta
+  [`IMPACT.md`](IMPACT.md), con las cifras viejas congeladas en
+  [`reports/impact/baseline_fase5.json`](reports/impact/baseline_fase5.json).
 - **La cifra que no lleva supuestos dentro es la relativa**: el ranker deja una sugerencia
-  relevante en un **42 % más de cestas** que el baseline de popularidad (11,8 % frente a
-  8,3 %). El resto de la cadena hasta el euro son multiplicaciones sobre esa base.
+  relevante en un **85 % más de cestas** que el baseline de popularidad (49,5 % frente a
+  26,7 %). El resto de la cadena hasta el euro son multiplicaciones sobre esa base.
 
 ### El informe de hallazgos de negocio
 
@@ -645,24 +697,24 @@ hallazgos y sus figuras, cruzando el dato de la Fase 2 con lo que hacen los mode
 tres que no estaban en ninguna fase anterior:
 
 - **La política no responde a quien se va, sino a quien todavía vale algo.** La correlación
-  entre el valor esperado de la acción y `P(churn)` es **−0,63** — negativa — y con el gasto
-  de los últimos 90 días, **+0,96**. En el decil de más riesgo de fuga la política actúa
-  sólo sobre el 24 % de los clientes y saca 0,007 € por cabeza; en el de menos riesgo actúa
-  sobre todos y saca 0,727 €. Un AUC de 0,85 invita a perseguir al que más riesgo tiene, y
+  entre el valor esperado de la acción y `P(churn)` es **−0,62** — negativa — y con el gasto
+  de los últimos 90 días, **+0,95**. En el decil de más riesgo de fuga la política actúa
+  sólo sobre el 22 % de los clientes y saca 0,009 € por cabeza; en el de menos riesgo actúa
+  sobre todos y saca 0,671 €. Un AUC de 0,85 invita a perseguir al que más riesgo tiene, y
   la economía no lo sostiene: el valor de retener es `P(churn) × valor_de_retener`, y en un
   cliente hibernado el segundo factor es casi cero. **Un buen modelo de churn no es, por sí
   solo, una política de retención.**
-- **La política se va al margen.** Droguería e Higiene son el 17,2 % de la venta y se llevan
-  el 53,6 % de las acciones; Frescos, más de un tercio de la venta, se queda en un índice de
-  0,23. Es aritmética: un cupón de 2,54 € se paga con el margen del ticket que provoque, y
+- **La política se va al margen.** Droguería e Higiene son el 18,4 % de la venta y se llevan
+  el 52,4 % de las acciones; Frescos, un tercio de la venta, se queda en un índice de
+  0,20. Es aritmética: un cupón de 2,54 € se paga con el margen del ticket que provoque, y
   al 18 % de Frescos harían falta más de 14 € de compra sólo para empatar.
 - **⚠️ Y ahí aparece un punto ciego nuevo.** La categoría que más elige la política es
-  **protector solar**, que en la semana del corte (noviembre) vende **5,5 veces menos** que
+  **protector solar**, que en el mes del corte (noviembre) vende **5,5 veces menos** que
   en su pico de junio. El modelo de propensión **no tiene ni una feature de calendario**, así
   que no puede descontar una categoría de temporada fuera de temporada, y la economía
-  (precio unitario de 11,46 € × 35 % de margen) hace el resto. Queda anotado como deuda en
-  el [`ROADMAP.md`](ROADMAP.md); es barato de arreglar, porque el índice estacional ya se
-  calcula en la Fase 2.
+  (precio unitario medio de 11,30 € × 35 % de margen) hace el resto. Queda anotado como
+  deuda en el [`ROADMAP.md`](ROADMAP.md); es barato de arreglar, porque el índice
+  estacional ya se calcula en la Fase 2.
 
 ### Registro de experimentos (MLflow)
 
@@ -698,18 +750,150 @@ módulo con su porqué:
   proyecto se llaman `ndcg@5`, así que el primer intento tumbó el pipeline *después* de
   haber escrito modelos e informes. `sanitize_name` traduce la arroba a `_at_`.
 - **Y por eso el registro es ahora a prueba de fallos.** Cualquier error de MLflow se avisa
-  por consola y se traga: es un canal lateral, y no puede llevarse por delante 33 minutos de
+  por consola y se traga: es un canal lateral, y no puede llevarse por delante 20 minutos de
   entrenamiento ya terminado. Hay tests para las dos cosas.
+
+---
+
+## Fase 6 — Demo web
+
+El entregable central del reto: una tienda online simulada donde se ve el recomendador y el
+NBA trabajando, sin leer una métrica. Solo hace **inferencia** sobre lo ya entrenado: no
+reentrena nada y no sale a internet.
+
+```bash
+streamlit run streamlit_app.py
+```
+
+### 6a · Un catálogo con fotos reales
+
+Los productos se pintan como tarjetas con una **foto real** — de stock, ninguna generada
+por IA — y la foto es **una por grupo visual**, no una por producto: 496 fotos distintas de
+un dataset sintético no dirían nada que no diga ya la categoría. `category` resultó ser el
+nivel justo (ni tan amplio como el departamento ni tan concreto como el SKU), con dos
+fusiones de categorías que en la estantería son el mismo objeto: **62 categorías → 60
+`visual_group`**.
+
+`python -m src.catalog.build_assets` buscó una foto por grupo en la API de Pexels — con una
+puntuación que descarta personas, cocinas y bodegones, y una huella perceptual para que dos
+grupos no acaben con la misma imagen — y la guardó en `assets/`. **Es la única parte del
+proyecto que usa internet**, se ejecutó una vez y el resultado está versionado: las
+búsquedas de Pexels no son reproducibles por semilla, así que se tratan como un fixture. La
+clave (`PEXELS_API_KEY`) vive en un `.env` que no se versiona. El criterio completo, con las
+fotos que hubo que corregir a mano, está en
+[`docs/VISUAL_CATALOG.md`](docs/VISUAL_CATALOG.md).
+
+Cuando la Fase 7 renumeró los productos, las 60 fotos siguieron valiendo (el mapa va por
+categoría) y solo hubo que regenerar el mapeo, con `--offline` y **cero llamadas a
+Pexels**. Hubo que aprender una cosa: el mapeo viejo **seguía cruzando** con los ids nuevos,
+porque son correlativos, y la demo pintaba nombres y fotos de otra categoría sin ningún
+error. Ahora la app se niega a arrancar con un mapeo que no corresponde al catálogo, y un
+test lo fija.
+
+### 6b · La cesta en vivo
+
+- **Cliente recurrente o nuevo**, que decide qué fuentes de candidatos tienen señal. La
+  página dice en todo momento en cuál de los **4 perfiles** está.
+- **Catálogo navegable** por departamento y categoría, con buscador insensible a tildes.
+- **Top-5 recalculado con cada cambio de la cesta**, con un motivo en cada tarjeta ("te
+  toca reponerlo", "va con tu cesta", "clientes como tú"...) que sale de las mismas
+  *features* con las que ordenó el ranker, no de una explicación escrita a posteriori.
+- **Banner de Next Best Action** con la acción, la categoría objetivo, el valor esperado y
+  las dos probabilidades.
+- **Cestas reales de la ventana de test**: el carrito se siembra con lo que el cliente
+  llevaba en el instante del corte — con el día y el canal de esa compra —, y la demo
+  compara el top-5 con lo que añadió después.
+
+La inferencia no levanta Spark: `src/serving/` reimplementa el top-5 en pandas sobre un
+volcado de las fuentes ya ajustadas (`python -m src.serving.export_bundle`). Que sea **el
+mismo** top-5 no se supone: `tests/test_serving_parity.py` lo compara con el pipeline
+offline producto a producto, con el mismo orden y los mismos scores.
+
+**Cómo comunica el acierto.** Sobre una cesta real, la demo dice
+
+> **2 de 5** acertaron la categoría de lo que el cliente añadió después; de esas, **0**
+> eran el producto exacto.
+
+y marca las tarjetas en dos colores: "lo compró de verdad" y "categoría acertada". Antes
+solo enseñaba el acierto exacto, y un "0 de 5" se leía como que el sistema no acierta
+nada cuando había recomendado otra leche a quien compró leche. El número exacto sigue ahí,
+en la misma frase; lo que se añade es contexto, con la misma definición de categoría que
+usa el informe del recomendador y, debajo, la media del test (0,88 de 5 aciertan la
+categoría y 0,64 el producto exacto) leída de `reports/recommender/metrics.json`.
+
+La demo necesita `data/processed/`, `data/serving/`, `models/`,
+`predictions/nba_actions.parquet` y `assets/`, es decir, haber ejecutado antes la secuencia
+de [Cómo reproducirlo](#cómo-reproducirlo). Si falta el bundle o el mapeo de fotos, el error
+dice qué comando los genera; sin la tabla del NBA la app arranca igual y el banner avisa de
+que no hay acción calculada. La verificación de punta a punta (arranque real, carga de cestas y fotos
+servidas) está en el `ROADMAP.md`, Fases 6 y 7e.
+
+---
+
+## Fase 7 — Fidelidad de producto
+
+La motivó un hallazgo de uso, no una métrica: en la demo, casi todas las pruebas daban
+"0 de 5" y parecía que el sistema no acertaba nada. El diagnóstico ya estaba en la Fase 3,
+y apuntaba al dato.
+
+### El problema
+
+Con el generador original, el sistema acertaba la **categoría** en el 51,4 % de las cestas y
+el **SKU** en el 11,8 %. Dos comprobaciones decían que no era el modelo:
+
+- **Ampliar el pool no servía de nada.** Pasar de 92 a 155 candidatos por cesta subió el
+  `pool_recall` del 21,7 % al 31,1 % y el NDCG@5 se quedó donde estaba (0,0344 → 0,0343).
+- **La fidelidad del cliente estaba en la categoría, no en la referencia.** El 88,6 % de las
+  líneas de una cesta futura eran de una categoría que ese cliente ya compraba, pero sólo el
+  29,7 % eran un producto que ya había comprado. Con ~24 referencias por categoría elegidas
+  casi al azar, un cliente se llevaba 0,85 referencias distintas por compra: casi nunca
+  repetía SKU. Ningún modelo puede predecir algo aleatorio por construcción.
+
+### El arreglo, y rehacerlo todo encima
+
+- **7a · Generador.** Fidelidad de marca por categoría y un surtido de 8 referencias por
+  categoría (496 productos en vez de 1.500). Las referencias distintas por compra bajan de
+  0,850 a **0,440** y la cuota de la referencia favorita sube de 0,301 a **0,697**. El
+  resto de patrones no se mueve, y dos ejecuciones siguen dando el mismo `sha256`.
+- **7b · ETL.** Mismo código sobre el dato nuevo; no hizo falta tocar una línea.
+- **7c · Recomendador.** Reentrenado sin cambios de código, con Precision@5 y F1@5 añadidas
+  a la evaluación y la comparación con Kaggle.
+- **7d · NBA.** Reentrenado; ninguna conclusión cambia.
+- **7e · Demo.** Mapeo de fotos regenerado sin llamar a Pexels, y el acierto de categoría
+  al lado del exacto.
+
+### El resultado
+
+Mismo código, mismas ventanas y mismas 18.000 cestas de test; cambia el dato. Las cifras de
+antes están congeladas en `reports/recommender/baseline_fase3.json` y el pipeline hace la
+comparación él mismo:
+
+| Métrica | Antes | Después | Cambio |
+| --- | ---: | ---: | ---: |
+| NDCG@5 | 0,0343 | **0,1752** | ×5,1 |
+| Recall@5 | 0,0332 | **0,1678** | ×5,1 |
+| hit_rate@5 (SKU) | 11,8 % | **49,5 %** | ×4,2 |
+| hit_rate@5 (categoría) | 51,4 % | **60,0 %** | ×1,2 |
+| Cestas que aciertan la categoría y también el SKU | 23,0 % | **82,4 %** | ×3,6 |
+| `pool_recall` | 31,1 % | **76,9 %** | ×2,5 |
+
+La categoría apenas se mueve y el SKU se multiplica: la brecha casi se cierra, que es
+justo el efecto que se buscaba. **Parte de la subida es el catálogo más pequeño**, porque
+con 496 productos cualquier ordenación acierta más: el baseline de popularidad también pasa
+de 0,0200 a 0,0868. Lo que es mérito del ranker es la distancia a ese baseline, que crece
+de ×1,71 a **×2,02**.
 
 ---
 
 ## Tests
 
-**259 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17.
+**323 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17. Los que
+necesitan artefactos que no se versionan (el bundle de serving, las tablas procesadas) se
+saltan solos en un repo recién clonado.
 
 | Fichero | Tests | Qué fija |
 | --- | ---: | --- |
-| `test_generate_dataset.py` | 32 | Reproducibilidad, volúmenes, patrones del generador y el embudo online |
+| `test_generate_dataset.py` | 36 | Reproducibilidad, volúmenes, patrones del generador, fidelidad de marca y el embudo online |
 | `test_cleaning.py` | 23 | Cada regla de limpieza con un caso mínimo comprobable a mano |
 | `test_data_trust.py` | 26 | Un defecto → la dimensión que le toca, sobre un dataset impecable |
 | `test_eda_questions.py` | 39 | Las 9 preguntas de negocio de la Tarea 1, con las respuestas calculadas a mano |
@@ -717,10 +901,14 @@ módulo con su porqué:
 | `test_affinity.py` | 13 | Soporte, confianza y lift calculados a mano sobre 10 cestas |
 | `test_rfm.py` | 13 | Quintiles, segmentos y clientes sin compras |
 | `test_schemas.py` | 16 | Tipos al leer, ida y vuelta a Parquet por los dos motores |
-| `test_recommender.py` | 16 | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte |
+| `test_recommender.py` | 17 | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte; y Precision/F1 a mano |
 | `test_nba.py` | 25 | Que las features no miran tras el corte, y la aritmética del valor esperado a mano |
 | `test_impact.py` | 18 | La cadena de multiplicaciones que lleva de `hit_rate@5` a euros |
 | `test_tracking.py` | 19 | Qué se registra en MLflow, y que ni su ausencia ni sus fallos estorban |
+| `test_catalog.py` | 30 | Grupos visuales, puntuación de fotos, huella perceptual y que el mapeo corresponde al catálogo actual |
+| `test_serving_parity.py` | 6 | Que la inferencia sin Spark da el mismo top-5 que el pipeline, en el mismo orden y con los mismos scores |
+| `test_demo_baskets.py` | 11 | Que la cesta real que siembra la demo es el carrito del corte, y lo que compara, el target del split |
+| `test_demo_hits.py` | 12 | El acierto en dos niveles, sin perder nunca el número exacto, y la guarda contra un mapeo obsoleto |
 
 Dos criterios que se repiten en toda la suite:
 
@@ -760,24 +948,20 @@ correctos. Conviene extraer la fecha o la hora **dentro** de Spark.
 
 ## Qué viene ahora
 
-La **Fase 6** es el entregable que queda: una demo en Streamlit que simula la cesta de la
-compra y enseña en vivo el top-5 del recomendador y la siguiente mejor acción del cliente,
-con los productos como tarjetas y un icono por departamento. Sólo hace inferencia sobre los
-modelos ya guardados en `models/`; no reentrena nada.
+Las siete fases están cerradas. Un **dashboard en Power BI** estuvo planteado como pieza de
+BI Engineering de la Tarea 4 y queda **fuera de alcance por ahora** a favor de la demo —
+está declarado como tal en el [`ROADMAP.md`](ROADMAP.md), no es trabajo a medias.
 
-Un **dashboard en Power BI** estuvo planteado como pieza de BI Engineering de la Tarea 4 y
-queda **fuera de alcance por ahora** a favor de la demo — está declarado como tal en el
-[`ROADMAP.md`](ROADMAP.md), no es trabajo a medias.
+Quedan tres deudas anotadas, ninguna bloqueante:
 
-Tres deudas anotadas, ninguna de ellas bloqueante:
-
-- **Dar fidelidad de marca/SKU al generador**, que es el techo real del recomendador
-  (Fase 3). Implica regenerar el dataset y rehacer la Fase 2 con sus informes.
 - **El "modelo de churn" es en realidad un modelo de inactividad a 4 semanas** (Fase 4). Un
   target honesto pediría una ventana más larga o condicionar por la cadencia de cada cliente.
 - **El modelo de propensión no tiene features de calendario** (detectado en la Fase 5). Por
   eso la política elige protector solar en noviembre. El índice estacional ya se calcula en
   la Fase 2: es meterlo en `src/nba/features.py`.
+- **Los topes de candidatos no se han reajustado al catálogo de 496 productos** (Fase 7c).
+  Se dejaron como estaban para que la comparación con la Fase 3 fuera limpia; con el pool
+  cubriendo ya el 76,9 % del target, afinarlos es margen, no un arreglo.
 
 ---
 
@@ -786,12 +970,13 @@ Tres deudas anotadas, ninguna de ellas bloqueante:
 | Fase | Qué se construyó | Cómo se verifica | Resultado |
 | --- | --- | --- | --- |
 | **0 · Setup** | Estructura del repo, entorno con `constraints.txt` y CI en GitHub Actions | El workflow instala y ejecuta la suite | ✅ |
-| **1 · Generador** | `data_generation/generate_dataset.py`: 7 tablas, 3,1 M de líneas de ticket, con ciclos de reposición, afinidad de cesta, estacionalidad, uplift de promoción, churn progresivo, embudo online y defectos de calidad inyectados a propósito | 32 tests; dos ejecuciones dan `sha256` idénticos | ✅ |
-| **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta y las 9 preguntas de negocio como funciones | 133 tests; informes regenerables en `reports/etl/` | Data Trust **89,99 (C) → 100,00 (A)** |
-| **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank`. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | 16 tests centrados en fuga de datos; `reports/recommender/` | **NDCG@5 = 0,0343** · Recall@5 = 0,0332 (baseline 0,0200) |
-| **4 · Next Best Action** | Dos modelos de propensión (churn a 4 semanas, compra en categoría a 7 días) sobre cortes temporales, y política de valor esperado con catálogo de acciones y economía por departamento | 25 tests, incluida la aritmética del valor esperado a mano; `reports/nba/` | **AUC 0,8531 / 0,7634** · política **+4.012 €** vs. no actuar |
-| **5 · Empaquetado** | Resumen de impacto en euros con su barrido de supuestos, informe de 8 hallazgos de negocio con figuras, y registro opcional de experimentos en MLflow | 37 tests; `IMPACT.md` y `reports/insights/` se regeneran con un comando | **262.777 €/año** por cada 100.000 clientes y 100.000 cestas online/mes |
-| **6 · Demo** | Streamlit con simulación de cesta en vivo | — | ⬜ pendiente |
+| **1 · Generador** | `data_generation/generate_dataset.py`: 7 tablas, 3,1 M de líneas de ticket, con ciclos de reposición, fidelidad de marca, afinidad de cesta, estacionalidad, uplift de promoción, churn progresivo, embudo online y defectos de calidad inyectados a propósito | 36 tests; dos ejecuciones dan `sha256` idénticos | ✅ |
+| **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta y las 9 preguntas de negocio como funciones | 149 tests; informes regenerables en `reports/etl/` | Data Trust **91,42 (C) → 100,00 (A)** |
+| **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank`. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | 17 tests centrados en fuga de datos; `reports/recommender/` | **NDCG@5 = 0,1752** · Recall@5 = 0,1678 · F1@5 = 0,1454 (baseline 0,0868) |
+| **4 · Next Best Action** | Dos modelos de propensión (churn a 4 semanas, compra en categoría a 7 días) sobre cortes temporales, y política de valor esperado con catálogo de acciones y economía por departamento | 25 tests, incluida la aritmética del valor esperado a mano; `reports/nba/` | **AUC 0,8527 / 0,7630** · política **+3.938 €** vs. no actuar |
+| **5 · Empaquetado** | Resumen de impacto en euros con su barrido de supuestos, informe de 8 hallazgos de negocio con figuras, y registro opcional de experimentos en MLflow | 37 tests; `IMPACT.md` y `reports/insights/` se regeneran con un comando | **289.430 €/año** por cada 100.000 clientes y 100.000 cestas online/mes |
+| **6 · Demo** | Catálogo con 60 fotos reales de Pexels, inferencia sin Spark y app en Streamlit con cesta en vivo, top-5 explicado, NBA y cestas reales de test | 59 tests, incluida la paridad con el pipeline; arranque real verificado | ✅ acierto de categoría y exacto, lado a lado |
+| **7 · Fidelidad de producto** | Fidelidad de marca y surtido de 8 referencias en el generador, y las Fases 2, 3, 4 y 6 rehechas encima | Tests nuevos del generador; comparación con las cifras congeladas en `reports/*/baseline_*.json` | **NDCG@5 ×5,1** · SKU acertado en el 49,5 % de las cestas (antes 11,8 %) |
 
 Fuera de alcance por ahora, declarado y no a medias: el **dashboard en Power BI** de la
 Tarea 4.
@@ -807,22 +992,23 @@ cosa.
    sesión *era* el ticket escrito de otra forma; los `view` estaban igual. Usarla como
    feature habría dado un NDCG@5 espectacular y falso. Se arregló el generador con abandono
    de carrito, productos que sólo se miran y un retardo entre ver y añadir.
-2. **El techo del recomendador lo pone el dato, no el modelo** (Fase 3). El sistema acierta
-   la categoría en el 51,4 % de las cestas y el SKU sólo en el 11,8 %. Ampliar el pool de 92
-   a 155 candidatos subió el `pool_recall` un 43 % y **no movió el NDCG**: dentro de una
-   categoría la elección de referencia es casi aleatoria por construcción.
+2. **El techo del recomendador lo ponía el dato, no el modelo** (Fase 3, resuelto en la 7).
+   El sistema acertaba la categoría en el 51,4 % de las cestas y el SKU sólo en el 11,8 %, y
+   ampliar el pool no movía el NDCG: dentro de una categoría la elección de referencia era
+   casi aleatoria por construcción. Con fidelidad de marca en el generador, el mismo código
+   pasó a acertar el SKU en el 49,5 % y el NDCG@5 se multiplicó por cinco.
 3. **El efecto de una acción no es medible con este dataset** (Fase 4). El `PROMO_UPLIFT` del
    generador reparte cuota dentro de una categoría, no crea demanda ni retiene. Así que el
    uplift es un supuesto declarado, y al barrerlo apareció lo importante: el cupón sólo se
    justifica por retención, nunca por margen, porque su valor facial supera al margen que
    persigue.
 4. **Un buen modelo de churn no es una política de retención** (Fase 5). La correlación
-   entre el valor esperado de la acción y `P(churn)` sale **negativa** (−0,63), y con el
-   gasto reciente **+0,96**. Con un AUC de 0,85 la tentación es perseguir al que más riesgo
+   entre el valor esperado de la acción y `P(churn)` sale **negativa** (−0,62), y con el
+   gasto reciente **+0,95**. Con un AUC de 0,85 la tentación es perseguir al que más riesgo
    tiene; la economía dice lo contrario, porque en un cliente hibernado ya no queda nada que
    salvar.
 
 Lo que estos cuatro tienen en común es el criterio que sigue todo el repo: **ninguna cifra
 del README se copia a mano de un notebook**. Todas salen de ejecutar un script — `run_etl`,
-`recommender.pipeline`, `nba.pipeline`, `impact.pipeline`, `eda.findings` — y las que
-sostienen una afirmación de negocio están fijadas por un test.
+`verify_dataset`, `recommender.pipeline`, `nba.pipeline`, `impact.pipeline`, `eda.findings`
+— y las que sostienen una afirmación de negocio están fijadas por un test.

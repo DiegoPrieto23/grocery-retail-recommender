@@ -189,25 +189,43 @@ supuesto es el tamaño del premio, no el signo.
       dominantes (`n_baskets_90d`, `avg_days_between_baskets`, `recency_days`) confirman
       que buena parte de lo que acierta es frecuencia de compra. Un target honesto de churn
       pediría una ventana más larga o condicionar por la cadencia propia de cada cliente.
+- [ ] **Deuda: el modelo de propensión no tiene features de calendario** (detectada en la
+      Fase 5, hallazgo 8 de `reports/insights/business_findings.md`). Por eso la política
+      elige protector solar en noviembre, que vende 5,5 veces menos que en junio. El índice
+      estacional ya se calcula en la Fase 2 (`src/eda/questions.py`, Q3): es meterlo en
+      `src/nba/features.py`.
 
 ## Fase 5 — Empaquetado y storytelling
 
-- [~] README principal con arquitectura, resultados y cómo reproducir
-      · `README.md` cubre ya las Fases 0-4 (generación, lógica inyectada, ETL, features,
-      EDA, recomendador con su NDCG@5 y el diagnóstico SKU/categoría, NBA con sus AUC y el
-      barrido de sensibilidad, tests y notas de entorno), y cierra con un resumen fase a
-      fase. Falta añadir los resultados de la Fase 6 (demo).
+- [x] README principal con arquitectura, resultados y cómo reproducir
+      · `README.md` cubre las Fases 0-7 con las cifras del dataset de la Fase 7 (7e), con
+      secciones propias para la demo (Fase 6) y para el antes y el después de la fidelidad
+      de marca (Fase 7). Cada cifra sale de un script: `verify_dataset`, `run_etl`,
+      `recommender.pipeline`, `nba.pipeline`, `impact.pipeline`, `eda.findings` o el
+      notebook re-ejecutado
 - [x] Diagrama ER (Mermaid) del modelo relacional de las 7 tablas, con sus claves y
       relaciones, incluido en el README
       · sección "Modelo relacional" del `README.md`; las 14 relaciones están además
       verificadas empíricamente en `notebooks/01_eda.ipynb` (0 claves huérfanas)
-- [ ] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
+- [x] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
       impacto estimado (ej. cross-sell extra en €/mes)
-- [ ] Notebook o informe con los hallazgos de negocio (estilo "vistazo al análisis" del
+      · `IMPACT.md`, que escribe `python -m src.impact.pipeline` · verificado por
+      `tests/test_impact.py` · regenerado en la 7e: **289.430 €/año** por 100.000 clientes
+      y 100.000 cestas online/mes (antes 262.777 €), con las cifras previas congeladas en
+      `reports/impact/baseline_fase5.json`
+- [x] Notebook o informe con los hallazgos de negocio (estilo "vistazo al análisis" del
       otro proyecto)
-- [ ] Tests de las funciones de Tarea 1 y Tarea 2
-- [ ] (Opcional) MLflow para registrar experimentos del recomendador y de propensión —
+      · `reports/insights/business_findings.md` + 8 figuras, que escribe
+      `python -m src.eda.findings` · regenerado en la 7e; el hallazgo 6 se reescribió porque
+      su texto fijo ("el generador elige casi al azar") dejó de ser cierto, y ahora cuenta
+      el antes y el después leyendo `reports/recommender/baseline_fase3.json`
+- [x] Tests de las funciones de Tarea 1 y Tarea 2
+      · `tests/test_eda_questions.py` (39, las 9 preguntas con respuesta a mano) y
+      `tests/test_repurchase.py` (19)
+- [x] (Opcional) MLflow para registrar experimentos del recomendador y de propensión —
       aporta un ángulo de MLOps/BI que no está en los otros dos proyectos
+      · `src/tracking.py`, opcional y a prueba de fallos · verificado por
+      `tests/test_tracking.py` (19)
 
 ## Fase 6a — Preparación visual del catálogo
 
@@ -287,8 +305,7 @@ recomendación), que es lo que permite probarla sin levantar la app.
 
 **Nota sobre cómo salió**: estaba planeada en tres versiones incrementales, una por sesión.
 En la práctica las tres aterrizaron juntas en el commit `55116b3`, así que los checkboxes
-de abajo se marcan sobre lo verificado, no sobre el orden en que se hizo. Los dos que
-siguen abiertos están al final, agrupados.
+de abajo se marcan sobre lo verificado, no sobre el orden en que se hizo.
 
 ### V1 — Carrito
 
@@ -368,17 +385,6 @@ siguen abiertos están al final, agrupados.
       sirve son **byte-idénticas** a los ficheros de `assets/` (13 distintas en la primera
       carga, 0 recodificadas) · sin tráfico a Pexels: `src/catalog/` no se importa desde
       la app
-
-### Lo que queda abierto de la Fase 6b
-
-- [ ] **Cargar una cesta real del cliente como punto de partida.** Hoy la cesta solo se
-      construye a mano desde el catálogo. Falta poder sembrarla con una cesta real de
-      `basket_items` de la ventana de test para el `customer_id` elegido, que es lo que
-      enseña el perfil 4 sin tener que clicar productos uno a uno.
-- [ ] **README corto de la demo**: cómo lanzarla en local, qué artefactos necesita
-      (`data/serving/`, `models/`, `predictions/`, `assets/`) y qué hacer si falta alguno.
-      Los docstrings de `streamlit_app.py` y `src/demo/__init__.py` ya citan un
-      `tests/test_demo.py` que **tampoco existe todavía**.
 
 ## Fase 7 — Fidelidad de producto y comparación con Kaggle
 
@@ -496,10 +502,15 @@ Hecha. Se re-ejecuta entera con `python -m src.etl.run_etl` (234 s en local), qu
       debajo porque compiten con el resto de la cesta, Pañales se dispara porque su
       marginal es minúscula)
 
-**Pendiente para el final de la Fase 7**: el `README.md` sigue citando las cifras viejas
-(1.500 productos, Data Trust 89,99, 10 de 79). No se toca aquí porque también cita los
-números de las Fases 3, 4 y 6, que no se rehacen hasta 7c-7e: se actualiza de una vez al
-cerrar la fase.
+**README, al final de la Fase 7 (hecho).** El `README.md` citaba las cifras viejas (1.500
+productos, Data Trust 89,99, 10 de 79), y no se tocó aquí porque también citaba las de las
+Fases 3, 4 y 6. Se actualizó de una vez tras la 7e. Al hacerlo aparecieron cuatro piezas
+que tampoco se habían rehecho y que el README cita: `IMPACT.md`, el informe de hallazgos,
+el notebook de EDA y `docs/CLEANING.md`. Las tres primeras se regeneraron con su script
+(el notebook, re-ejecutado entero con `jupyter nbconvert --execute`, y sus 6 celdas de
+texto con cifras escritas a mano, corregidas) y las cifras de `docs/CLEANING.md` se
+recalcularon sobre `data/raw/`. El filtro IQR que cita no tenía script; ahora el documento
+dice qué valla usa (`Q3 + 3·IQR`: 3.477 cestas).
 
 ### 7c — Rehacer la Fase 3 (recomendador): reentrenar, F1@5 y comparación con Kaggle
 
@@ -626,8 +637,8 @@ original"** de `reports/nba/metrics.md`) contra `reports/nba/baseline_fase4.json
 
 Hecha. Se verifica con `pytest tests/test_catalog.py tests/test_demo_hits.py
 tests/test_demo_baskets.py tests/test_serving_parity.py` (59 tests, ninguno saltado) y
-arrancando la demo. Con esto **la Fase 7 queda cerrada**, salvo el `README.md` (ver la
-nota de la 7b).
+arrancando la demo. Con esto, y con el `README.md` ya actualizado (ver la nota de la 7b),
+**la Fase 7 queda cerrada**.
 
 - [x] Rehacer la Fase 6a (los `product_id` cambiaron): revisar `visual_group`/`search_term`
       y regenerar el CSV de imágenes — reutilizar `assets/` existente donde el

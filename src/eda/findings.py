@@ -19,7 +19,7 @@ Todo sale de ejecutar codigo: las preguntas de negocio vienen de `src/eda/questi
 3. La palanca sobre un cliente valioso es la frecuencia, no el ticket.
 4. El ciclo de reposicion es real y escala con el hogar.
 5. La sesion online no es el ticket -- y por poco lo fue.
-6. El recomendador acierta la categoria, no la referencia.
+6. El techo del recomendador estaba en el dato, y se levanto al arreglar el dato.
 7. El NBA no responde a quien se va, sino a quien todavia vale algo.
 8. La politica se va al margen, y sin calendario eso tiene un coste.
 """
@@ -55,6 +55,8 @@ class FindingsConfig:
     processed_dir: Path = Path("data/processed")
     predictions_dir: Path = Path("predictions")
     recommender_metrics: Path = Path("reports/recommender/metrics.json")
+    # Metricas de la Fase 3 congeladas antes de rehacer el dataset (Fase 7c).
+    recommender_baseline: Path = Path("reports/recommender/baseline_fase3.json")
     out_dir: Path = Path("reports/insights")
     markdown_name: str = "business_findings.md"
 
@@ -319,7 +321,7 @@ def finding_recommender(cfg: FindingsConfig, out_dir: Path) -> dict:
     axes[1].set_xticks(list(x))
     axes[1].set_xticklabels([g.split(" - ")[-1] for g in cats["grupo"]], rotation=18, fontsize=8)
     axes[1].set_ylabel(f"% de cestas con acierto en el top-{k}")
-    axes[1].set_title("Sabe que necesita; no sabe que referencia")
+    axes[1].set_title("Categoria frente a referencia exacta")
     axes[1].legend(fontsize=8)
     figure = _save(fig, out_dir, "06_recomendador.png")
 
@@ -327,9 +329,22 @@ def finding_recommender(cfg: FindingsConfig, out_dir: Path) -> dict:
     total = summary[summary["grupo"] == "total"].iloc[0]
     popularity = pd.DataFrame(metrics["summary_popularity"])
     baseline = popularity[popularity["grupo"] == "total"].iloc[0]
+    before = None
+    if Path(cfg.recommender_baseline).is_file():
+        old = json.loads(Path(cfg.recommender_baseline).read_text(encoding="utf-8"))
+        old_total = next(r for r in old["summary"] if r["grupo"] == "total")
+        old_cat = next(r for r in old["by_category"] if r["grupo"] == "total")
+        old_pop = next(r for r in old["summary_popularity"] if r["grupo"] == "total")
+        before = {
+            "ndcg": float(old_total[f"ndcg@{k}"]),
+            "ndcg_baseline": float(old_pop[f"ndcg@{k}"]),
+            "cat_hit": 100 * float(old_cat[f"cat_hit_rate@{k}"]),
+            "sku_hit": 100 * float(old_cat[f"sku_hit_rate@{k}"]),
+        }
     return {
         "figure": figure,
         "k": k,
+        "before": before,
         "ndcg": float(total[f"ndcg@{k}"]),
         "ndcg_baseline": float(baseline[f"ndcg@{k}"]),
         "cat_hit": 100 * float(total_cat[f"cat_hit_rate@{k}"]),
@@ -730,27 +745,7 @@ de target encontrada antes de entrenar, no despues de presentar el resultado.
 
 ---
 
-## 6. El recomendador sabe que necesitas; no sabe que referencia
-
-![Recomendador por perfil]({rec['figure']})
-
-NDCG@{rec['k']} = **{_n(rec['ndcg'], 4)}** frente a {_n(rec['ndcg_baseline'], 4)} del
-baseline sin aprendizaje. El numero es bajo, y el panel de la derecha dice por que: el
-sistema acierta la **categoria** en el **{_p(rec['cat_hit'])}** de las cestas y el **SKU**
-solo en el **{_p(rec['sku_hit'])}**.
-
-No es la primera etapa: el pool cubre ya el {_p(rec['pool_recall'])} del target, y
-ampliarlo de 92 a 155 candidatos por cesta no movio el NDCG. Es el dato: dentro de una
-categoria hay unas 24 referencias y el generador elige casi al azar.
-
-Por perfil, el peor es **{rec['worst_profile']}** (NDCG@{rec['k']} =
-{_n(rec['worst_ndcg'], 4)}). Es el unico que no puede tirar ni de historial ni de ALS, y
-encima su cesta ya va por la mitad, asi que lo facil de acertar ya esta dentro.
-
-**Por que importa.** En gran consumo, acertar la categoria **es** util: si el cliente va a
-comprar leche, recomendarle una leche sirve aunque no sea la referencia exacta. El proyecto
-esta midiendo con la metrica mas dura de las dos y aun asi el techo esta en el dato. Darle
-fidelidad de marca al generador es la deuda numero uno del [`ROADMAP.md`](../../ROADMAP.md).
+{_recommender_section(rec)}
 
 ---
 
@@ -812,13 +807,54 @@ en el [`ROADMAP.md`](../../ROADMAP.md).
 
 Cinco de los ocho son del mismo tipo: **una cifra que parecia buena o mala estaba midiendo
 otra cosa**. El lift de 13 que era composicion de clientela; el solapamiento del 100 % que
-era el target disfrazado; el NDCG bajo que era el techo del dato y no del modelo; el AUC
+era el target disfrazado; el NDCG bajo que era el techo del dato y no del modelo, y que subio al arreglar el dato; el AUC
 alto que no basta para una politica; la categoria mas recomendada, que estaba fuera de
 temporada.
 
 Ninguno se ve mirando la metrica sola. Todos aparecieron al preguntar **de donde sale este
 numero** y encontrar que la respuesta no era la esperada.
 """
+
+
+def _recommender_section(rec: dict) -> str:
+    """Hallazgo 6. Con el antes de la Fase 7 si `baseline_fase3.json` esta; sin el, solo el ahora."""
+    k = rec["k"]
+    now = f"""## 6. El techo del recomendador estaba en el dato
+
+![Recomendador por perfil]({rec['figure']})
+
+NDCG@{k} = **{_n(rec['ndcg'], 4)}** frente a {_n(rec['ndcg_baseline'], 4)} del baseline sin
+aprendizaje. El sistema acierta la **categoria** en el **{_p(rec['cat_hit'])}** de las
+cestas y el **SKU exacto** en el **{_p(rec['sku_hit'])}**, y el pool de candidatos cubre el
+{_p(rec['pool_recall'])} del target.
+
+Por perfil, el peor es **{rec['worst_profile']}** (NDCG@{k} =
+{_n(rec['worst_ndcg'], 4)}). Es el unico que no puede tirar ni de historial ni de ALS, y
+encima su cesta ya va por la mitad, asi que lo facil de acertar ya esta dentro."""
+    before = rec.get("before")
+    if before is None:
+        return now
+    ratio_now = rec["ndcg"] / rec["ndcg_baseline"]
+    ratio_before = before["ndcg"] / before["ndcg_baseline"]
+    return now + f"""
+
+**Antes de la Fase 7 el mismo codigo daba NDCG@{k} = {_n(before['ndcg'], 4)}**, con la
+categoria acertada en el {_p(before['cat_hit'])} de las cestas y el SKU solo en el
+{_p(before['sku_hit'])}. Ampliar el pool de 92 a 155 candidatos no movia el NDCG: el
+limite no era el modelo sino el dato, porque el generador elegia la referencia casi al azar
+entre ~24 por categoria. La Fase 7a le dio fidelidad de marca y un surtido de 8
+referencias, y sin tocar una linea del recomendador la distancia entre categoria y SKU casi
+se cierra.
+
+Parte de la subida es el catalogo mas pequeno: el baseline tambien acierta mas
+({_n(before['ndcg_baseline'], 4)} -> {_n(rec['ndcg_baseline'], 4)}). Lo que es merito del
+ranker es su ventaja sobre ese baseline, que pasa de **x{_n(ratio_before, 2)}** a
+**x{_n(ratio_now, 2)}**.
+
+**Por que importa.** Un NDCG bajo se puede leer como "el modelo es malo" y no lo era.
+Medir la categoria al lado del SKU fue lo que senalo al dato, y la demo ensena ahora las
+dos cifras juntas para que un "0 de 5" en SKU no se lea como que el sistema no acierta
+nada."""
 
 
 def main() -> int:

@@ -34,6 +34,9 @@ from src.impact.model import (
 
 ONLINE_CHANNELS: tuple[str, ...] = ("app", "web")
 
+# Informe de la Fase 5 congelado antes de rehacer el dataset en la Fase 7 (ver `load_previous`).
+BASELINE_FILE = "baseline_fase5.json"
+
 
 @dataclass(frozen=True)
 class Baseline:
@@ -212,8 +215,78 @@ def _pp(value: float, decimals: int = 2) -> str:
     return f"{value * 100:.{decimals}f}".replace(".", ",")
 
 
-def render_markdown(report: dict, cfg: ImpactConfig) -> str:
-    """Escribe el medio folio de impacto que pide la Tarea 4."""
+def load_previous(cfg: ImpactConfig) -> dict | None:
+    """El `impact.json` de la Fase 5, congelado antes de la Fase 7, si esta.
+
+    La Fase 7 cambio el dataset (fidelidad de marca, 496 productos), y con el la cifra del
+    recomendador. Para contar ese cambio sin teclear la cifra vieja se lee de
+    `reports/impact/baseline_fase5.json` (`git show e719f62:reports/impact/impact.json`),
+    igual que hacen los informes de las Fases 3 y 4 con sus `baseline_*.json`.
+    """
+    path = Path(cfg.reports_dir) / BASELINE_FILE
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _recommender_reading(report: dict, previous: dict | None, cfg: ImpactConfig) -> str:
+    """Parrafo de lectura del cross-sell, con el antes y el despues de la Fase 7."""
+    key = f"por_{cfg.reference_online_baskets}_cestas_online_mes"
+    now_year = report["cross_sell"][key]["margen_extra_ano"]
+    now_hit = report["cross_sell"]["simulado"]["hit_rate_modelo"]
+    nba_year = report["nba"][f"por_{cfg.reference_customers}_clientes"]["valor_ano"]
+    text = (
+        f"La lectura honesta: **el cross-sell del recomendador vale {_eur(now_year)} al ano "
+        f"por cada {_num(cfg.reference_online_baskets)} cestas online al mes**, frente a "
+        f"{_eur(nba_year)} del NBA por cada {_num(cfg.reference_customers)} clientes."
+    )
+    if previous is None:
+        return text
+    old_year = previous["cross_sell"][key]["margen_extra_ano"]
+    old_hit = previous["cross_sell"]["simulado"]["hit_rate_modelo"]
+    return (
+        text
+        + f"""
+
+Antes de la Fase 7 eran **{_eur(old_year)}**, con el ranker acertando en el
+{_pct(old_hit)} de las cestas. El codigo es el mismo; lo que cambio es el dato. El
+generador original elegia la referencia dentro de la categoria casi al azar entre ~24, asi
+que ningun modelo podia acertar el SKU; con fidelidad de marca y 8 referencias por
+categoria el mismo sistema acierta en el {_pct(now_hit)}
+([`ROADMAP.md`](ROADMAP.md), Fase 7). Parte de la subida es el catalogo mas pequeno
+— tambien el baseline acierta mas —, y por eso la fila que cuenta es la de cestas con un
+acierto **que el baseline no daba**. Las cifras de antes estan congeladas en
+[`reports/impact/{BASELINE_FILE}`](reports/impact/{BASELINE_FILE})."""
+    )
+
+
+def _split_reading(report: dict, previous: dict | None) -> str:
+    """Que parte del total pone cada pieza, y como se movio con la Fase 7."""
+    def nba_share(rep: dict) -> float:
+        total = rep["total_por_referencia"]
+        return total["valor_nba_mes"] / total["total_mes"]
+
+    text = (
+        f"El reparto tambien dice donde esta hoy el proyecto: el NBA pone el "
+        f"**{_pct(nba_share(report), 0)}** del total y el recomendador el "
+        f"{_pct(1 - nba_share(report), 0)}. En parte tiene sentido — la politica decide "
+        "sobre el cliente entero y el recomendador solo sobre cinco huecos de una cesta —"
+    )
+    if previous is None:
+        return text + "."
+    return (
+        text
+        + f""" y en parte es historia: antes de la Fase 7 el recomendador ponia solo el
+{_pct(1 - nba_share(previous), 0)}, porque el dato no le dejaba acertar la referencia."""
+    )
+
+
+def render_markdown(report: dict, cfg: ImpactConfig, previous: dict | None = None) -> str:
+    """Escribe el medio folio de impacto que pide la Tarea 4.
+
+    `previous` es el informe congelado antes de la Fase 7 (`load_previous`); sin el, el
+    texto omite la comparacion en vez de inventarla.
+    """
     medido = report["medido"]
     cs_ref = report["cross_sell"][f"por_{cfg.reference_online_baskets}_cestas_online_mes"]
     cs_sim = report["cross_sell"]["simulado"]
@@ -293,13 +366,7 @@ Por {ref_baskets} cestas online al mes:
 | ---: | ---: | ---: | ---: | ---: |
 {sweep}
 
-La lectura honesta: **el cross-sell del recomendador vale miles de euros al ano por cada
-{ref_baskets} cestas online al mes, no cientos de miles**. Y no es un defecto del calculo,
-es el modelo: con un NDCG@5 de 0,0343 no da para mas. El
-[README](README.md#por-qué-el-número-es-bajo-no-es-el-modelo-es-el-dato) explica por que
-— el generador elige el SKU dentro de la categoria casi al azar — y por que el mismo
-sistema acierta la **categoria** en el 51,4 % de las cestas. Con fidelidad de marca en el
-dato, la misma arquitectura tendria bastante mas recorrido.
+{_recommender_reading(report, previous, cfg)}
 
 ## 2. El Next Best Action
 
@@ -343,16 +410,13 @@ en que las dos son **conservadoras por construccion**: el recomendador se compar
 un baseline que ya funciona, y la politica contra la mejor de las alternativas triviales,
 no contra no hacer nada.
 
-El reparto tambien dice donde esta hoy el proyecto: **casi todo el valor viene del NBA**,
-no del recomendador. En parte tiene sentido — la politica decide sobre el cliente entero y
-el recomendador solo sobre cinco huecos de una cesta — pero sobre todo es consecuencia del
-techo de dato descrito arriba.
+{_split_reading(report, previous)}
 
 ## Que haria falta para afinar esto
 
 1. **Un A/B**, que es lo unico que convierte la incrementalidad de supuesto en estimacion.
-2. **Fidelidad de marca en el generador**: es el techo del recomendador y esta anotado como
-   deuda en el [`ROADMAP.md`](ROADMAP.md).
+2. **Features de calendario en el modelo de propension**: sin ellas la politica puede
+   empujar una categoria de temporada fuera de temporada (ver el informe de hallazgos).
 3. **Un target de churn condicionado a la cadencia de cada cliente**: hoy el modelo de la
    Fase 4 predice inactividad a 4 semanas, que con una cadencia media de 24 dias le pasa a
    media base sin ser abandono.
@@ -380,7 +444,9 @@ def main(argv: list[str] | None = None) -> int:
     (reports_dir / "impact.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    Path(cfg.markdown_path).write_text(render_markdown(report, cfg), encoding="utf-8")
+    Path(cfg.markdown_path).write_text(
+        render_markdown(report, cfg, load_previous(cfg)), encoding="utf-8"
+    )
 
     total = report["total_por_referencia"]
     print(f"Escrito {cfg.markdown_path} y {reports_dir / 'impact.json'}")

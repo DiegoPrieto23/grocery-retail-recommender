@@ -35,7 +35,8 @@ si la limpieza acierta, algo que con dato real nunca se puede.
 
 **Problema.** El 4 % de los productos escribe su categoría con otra grafía: `LECHE`,
 `leche`, `Fruta ` (con espacios sobrantes), `Salsa  de  tomate` (con espacio doble
-interno). 116 grafías distintas para 62 categorías reales.
+interno). 82 grafías distintas para 62 categorías reales (eran 116 con el catálogo de
+1.500 productos anterior a la Fase 7a).
 
 **Regla.** Se agrupan las grafías por su clave normalizada
 (`lower(trim(colapsar espacios))`) y cada grupo se unifica a **la grafía mayoritaria**.
@@ -59,7 +60,7 @@ antes que `Salsa de tomate` (el espacio va antes que cualquier letra). Por eso e
 penaliza primero los espacios sobrantes y después estar todo en mayúsculas o todo en
 minúsculas. Con el volumen real no hay empates, pero la regla no puede depender de eso.
 
-**`brand` nula** (1,1 %): se rellena con `Sin marca` y se marca en `brand_is_missing`. No
+**`brand` nula** (1,0 %): se rellena con `Sin marca` y se marca en `brand_is_missing`. No
 se descarta el producto: su categoría, precio y ventas son válidos, y perderlos por no
 saber la marca dejaría huecos en toda la venta.
 
@@ -77,8 +78,8 @@ como "devoluciones mal codificadas", que admite dos lecturas: o son devoluciones
 apuntadas donde no toca, o son ventas normales a las que se les invirtió el signo.
 
 **Evidencia.** Una devolución real tiene enfrente la venta original que anula. De las
-12.308 líneas negativas, sólo 353 tienen una línea positiva del mismo producto en la misma
-cesta — y esas 353 se explican solas por el mecanismo de duplicados (ver abajo). El 97 %
+12.314 líneas negativas, sólo 386 tienen una línea positiva del mismo producto en la misma
+cesta — y esas 386 se explican solas por el mecanismo de duplicados (ver abajo). El 97 %
 restante no anula nada: son ventas mal firmadas.
 
 **Regla.** Se corrige el signo y se marca en `quantity_sign_corrected`. Descartarlas
@@ -100,10 +101,10 @@ un duplicado exacto**: sobrevive a cualquier `dropDuplicates`.
 
 | Orden | Filas resultantes | `(basket_id, product_id)` duplicados |
 | --- | ---: | ---: |
-| Deduplicar y luego corregir el signo | 3.058.178 | **353** |
+| Deduplicar y luego corregir el signo | 3.058.211 | **386** |
 | Corregir el signo y luego deduplicar | 3.057.825 | **0** |
 
-Esas 353 líneas fantasma inflarían la cesta y romperían el supuesto de "una línea por cesta
+Esas 386 líneas fantasma inflarían la cesta y romperían el supuesto de "una línea por cesta
 y producto" del que depende toda la afinidad de la Fase 3. El ETL cuenta explícitamente
 cuántos duplicados afloran gracias al orden, y hay un test que lo fija
 (`test_el_duplicado_con_el_signo_invertido_colapsa`).
@@ -126,9 +127,10 @@ importes multiplicados por 20-60x (los outliers inyectados).
 limpias**, tal y como pide `DATA_SPEC.md`. El importe original se guarda en
 `total_amount_raw`.
 
-**Por qué recalcular en vez de filtrar outliers.** Un filtro por IQR sobre `total_amount`
-marca 3.227 cestas (0,54 %) cuando los outliers inyectados son 1.192 (0,2 %): dos de cada
-tres serían cestas grandes perfectamente legítimas. El recálculo no necesita adivinar,
+**Por qué recalcular en vez de filtrar outliers.** Un filtro por IQR sobre `total_amount`,
+incluso con la valla de valores extremos (`Q3 + 3·IQR` sobre el crudo), marca 3.477 cestas
+(0,58 %) cuando los outliers inyectados son 1.192 (0,2 %): dos de cada tres serían cestas
+grandes perfectamente legítimas. Con la valla habitual de `1,5·IQR` serían 20.018. El recálculo no necesita adivinar,
 porque el dato correcto está en el detalle del ticket.
 
 **Y sale redondo:** después de limpiar las líneas, quedan exactamente **1.192 cestas**

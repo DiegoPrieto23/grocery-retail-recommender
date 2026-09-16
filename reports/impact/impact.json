@@ -21,114 +21,114 @@
     "cestas_online": 327624,
     "cestas_online_mes": 13651.0,
     "lineas": 3057825,
-    "importe_medio_linea": 5.657546857652092,
+    "importe_medio_linea": 5.622490306018171,
     "lineas_por_cesta": 5.094897479730878,
     "clientes_con_compras": 19225,
     "venta_por_departamento": {
-      "Bebe": 680244.43,
-      "Bebidas": 1695365.43,
-      "Congelados": 1442214.88,
-      "Despensa": 3396711.88,
-      "Drogueria": 1326904.03,
-      "Frescos": 6257093.53,
-      "Higiene": 1642898.13,
-      "Mascotas": 858355.91
+      "Bebe": 696514.94,
+      "Bebidas": 1596789.21,
+      "Congelados": 1499834.82,
+      "Despensa": 3541890.78,
+      "Drogueria": 1381564.19,
+      "Frescos": 5774435.61,
+      "Higiene": 1779820.23,
+      "Mascotas": 921741.64
     },
-    "margen_bruto_mezclado": 0.2388824732792018
+    "margen_bruto_mezclado": 0.24198645224362572
   },
   "cross_sell": {
     "simulado": {
       "cestas_online_mes": 13651.0,
-      "hit_rate_modelo": 0.11838888888888889,
-      "hit_rate_baseline": 0.08311111111111111,
-      "delta_hit_rate": 0.03527777777777778,
-      "mejora_relativa": 0.4244652406417113,
+      "hit_rate_modelo": 0.49477777777777776,
+      "hit_rate_baseline": 0.2672777777777778,
+      "delta_hit_rate": 0.22749999999999998,
+      "mejora_relativa": 0.8511743920182914,
       "incrementalidad": 0.1,
-      "cestas_con_acierto_nuevo_mes": 481.5769444444445,
-      "unidades_extra_mes": 48.15769444444445,
-      "venta_extra_mes": 272.4544128759363,
-      "margen_extra_mes": 65.08458400363648,
-      "margen_extra_ano": 781.0150080436377
+      "cestas_con_acierto_nuevo_mes": 3105.6024999999995,
+      "unidades_extra_mes": 310.56025,
+      "venta_extra_mes": 1746.1219950595796,
+      "margen_extra_mes": 422.53786676902945,
+      "margen_extra_ano": 5070.454401228353
     },
     "por_100000_cestas_online_mes": {
       "cestas_online_mes": 100000,
-      "hit_rate_modelo": 0.11838888888888889,
-      "hit_rate_baseline": 0.08311111111111111,
-      "delta_hit_rate": 0.03527777777777778,
-      "mejora_relativa": 0.4244652406417113,
+      "hit_rate_modelo": 0.49477777777777776,
+      "hit_rate_baseline": 0.2672777777777778,
+      "delta_hit_rate": 0.22749999999999998,
+      "mejora_relativa": 0.8511743920182914,
       "incrementalidad": 0.1,
-      "cestas_con_acierto_nuevo_mes": 3527.7777777777783,
-      "unidades_extra_mes": 352.7777777777778,
-      "venta_extra_mes": 1995.8568081161552,
-      "margen_extra_mes": 476.77521063392044,
-      "margen_extra_ano": 5721.302527607046
+      "cestas_con_acierto_nuevo_mes": 22749.999999999996,
+      "unidades_extra_mes": 2274.9999999999995,
+      "venta_extra_mes": 12791.165446191337,
+      "margen_extra_mes": 3095.2887463850952,
+      "margen_extra_ano": 37143.464956621145
     },
     "barrido_incrementalidad": [
       {
         "incrementalidad": 0.02,
-        "unidades_extra_mes": 70.55555555555557,
-        "venta_extra_mes": 399.17136162323106,
-        "margen_extra_mes": 95.3550421267841,
-        "margen_extra_ano": 1144.2605055214092
+        "unidades_extra_mes": 454.99999999999994,
+        "venta_extra_mes": 2558.2330892382674,
+        "margen_extra_mes": 619.0577492770191,
+        "margen_extra_ano": 7428.692991324229
       },
       {
         "incrementalidad": 0.05,
-        "unidades_extra_mes": 176.3888888888889,
-        "venta_extra_mes": 997.9284040580776,
-        "margen_extra_mes": 238.38760531696022,
-        "margen_extra_ano": 2860.651263803523
+        "unidades_extra_mes": 1137.4999999999998,
+        "venta_extra_mes": 6395.582723095668,
+        "margen_extra_mes": 1547.6443731925476,
+        "margen_extra_ano": 18571.732478310572
       },
       {
         "incrementalidad": 0.1,
-        "unidades_extra_mes": 352.7777777777778,
-        "venta_extra_mes": 1995.8568081161552,
-        "margen_extra_mes": 476.77521063392044,
-        "margen_extra_ano": 5721.302527607046
+        "unidades_extra_mes": 2274.9999999999995,
+        "venta_extra_mes": 12791.165446191337,
+        "margen_extra_mes": 3095.2887463850952,
+        "margen_extra_ano": 37143.464956621145
       },
       {
         "incrementalidad": 0.2,
-        "unidades_extra_mes": 705.5555555555557,
-        "venta_extra_mes": 3991.7136162323104,
-        "margen_extra_mes": 953.5504212678409,
-        "margen_extra_ano": 11442.605055214091
+        "unidades_extra_mes": 4549.999999999999,
+        "venta_extra_mes": 25582.330892382673,
+        "margen_extra_mes": 6190.5774927701905,
+        "margen_extra_ano": 74286.92991324229
       },
       {
         "incrementalidad": 0.3,
-        "unidades_extra_mes": 1058.3333333333335,
-        "venta_extra_mes": 5987.570424348465,
-        "margen_extra_mes": 1430.3256319017612,
-        "margen_extra_ano": 17163.907582821135
+        "unidades_extra_mes": 6824.999999999999,
+        "venta_extra_mes": 38373.49633857401,
+        "margen_extra_mes": 9285.866239155286,
+        "margen_extra_ano": 111430.39486986343
       }
     ]
   },
   "nba": {
     "simulado": {
       "clientes": 18729,
-      "valor_politica_oleada": 4011.9996878421316,
-      "valor_mejor_trivial_oleada": 930.0018439220537,
-      "valor_suelo_oleada": 1209.5732140845657,
-      "uplift_vs_trivial_oleada": 3081.9978439200777,
-      "valor_por_cliente_oleada": 0.2142132355086834,
+      "valor_politica_oleada": 3937.560431361225,
+      "valor_mejor_trivial_oleada": 907.0725020823386,
+      "valor_suelo_oleada": 1188.634170427661,
+      "uplift_vs_trivial_oleada": 3030.4879292788864,
+      "valor_por_cliente_oleada": 0.2102386903391118,
       "oleadas_ano": 12,
-      "valor_ano": 48143.99625410558,
-      "valor_suelo_ano": 14514.878569014789
+      "valor_ano": 47250.7251763347,
+      "valor_suelo_ano": 14263.610045131933
     },
     "por_100000_clientes": {
       "clientes": 100000,
-      "valor_politica_oleada": 21421.32355086834,
-      "valor_mejor_trivial_oleada": 4965.57127407792,
-      "valor_suelo_oleada": 6458.2904270626605,
-      "uplift_vs_trivial_oleada": 16455.75227679042,
-      "valor_por_cliente_oleada": 0.2142132355086834,
+      "valor_politica_oleada": 21023.869033911178,
+      "valor_mejor_trivial_oleada": 4843.144332758495,
+      "valor_suelo_oleada": 6346.490311429659,
+      "uplift_vs_trivial_oleada": 16180.724701152683,
+      "valor_por_cliente_oleada": 0.21023869033911177,
       "oleadas_ano": 12,
-      "valor_ano": 257055.88261042006,
-      "valor_suelo_ano": 77499.48512475193
+      "valor_ano": 252286.42840693414,
+      "valor_suelo_ano": 76157.8837371559
     }
   },
   "total_por_referencia": {
-    "margen_cross_sell_mes": 476.77521063392044,
-    "valor_nba_mes": 21421.32355086834,
-    "total_mes": 21898.09876150226,
-    "total_ano": 262777.1851380271
+    "margen_cross_sell_mes": 3095.2887463850952,
+    "valor_nba_mes": 21023.869033911178,
+    "total_mes": 24119.157780296275,
+    "total_ano": 289429.8933635553
   }
 }
