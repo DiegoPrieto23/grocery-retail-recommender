@@ -429,7 +429,10 @@ incrementales — hazlo así de acotado a propósito, no adelantes trabajo de la
      cesta manualmente eligiendo productos del catálogo.
    - Muestra el catálogo/resultado de búsqueda de productos como tarjetas visuales: cada
      producto lleva la foto real de su visual_group (columna image_path del CSV de la Fase
-     6a), nombre, categoría y precio.
+     6a), nombre, categoría y precio. Usa las imágenes que ya están en assets/ tal cual —
+     no descargues nada nuevo ni llames a la API de Pexels desde la app. Si algún
+     visual_group se quedó sin imagen válida en la Fase 6a, dímelo en vez de generar o
+     buscar un placeholder por tu cuenta.
    - La cesta (cargada o construida a mano) se muestra con el mismo estilo de tarjeta, no
      como una tabla.
 3. Todavía NO llames al recomendador ni al NBA — eso es la V2 y la V3. Esta versión es solo
@@ -498,6 +501,149 @@ proyecto, esto es solo para local.
 
 Al terminar, marca los checkboxes de la V3 en ROADMAP.md — con esto, la Fase 6b queda
 cerrada del todo.
+
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
+## 5. Prompts para la Fase 7 (fidelidad de producto y comparación con Kaggle)
+
+Motivada por ver en la demo "0 de 5 recomendaciones" casi siempre — el generador elegía la
+referencia dentro de cada categoría casi al azar, así que el SKU exacto era casi
+impredecible por construcción, no por falta de modelo. Son 5 sub-fases, cada una pensada
+para caber en una sesión de la suscripción Pro. Van en orden — cada una da por hecho que la
+anterior está cerrada y verificada.
+
+### Fase 7a — Generador: fidelidad de marca + catálogo reducido
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa data_generation/generate_dataset.py y el hallazgo de la Fase 3 sobre fidelidad de
+SKU (sección "Lo que limita la métrica" del ROADMAP.md).
+
+Vamos a ejecutar la Fase 7a del ROADMAP.md: dar fidelidad de marca al generador y reducir
+el catálogo, para que el recomendador tenga más señal real a nivel de SKU. Esto va a
+cambiar los product_id y los hashes del dataset — es intencionado.
+
+1. Reduce el número de referencias por categoría de ~24 a 8 (si tienes una razón de negocio
+   clara para otro número, dímela antes de aplicarla, pero 8 es el punto de partida).
+2. Añade fidelidad de marca: la primera compra de un cliente en una categoría le asigna una
+   referencia preferida (aleatoria entre las de esa categoría). Las compras siguientes en
+   la misma categoría repiten esa referencia con una probabilidad de lealtad que varía por
+   categoría: 0,75-0,85 en categorías de hábito (café, detergente, higiene, cuidado
+   personal) y 0,25-0,40 en categorías más exploratorias (fruta, snacks, congelados). Decide
+   tú a qué grupo pertenece cada categoría siguiendo ese criterio y documenta la asignación.
+3. Actualiza DATA_SPEC.md con el nuevo tamaño de catálogo y el parámetro de lealtad por
+   categoría.
+4. Regenera el dataset con la semilla fija (seed=42) y verifica que sigue siendo
+   reproducible: dos ejecuciones deben dar el mismo hash.
+5. Comprueba con una consulta rápida que la repetición de SKU dentro de categoría subió de
+   forma clara frente al número antiguo (0,86 referencias distintas por compra de media,
+   documentado en la Fase 3) — dame el número nuevo.
+
+No toques nada de la Fase 2 en adelante todavía — eso es la Fase 7b y siguientes, en otra
+sesión.
+
+Al terminar, marca los checkboxes de la Fase 7a en ROADMAP.md.
+
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
+### Fase 7b — Rehacer la Fase 2 (ETL) sobre el dataset nuevo
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el dataset regenerado de la Fase 7a (data/raw/ o donde lo haya dejado).
+
+Vamos a ejecutar la Fase 7b del ROADMAP.md: rehacer la Fase 2 (ETL) sobre el dataset nuevo.
+Es la misma lógica de la Fase 2 original, solo se re-ejecuta sobre datos distintos — no
+rediseñes nada salvo que algo se rompa por el cambio de esquema.
+
+1. Vuelve a ejecutar limpieza, Data Trust Score, RFM, due_for_repurchase y afinidad de
+   cesta (python -m src.etl.run_etl o el comando que corresponda).
+2. Comprueba que los 10 pares de afinidad de DATA_SPEC.md siguen saliendo con lift alto —
+   no debería haber cambiado mucho respecto a antes, pero verifícalo y dime si algo se
+   desvía.
+
+Al terminar, marca los checkboxes de la Fase 7b en ROADMAP.md y dime si el Data Trust Score
+y los recuentos de limpieza salen parecidos a los de antes (79 comprobaciones, 89,99 → 100).
+
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
+### Fase 7c — Rehacer la Fase 3 (recomendador): reentrenar, F1@5 y comparación con Kaggle
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el ETL regenerado de la Fase 7b.
+
+Vamos a ejecutar la Fase 7c del ROADMAP.md: reentrenar el recomendador sobre el dataset
+nuevo, añadir F1@5 a la evaluación, y comparar con la competición de Kaggle "Instacart
+Market Basket Analysis".
+
+1. Reentrena el pipeline completo (candidatos + ranker) sobre los datos de la Fase 7b.
+2. Añade Precision@5 a la evaluación (ya tienes Recall@5) y calcula F1@5 como su media
+   armónica: F1@5 = 2 × (Precision@5 × Recall@5) / (Precision@5 + Recall@5).
+3. Compara el F1@5 con el resultado del primer puesto de la competición de Kaggle
+   "Instacart Market Basket Analysis" (F1 ≈ 0,41), pero documenta explícitamente en el
+   informe que no es una comparación estrictamente equivalente: Instacart predice solo
+   recompras (productos que el usuario ya compró antes) con un conjunto de tamaño variable
+   optimizado por F1-maximization, mientras que este proyecto predice un top-5 fijo que
+   mezcla recompra con descubrimiento (popularidad, co-compra, ALS). Deja el número, pero
+   con esa salvedad al lado — no lo presentes como si fuera el mismo benchmark.
+4. Compara NDCG@5, Recall@5, hit_rate@5 (SKU) y el ratio categoría/SKU con los números
+   antiguos (0,0343 / 0,0332 / 11,8% / 51,4% categoría vs 11,8% SKU) y dime si mejoraron de
+   forma clara.
+
+Al terminar, marca los checkboxes de la Fase 7c en ROADMAP.md.
+
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
+### Fase 7d — Rehacer la Fase 4 (NBA) sobre el dataset nuevo
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el ETL regenerado de la Fase 7b y el recomendador reentrenado de la Fase 7c.
+
+Vamos a ejecutar la Fase 7d del ROADMAP.md: rehacer la Fase 4 (NBA) sobre el dataset nuevo.
+La lógica y la política no cambian — solo se reentrena sobre datos distintos.
+
+1. Reentrena los dos modelos de propensión (compra en categoría a 7 días, churn a 4
+   semanas) y recalcula la política de valor esperado sobre el dataset regenerado.
+2. Compara el AUC/PR-AUC y el barrido de sensibilidad de churn_reduction con los números
+   antiguos (Churn: AUC 0,8531 · Compra categoría: AUC 0,7634 · política +4.012€ frente a
+   no actuar). Si algo se desvía de forma notable, dímelo antes de darlo por bueno — no
+   debería cambiar mucho, porque el NBA no depende de la fidelidad de SKU.
+
+Al terminar, marca los checkboxes de la Fase 7d en ROADMAP.md.
+
+Si algo es ambiguo, pregúntame antes de asumir.
+```
+
+### Fase 7e — Rehacer la Fase 6a y arreglar la Fase 6b
+
+```text
+Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
+revisa el estado de las Fases 7a-7d y la app de la Fase 6b tal como está ahora.
+
+Vamos a ejecutar la Fase 7e del ROADMAP.md: rehacer la Fase 6a para los product_id nuevos,
+y arreglar cómo la Fase 6b comunica el acierto de las recomendaciones.
+
+1. Los product_id cambiaron en la Fase 7a. Revisa si los visual_group siguen siendo válidos
+   (probablemente sí, porque son a nivel de categoría) y regenera el CSV final
+   product_id, product_name, visual_group, image_path. Reutiliza las imágenes que ya están
+   en assets/ para los visual_group que no hayan cambiado — no vuelvas a llamar a la API de
+   Pexels salvo que aparezca un visual_group nuevo que de verdad no tenga imagen todavía.
+2. En la demo, cambia el indicador de acierto de las recomendaciones: en vez de mostrar
+   solo "X de 5 recomendaciones estaban en lo que añadiste después" (SKU exacto), muestra
+   también el acierto de categoría por separado — por ejemplo "X de 5 acertaron la
+   categoría; de esas, Y acertaron el producto exacto". No ocultes ni sustituyas el número
+   de SKU exacto — el objetivo es dar más contexto honesto, no maquillar el resultado.
+3. Re-apunta la app a los modelos reentrenados (Fases 7c y 7d) y al CSV de imágenes nuevo.
+4. Comprueba que streamlit run sigue arrancando sin errores con todo lo nuevo.
+
+Al terminar, marca los checkboxes de la Fase 7e en ROADMAP.md — con esto, la Fase 7 queda
+cerrada.
 
 Si algo es ambiguo, pregúntame antes de asumir.
 ```

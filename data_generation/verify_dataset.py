@@ -217,6 +217,74 @@ def repurchase_cycles(tables: dict[str, pd.DataFrame], top_n: int = 8) -> dict[s
     return out
 
 
+def sku_loyalty(
+    tables: dict[str, pd.DataFrame], min_purchases: int = 3
+) -> dict[str, float]:
+    """Mide si el cliente repite referencia dentro de una categoria (fidelidad de marca).
+
+    Es la contrapartida de `repurchase_cycles`: aquel mide *cuando* vuelve el cliente a
+    una categoria, este mide *que* se lleva cuando vuelve. Era el techo del recomendador
+    de SKU antes de la Fase 7a (ver el hallazgo de la Fase 3 en `ROADMAP.md`): con ~24
+    referencias por categoria elegidas casi al azar, un cliente con tres o mas compras en
+    una categoria se llevaba 0,850 referencias distintas por compra --es decir, casi nunca
+    repetia-- frente a 0,440 con el catalogo curado y la fidelidad de marca de la Fase 7a.
+    (El 0,86 que cita la Fase 3 es esta misma cifra medida a ojo en su momento.)
+
+    Se cuenta una compra por cesta (no por linea: los duplicados inyectados como problema
+    de calidad no pueden contar dos veces) y solo entran los pares cliente-categoria con
+    al menos `min_purchases` compras, que son los unicos donde "repetir" significa algo.
+
+    Returns:
+        `referencias_distintas_por_compra` (1.0 = nunca repite; cuanto mas bajo, mas
+        fiel), `cuota_de_la_referencia_favorita` (que parte de sus compras de la
+        categoria se lleva su referencia mas comprada) y el desglose por banda de
+        lealtad declarada en el catalogo.
+    """
+    items = tables["basket_items"][["basket_id", "product_id"]]
+    prod = tables["products"][["product_id", "category_clean"]]
+    bask = tables["baskets"][["basket_id", "customer_id"]].dropna(subset=["customer_id"])
+
+    df = (
+        items.merge(prod, on="product_id")
+        .merge(bask, on="basket_id")
+        .drop_duplicates(["customer_id", "category_clean", "basket_id", "product_id"])
+    )
+
+    # Una cesta trae como mucho una linea por categoria, asi que tras el
+    # `drop_duplicates` el recuento por producto ya es "en cuantas cestas se lo llevo".
+    per_product = (
+        df.groupby(["customer_id", "category_clean", "product_id"], sort=False)
+        .size()
+        .rename("n")
+        .reset_index()
+    )
+    stats = (
+        per_product.groupby(["customer_id", "category_clean"], sort=False)["n"]
+        .agg(n_compras="sum", n_referencias="size", favorita="max")
+        .reset_index()
+    )
+    stats = stats[stats["n_compras"] >= min_purchases]
+    if stats.empty:
+        return {"pares_cliente_categoria": 0}
+
+    stats["distintas_por_compra"] = stats["n_referencias"] / stats["n_compras"]
+    stats["cuota_favorita"] = stats["favorita"] / stats["n_compras"]
+
+    bands = {c.name: cat.loyalty_band(c) for c in cat.CATEGORIES}
+    stats["banda"] = stats["category_clean"].map(bands)
+    out = {
+        "pares_cliente_categoria": int(len(stats)),
+        "referencias_distintas_por_compra": float(stats["distintas_por_compra"].mean()),
+        "cuota_de_la_referencia_favorita": float(stats["cuota_favorita"].mean()),
+    }
+    for banda, sub in stats.groupby("banda"):
+        out[f"referencias_distintas_por_compra__{banda}"] = float(
+            sub["distintas_por_compra"].mean()
+        )
+        out[f"cuota_de_la_referencia_favorita__{banda}"] = float(sub["cuota_favorita"].mean())
+    return out
+
+
 def churn_signal(tables: dict[str, pd.DataFrame], window_days: int = 56) -> dict[str, float]:
     """Comprueba que la frecuencia y el ticket decaen antes del abandono.
 
@@ -348,6 +416,7 @@ def run_all(data_dir: Path) -> dict[str, dict]:
         "estacionalidad": seasonality_ratio(tables),
         "uplift_promocion": promotion_uplift(tables),
         "ciclos_reposicion": repurchase_cycles(tables),
+        "fidelidad_de_sku": sku_loyalty(tables),
         "senal_churn": churn_signal(tables),
         "calidad_del_dato": quality_issues(tables),
         "integridad_referencial": referential_integrity(tables),

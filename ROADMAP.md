@@ -107,11 +107,15 @@ referencias distintas por compra** — es decir, casi nunca repite SKU — y só
 las líneas de una cesta futura son productos que ya había comprado, frente al **88,6 %**
 cuando se mira la categoría. La fidelidad está en la categoría, no en la referencia.
 
-- [ ] **Deuda para más adelante: dar fidelidad de marca/SKU al generador.** En gran consumo
+- [~] **Deuda para más adelante: dar fidelidad de marca/SKU al generador.** En gran consumo
       real un cliente repite referencia (siempre la misma leche), y ahí es donde un
       recomendador de SKU tiene margen. Implica tocar la elección de producto dentro de
       categoría en `_generate_baskets_and_items`, regenerar el dataset (cambian los
       `sha256` de `baskets` y `basket_items`) y rehacer la Fase 2 y sus informes.
+      · **La parte de generador está hecha en la Fase 7a**: 8 referencias por categoría y
+      lealtad por categoría, con la repetición de SKU subiendo de 0,850 a 0,440 referencias
+      distintas por compra. Falta rehacer las Fases 2, 3, 4 y 6a sobre el dataset nuevo
+      (7b-7e), que es donde se verá si el NDCG@5 de SKU sube.
 
 ## Fase 4 — Next Best Action
 
@@ -371,6 +375,118 @@ siguen abiertos están al final, agrupados.
       (`data/serving/`, `models/`, `predictions/`, `assets/`) y qué hacer si falta alguno.
       Los docstrings de `streamlit_app.py` y `src/demo/__init__.py` ya citan un
       `tests/test_demo.py` que **tampoco existe todavía**.
+
+## Fase 7 — Fidelidad de producto y comparación con Kaggle
+
+Motivada por un hallazgo de uso real: en la demo, el hit-rate de SKU exacto (11,8%,
+Fase 3) se ve como "0 de 5" en la mayoría de pruebas manuales, y da la sensación de que el
+sistema no acierta nada — aunque a nivel de categoría sí acierta el 51,4% de las veces. El
+objetivo es doble: (a) que el dato tenga más señal real a nivel de SKU (el generador
+elegía casi al azar entre ~24 referencias por categoría, así que ningún modelo podía
+predecir bien algo que era casi aleatorio por construcción — resuelto en 7a), y (b) que la
+demo comunique el
+acierto de forma honesta, mostrando categoría y SKU exacto por separado en vez de solo el
+exacto.
+
+Cambia el dataset (nuevos `product_id`, nuevos hashes), así que obliga a rehacer las Fases
+2, 3, 4 y 6a sobre los datos nuevos. Se divide en sub-fases para que cada una quepa en una
+sesión de la suscripción Pro.
+
+### 7a — Generador: fidelidad de marca + catálogo reducido
+
+Hecha. Todo lo que se reporta aquí lo recalcula `python -m data_generation.verify_dataset`
+(secciones `fidelidad_de_sku`, `uplift_promocion` y `senal_churn`) y lo fijan cuatro tests
+nuevos en `tests/test_generate_dataset.py`. El dataset regenerado tiene **`product_id` y
+`sha256` nuevos**: las Fases 2, 3, 4 y 6a siguen colgando de los números viejos hasta que
+se rehagan en 7b-7e.
+
+- [x] Reducir el número de referencias por categoría de ~24 a un catálogo más curado
+      · `catalog.PRODUCTS_PER_CATEGORY = 8`, el mismo surtido en todas las categorías:
+      62 × 8 = **496 productos** (antes 1.500 repartidos en proporción a la popularidad de
+      la categoría) · el reparto plano es deliberado: si las categorías pequeñas se
+      quedaran en 2 referencias serían triviales de predecir y las grandes seguirían
+      siendo ruido · verificado por `test_surtido_de_ocho_referencias_por_categoria`
+- [x] Añadir fidelidad de marca/SKU: la primera compra de un cliente en una categoría le
+      asigna una referencia "preferida"; las compras siguientes en esa categoría la repiten
+      con una probabilidad alta, variable por tipo de categoría
+      · `Category.loyalty` en `data_generation/catalog.py` (**40 categorías de hábito**
+      0,75-0,85 y **22 exploratorias** 0,25-0,40; `validate_catalog()` rechaza cualquier
+      valor fuera de las dos bandas) + reparto de cuota dentro de la categoría en
+      `_generate_baskets_and_items` · la preferencia se sortea por popularidad en la
+      primera compra y no se reasigna; la variedad sale del hueco `1 - loyalty` ·
+      verificado por `test_fidelidad_de_marca_hace_que_el_cliente_repita_referencia` y
+      `test_cada_categoria_declara_su_banda_de_lealtad`
+- [x] Documentar el nuevo parámetro de lealtad y el catálogo reducido en `DATA_SPEC.md`
+      · sección **"Fidelidad de marca (detalle)"** con la asignación categoría a categoría,
+      el criterio de cada banda y el efecto medido; nota de tamaño de surtido bajo la tabla
+      `products`; volumen de referencia actualizado a 496
+- [x] Regenerar el dataset con la semilla fija y verificar que sigue siendo reproducible
+      · dos ejecuciones completas con `seed=42` dan los mismos `sha256` en las 7 tablas
+      (`basket_items` `e84c387f…`, `products` `5c180e8a…`) · 3.103.685 líneas sobre 600.174
+      cestas · fijado también por `test_dos_ejecuciones_producen_el_mismo_hash`
+- [x] Verificar que la repetición de SKU dentro de categoría subió de forma clara
+      · **0,850 → 0,440 referencias distintas por compra** (−48 %) y la cuota de la
+      referencia favorita **0,301 → 0,697**, sobre los 357.195 pares cliente-categoría con
+      tres o más compras. Por banda: hábito **0,351** distintas y **0,840** de cuota
+      favorita —justo dentro de la banda declarada—, exploración 0,571 y 0,485. El 0,86 que
+      documentaba la Fase 3 se recalcula ahora como 0,850 con la misma definición
+
+#### Efectos colaterales medidos
+
+- **El uplift de promoción observado baja de 2,99 a 1,97.** Es consecuencia directa, no un
+  fallo: el multiplicador sigue siendo exactamente `PROMO_UPLIFT` pero se aplica *encima*
+  del reparto por hábito, así que una promoción solo puede llevarse la parte no fiel de la
+  categoría. Es además lo que pasa en gran consumo real. Queda documentado en `DATA_SPEC.md`.
+- **La rampa de churn sigue intacta** (frecuencia 0,79 frente a 0,985 de los activos;
+  ticket 0,972 frente a 1,012), pero la comprobación del ticket a `TEST_SCALE` resultó ser
+  ruido: con ~170 churners el estimador se mueve varios puntos según la semilla y con la 42
+  llegaba a invertir el orden. Se partió en dos tests: la frecuencia se sigue comprobando a
+  `TEST_SCALE` y el ticket pasa a `dataset_dir_grande` (~700 churners), donde el orden sale
+  estable con cualquier semilla.
+- Afinidad de cesta, estacionalidad, ciclos de reposición e integridad referencial no se
+  mueven: los diez pares de `DATA_SPEC.md` siguen con su lift y la correlación de rangos de
+  los ciclos es 0,992.
+
+### 7b — Rehacer la Fase 2 (ETL) sobre el dataset nuevo
+
+- [ ] Volver a ejecutar limpieza, Data Trust Score, RFM, `due_for_repurchase` y afinidad de
+      cesta sobre el dataset regenerado
+- [ ] Comprobar que los 10 pares de afinidad de `DATA_SPEC.md` siguen saliendo con lift
+      alto (no debería haber cambiado mucho, pero verificarlo)
+
+### 7c — Rehacer la Fase 3 (recomendador): reentrenar, F1@5 y comparación con Kaggle
+
+- [ ] Reentrenar el pipeline completo (candidatos + ranker) sobre el dataset nuevo
+- [ ] Añadir Precision@5 y F1@5 a la evaluación (ya se tiene Recall@5; F1@5 es su media
+      armónica con Precision@5)
+- [ ] Comparar el F1@5 con el 1er puesto de la competición de Kaggle "Instacart Market
+      Basket Analysis" (F1 ≈ 0,41) — documentando explícitamente que no es una comparación
+      100% equivalente: Instacart predice solo recompras con un conjunto de tamaño variable
+      optimizado por F1-maximization, mientras que aquí se predice un top-5 fijo que mezcla
+      recompra con descubrimiento (popularidad/co-compra/ALS) — dejarlo dicho en el
+      informe, no solo el número
+- [ ] Verificar si el SKU-hit_rate@5, NDCG@5 y el ratio SKU/categoría mejoraron de forma
+      clara frente a los números viejos (11,8% / 0,0343 / 51,4% categoría vs 11,8% SKU)
+
+### 7d — Rehacer la Fase 4 (NBA) sobre el dataset nuevo
+
+- [ ] Reentrenar los dos modelos de propensión y recalcular la política de valor esperado
+      sobre el dataset regenerado
+- [ ] Comprobar que las conclusiones de la Fase 4 (AUC, el barrido de sensibilidad de
+      `churn_reduction`) se mantienen razonablemente estables — si cambian mucho, avisar
+      antes de darlo por bueno
+
+### 7e — Rehacer la Fase 6a y arreglar la Fase 6b
+
+- [ ] Rehacer la Fase 6a (los `product_id` cambiaron): revisar `visual_group`/`search_term`
+      y regenerar el CSV de imágenes — reutilizar `assets/` existente donde el
+      `visual_group` no haya cambiado, para no volver a llamar a Pexels de más
+- [ ] En la demo (Fase 6b), cambiar el indicador de acierto: en vez de solo "X de 5
+      recomendaciones estaban en lo que añadiste después" (SKU exacto), mostrar también el
+      acierto de categoría por separado — algo como "X de 5 acertaron la categoría, de esas
+      Y acertaron el producto exacto". No ocultar el número de SKU exacto, solo dar más
+      contexto honesto junto a él
+- [ ] Re-apuntar la demo a los modelos y al CSV de imágenes nuevos
 
 ## Fuera de alcance (por ahora)
 

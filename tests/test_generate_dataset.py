@@ -49,6 +49,51 @@ def test_los_diez_pares_de_afinidad_de_data_spec() -> None:
     assert len(cat.AFFINITY_PAIRS) == 10
 
 
+def test_surtido_de_ocho_referencias_por_categoria(dataset: dict) -> None:
+    """Fase 7a: catalogo curado, mismo numero de referencias en todas las categorias."""
+    productos = dataset["products"].copy()
+    productos["category_clean"] = vd._clean_category(productos["category"])
+    por_categoria = productos.groupby("category_clean").size()
+
+    assert len(productos) == cat.PRODUCTS_PER_CATEGORY * len(cat.CATEGORIES)
+    assert set(por_categoria) == {cat.PRODUCTS_PER_CATEGORY}
+    assert len(por_categoria) == len(cat.CATEGORIES)
+
+
+def test_fidelidad_de_marca_hace_que_el_cliente_repita_referencia(dataset_dir: Path) -> None:
+    """Fase 7a: dentro de una categoria, el cliente vuelve a su referencia preferida.
+
+    Es el patron que faltaba y que ponia el techo al recomendador de SKU (hallazgo de la
+    Fase 3): antes, un cliente con tres o mas compras en una categoria se llevaba 0,85
+    referencias distintas por compra --casi nunca repetia--. La banda de habito tiene que
+    repetir claramente mas que la exploratoria, que es lo que distingue el cafe de la
+    fruta.
+    """
+    tables = vd.load_tables(dataset_dir)
+    fidelidad = vd.sku_loyalty(tables)
+
+    assert fidelidad["referencias_distintas_por_compra"] < 0.70, "no hay repeticion de SKU"
+    assert (
+        fidelidad["referencias_distintas_por_compra__habito"]
+        < fidelidad["referencias_distintas_por_compra__exploracion"]
+    ), "el habito tiene que repetir mas que la exploracion"
+    # La referencia favorita de una categoria de habito se lleva la mayoria de sus compras.
+    assert fidelidad["cuota_de_la_referencia_favorita__habito"] > 0.60
+
+
+def test_cada_categoria_declara_su_banda_de_lealtad() -> None:
+    """La lealtad de toda categoria cae en una de las dos bandas de DATA_SPEC.md."""
+    bandas = {c.name: cat.loyalty_band(c) for c in cat.CATEGORIES}
+    assert set(bandas.values()) == {"habito", "exploracion"}
+    for c in cat.CATEGORIES:
+        banda = (
+            cat.HABIT_LOYALTY_BAND
+            if bandas[c.name] == "habito"
+            else cat.EXPLORATORY_LOYALTY_BAND
+        )
+        assert banda[0] <= c.loyalty <= banda[1], c.name
+
+
 # --------------------------------------------------------------------------------------
 # Esquema
 # --------------------------------------------------------------------------------------
@@ -226,12 +271,12 @@ def test_estacionalidad_concentrada_en_los_meses_pico(dataset_dir: Path) -> None
 def test_uplift_de_promocion(dataset_dir: Path) -> None:
     """Un producto en promocion se vende mas rapido que fuera de su ventana.
 
-    El umbral es bajo a proposito: estos tests corren a `TEST_SCALE`, donde cada
-    categoria tiene solo 2-3 productos y el promocionado ya se lleva ~la mitad de su
-    categoria, asi que su cuota no puede triplicarse por mucho que se empuje. A volumen
-    completo (1.500 productos, ~24 por categoria) el uplift medido es 2.99 frente al
-    objetivo de 3.0 de DATA_SPEC.md; esa es la cifra que hay que mirar, y la recalcula
-    `python -m data_generation.verify_dataset`.
+    El umbral es bajo a proposito por dos motivos. Uno, a `TEST_SCALE` hay un punado de
+    promociones y la medida es ruidosa. Y dos, desde la Fase 7a el uplift compite con la
+    fidelidad de marca: el multiplicador sigue siendo exactamente `PROMO_UPLIFT` sobre la
+    parte no fiel de la categoria, pero el uplift observado a nivel de categoria baja,
+    porque una promocion no mueve a quien ya tiene marca fija. La cifra a volumen completo
+    la recalcula `python -m data_generation.verify_dataset`.
     """
     tables = vd.load_tables(dataset_dir)
     uplift = vd.promotion_uplift(tables)["promo_uplift_observado"]
@@ -251,12 +296,32 @@ def test_ciclos_de_reposicion_conservan_el_orden(dataset_dir: Path) -> None:
 
 
 def test_churn_progresivo_no_es_un_corte_en_seco(dataset_dir: Path) -> None:
-    """Frecuencia y ticket decaen antes del abandono, y mas que en los clientes activos."""
+    """La frecuencia de compra decae antes del abandono, y mas que en los activos.
+
+    Es la mitad robusta de la rampa: el generador reparte menos dias de compra segun se
+    acerca el abandono, y eso se ve ya a `TEST_SCALE`. La otra mitad --el ticket-- es de
+    segundo orden y necesita mas muestra: la comprueba
+    `test_el_ticket_tambien_decae_antes_del_abandono`.
+    """
     tables = vd.load_tables(dataset_dir)
     signal = vd.churn_signal(tables)
     assert signal["ratio_frecuencia_churn"] < signal["ratio_frecuencia_activo"]
     assert signal["ratio_frecuencia_churn"] < 0.90
+
+
+@pytest.mark.slow
+def test_el_ticket_tambien_decae_antes_del_abandono(dataset_dir_grande: Path) -> None:
+    """El ticket medio encoge antes del abandono, no solo la frecuencia.
+
+    Va sobre `dataset_dir_grande` a proposito: el estimador es una mediana de medianas
+    sobre las dos o tres cestas que le quedan a un churner en la ventana, y con los ~170
+    churners de `TEST_SCALE` se mueve varios puntos segun la semilla. Con ~700 el orden
+    es estable. A volumen completo da 0,972 frente a 1,012 y lo recalcula
+    `python -m data_generation.verify_dataset`.
+    """
+    signal = vd.churn_signal(vd.load_tables(dataset_dir_grande))
     assert signal["ratio_ticket_churn"] < signal["ratio_ticket_activo"]
+    assert signal["ratio_ticket_churn"] < 1.0
 
 
 def test_churn_label_es_la_definicion_de_data_spec(dataset: dict) -> None:

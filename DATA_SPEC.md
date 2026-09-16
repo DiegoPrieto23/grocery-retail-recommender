@@ -35,6 +35,16 @@ y las correlaciones salen coherentes, igual que en `sports-rental-analytics`.
 | `pack_size`           | int      |                                                                            |
 | `typical_repurchase_days` | int | Intervalo típico de recompra de la categoría (usado por el generador y por Tarea 2) |
 
+**Tamaño del surtido: 8 referencias por categoría** (`catalog.PRODUCTS_PER_CATEGORY`), las
+mismas en todas — 62 categorías × 8 = **496 productos**. El catálogo original repartía
+1.500 productos de forma proporcional a la popularidad de la categoría (~24 referencias
+por categoría), y el hallazgo de la Fase 3 (ver `ROADMAP.md`) fue que eso ponía un techo
+artificial al recomendador: con 24 referencias equivalentes y elegidas casi al azar,
+acertar el SKU exacto era casi imposible por construcción. Un surtido curado de 8
+referencias es el orden de magnitud que ve un cliente delante del lineal de una categoría
+concreta, y deja que la señal de SKU la ponga la fidelidad de marca (más abajo) en vez del
+tamaño del surtido.
+
 ---
 
 ## `promotions`
@@ -125,6 +135,61 @@ co-compra del recomendador.
 | Champú                    | Acondicionador              | 3.0x            | rutina de higiene            |
 | Palomitas de microondas   | Refrescos                   | 2.0x            | noche de peli                |
 
+### Fidelidad de marca (detalle)
+
+La **primera** compra de un cliente en una categoría le fija una referencia preferida
+(sorteada entre las 8 de la categoría, con peso proporcional a su popularidad, y con el
+uplift de promoción de ese día si lo hay). A partir de ahí, cada compra suya en esa
+categoría se lleva esa misma referencia con probabilidad `Category.loyalty`, y el
+`1 - loyalty` restante se reparte por popularidad entre el resto del surtido. La
+preferencia no caduca ni se reasigna: la variedad sale del propio hueco de exploración.
+
+La lealtad es **por categoría**, no global, y cae en una de dos bandas:
+
+| Banda | Lealtad | Criterio |
+| --- | ---: | --- |
+| Hábito | 0,75 - 0,85 | El cliente compra "su" marca y cambiarla tiene coste: mismo café, mismo detergente, mismo champú, misma comida del perro. Droguería, higiene, bebé, mascotas, bebidas de marca y despensa envasada. |
+| Exploración | 0,25 - 0,40 | Manda el producto concreto del día, no la marca: frescos que se eligen por aspecto o corte, caprichos que rotan por sabor y compras de ocasión. |
+
+Asignación completa (el valor entre bandas gradúa cuánto: 0,85 para las categorías donde
+cambiar de marca es más raro, 0,25 donde la elección es más libre):
+
+| Departamento | Hábito (0,75-0,85) | Exploración (0,25-0,40) |
+| --- | --- | --- |
+| Frescos | Leche 0,80, Yogur 0,75, Huevos 0,78 | Queso 0,35, Pan 0,40, Embutido y fiambre 0,35, Fruta 0,25, Verdura 0,25, Carne de pollo 0,35, Carne de ternera 0,30, Pescado blanco 0,28, Torrijas y bollería de Cuaresma 0,30, Bacalao 0,30 |
+| Despensa | Pasta 0,75, Salsa de tomate 0,78, Arroz 0,80, Legumbres 0,75, Conservas de pescado 0,75, Aceite de oliva 0,82, Café 0,85, Azúcar y edulcorante 0,82, Cereales 0,75, Harina 0,80, Sal y especias 0,80, Sopas y caldos 0,75 | Galletas 0,40, Snacks y aperitivos 0,25, Palomitas de microondas 0,35, Chocolate y huevos de Pascua 0,30, Turrón y mazapán 0,30 |
+| Bebidas | Agua 0,85, Refrescos 0,85, Zumos 0,75, Cerveza 0,80 | Vino 0,30, Cava y espumosos 0,30 |
+| Droguería | Detergente 0,85, Suavizante 0,82, Lavavajillas 0,80, Lejía y limpiadores 0,78, Limpiacristales 0,78, Bolsas de basura 0,80, Protector solar 0,75 | — |
+| Higiene | Papel higiénico 0,82, Champú 0,85, Acondicionador 0,85, Gel de ducha 0,82, Pasta de dientes 0,85, Desodorante 0,85, Higiene femenina 0,85 | — |
+| Bebé | Pañales 0,85, Toallitas húmedas 0,82, Leche infantil 0,85, Potitos 0,75 | — |
+| Mascotas | Comida para perro 0,85, Comida para gato 0,85, Arena para gato 0,82 | — |
+| Congelados | — | Verduras congeladas 0,40, Pizza congelada 0,35, Precocinados congelados 0,30, Helados 0,25, Marisco 0,30 |
+
+40 categorías de hábito y 22 exploratorias. `validate_catalog()` falla si alguna lealtad
+cae fuera de las dos bandas, para que no se cuele un valor intermedio sin criterio.
+
+**Efecto medido** (`fidelidad_de_sku` de `python -m data_generation.verify_dataset`, sobre
+los pares cliente-categoría con tres o más compras):
+
+| Métrica | Antes (24 refs, sin fidelidad) | Ahora (8 refs + fidelidad) |
+| --- | ---: | ---: |
+| Referencias distintas por compra | 0,850 | **0,440** |
+| Cuota de la referencia favorita | 0,301 | **0,697** |
+| Referencias distintas por compra — hábito | 0,859 | 0,351 |
+| Referencias distintas por compra — exploración | 0,837 | 0,571 |
+| Cuota de la referencia favorita — hábito | 0,310 | 0,840 |
+
+La cuota de la favorita en las categorías de hábito (0,840) aterriza dentro de la banda
+declarada, que es la comprobación de que el parámetro hace lo que dice.
+
+**Interacción con el uplift de promoción.** El uplift se aplica *encima* del reparto por
+hábito, así que una promoción de la competencia solo puede llevarse la parte no fiel de la
+categoría. El multiplicador sigue siendo exactamente `PROMO_UPLIFT` sobre esa parte, pero
+el uplift **observado** a nivel de categoría baja: **1,97** frente al 2,99 que medía el
+dataset anterior. Es lo que pasa en gran consumo — promocionar contra un hábito rinde
+menos que promocionar donde nadie tiene marca fija —, sigue siendo señal de sobra para el
+recomendador, y la cifra la recalcula `python -m data_generation.verify_dataset`.
+
 ### Estacionalidad (detalle)
 
 Multiplicador aplicado a la probabilidad base de compra de la categoría durante el mes
@@ -177,7 +242,7 @@ Las sesiones que no convierten solo dejan vistas y algún `add_to_cart` suelto.
 | Tabla            | Filas aprox. |
 | ------------------ | -------------- |
 | `customers`         | 20.000         |
-| `products`           | 1.500          |
+| `products`           | 496            |
 | `promotions`         | 300            |
 | `baskets`            | 300.000        |
 | `basket_items`       | ~1.500.000     |

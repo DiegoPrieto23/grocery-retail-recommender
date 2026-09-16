@@ -14,6 +14,7 @@ resultado se comitea.
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -66,9 +67,12 @@ def products() -> pd.DataFrame:
 def test_todas_las_categorias_del_dataset_tienen_grupo(dataset_dir: Path) -> None:
     """El mapa cubre el catalogo que escribe el generador, sin categorias sueltas."""
     real = pd.read_csv(dataset_dir / "products.csv")
-    # El generador inyecta grafias sucias a proposito; el ETL las normaliza, asi que se
-    # compara contra la forma canonica de la categoria.
-    categorias = {c.strip().title() for c in real["category"].dropna().unique()}
+    # El generador inyecta grafias sucias a proposito -- mayusculas, espacios de sobra al
+    # principio, al final y en medio --; el ETL las normaliza, asi que se compara contra
+    # la forma canonica de la categoria.
+    categorias = {
+        re.sub(r"\s+", " ", c).strip().title() for c in real["category"].dropna().unique()
+    }
     conocidas = {c.title() for c in CATEGORY_TO_GROUP}
     assert categorias <= conocidas, f"sin `visual_group`: {sorted(categorias - conocidas)}"
 

@@ -67,7 +67,12 @@ class GeneratorConfig:
     scale: float = 1.0
 
     n_customers: int = 20_000
-    n_products: int = 1_500
+    # Surtido curado: `products_per_category` referencias en cada una de las categorias
+    # del catalogo (ver `catalog.PRODUCTS_PER_CATEGORY`). `n_products` es derivado y no
+    # lo toca `scale`: el surtido es el mismo lineal en una muestra de prueba que a
+    # volumen completo, lo que cambia es cuanta gente compra en el.
+    products_per_category: int = cat.PRODUCTS_PER_CATEGORY
+    n_products: int = field(init=False, default=0)
     n_promotions: int = 300
     # DATA_SPEC.md da 300.000 como volumen de referencia, pero con 20.000 clientes eso
     # son ~15 compras por cliente en dos anos (una visita cada ~73 dias): a esa cadencia
@@ -112,10 +117,12 @@ class GeneratorConfig:
         self.out_dir = Path(self.out_dir)
         if self.scale <= 0:
             raise ValueError("scale debe ser > 0")
-        # Con escalas pequenas se mantienen minimos para que el surtido siga siendo
-        # representativo (al menos 2 productos por categoria y 1 tienda).
+        # Con escalas pequenas se mantienen minimos para que el dataset siga siendo
+        # representativo (al menos 1 tienda).
         self.n_customers = max(50, int(round(self.n_customers * self.scale)))
-        self.n_products = max(2 * len(cat.CATEGORIES), int(round(self.n_products * self.scale)))
+        if self.products_per_category < 2:
+            raise ValueError("products_per_category debe ser >= 2")
+        self.n_products = self.products_per_category * len(cat.CATEGORIES)
         self.n_promotions = max(10, int(round(self.n_promotions * self.scale)))
         self.n_baskets = max(200, int(round(self.n_baskets * self.scale)))
         self.n_sessions = max(100, int(round(self.n_sessions * self.scale)))
@@ -182,20 +189,12 @@ def _generate_products(cfg: GeneratorConfig, rng: np.random.Generator) -> pd.Dat
             seen.add(name)
             brands.append(name)
 
-    # Reparto de productos por categoria proporcional a sqrt(popularidad): las
-    # categorias grandes tienen mas surtido, pero sin dejar a las pequenas sin producto.
-    share = np.sqrt(np.array([c.weight for c in cat.CATEGORIES]))
-    counts = np.maximum(2, np.floor(share / share.sum() * cfg.n_products).astype(int))
-    # Ajuste fino hasta cuadrar exactamente con n_products.
-    order = np.argsort(-share, kind="stable")
-    i = 0
-    while counts.sum() != cfg.n_products:
-        j = order[i % len(order)]
-        if counts.sum() < cfg.n_products:
-            counts[j] += 1
-        elif counts[j] > 2:
-            counts[j] -= 1
-        i += 1
+    # Mismo numero de referencias en todas las categorias. Antes el reparto era
+    # proporcional a sqrt(popularidad) sobre 1.500 productos (~24 por categoria) y la
+    # eleccion dentro de la categoria salia practicamente al azar; con un surtido curado
+    # e igual de granular en todas, la senal de SKU la pone la fidelidad de marca
+    # (`Category.loyalty`) y no el tamano del surtido.
+    counts = np.full(len(cat.CATEGORIES), cfg.products_per_category, dtype=int)
 
     rows = []
     for ci, (c, n) in enumerate(zip(cat.CATEGORIES, counts)):
@@ -565,8 +564,12 @@ def _generate_baskets_and_items(
     4. **Afinidad de cesta**: al entrar un producto de una categoria disparadora, la
        categoria asociada ve su peso multiplicado por el lift de la tabla.
 
-    El **uplift de promocion** se aplica al elegir el producto dentro de la categoria:
-    un producto con promocion activa ese dia pesa `PROMO_UPLIFT` veces mas.
+    Elegida la categoria, el producto concreto sale de dos efectos que se componen: la
+    **fidelidad de marca** (la primera compra del cliente en la categoria le fija una
+    referencia preferida, que las siguientes repiten con probabilidad `Category.loyalty`)
+    y el **uplift de promocion** (un producto con promocion activa ese dia se lleva
+    `PROMO_UPLIFT` veces su cuota). El orden importa: la promocion se aplica sobre la
+    cuota ya repartida por habito, de modo que solo puede llevarse la parte no fiel.
 
     Las cestas se procesan en orden cronologico porque el punto 3 depende de la compra
     anterior del mismo cliente.
@@ -628,6 +631,13 @@ def _generate_baskets_and_items(
         cat_products.append(idxs)
         cat_cumw.append(np.cumsum(pop[idxs]))
 
+    # --- Fidelidad de marca: referencia preferida por cliente y categoria ---
+    # -1 = el cliente aun no ha comprado nunca en esa categoria. Su primera compra fija
+    # la referencia preferida y las siguientes la repiten con probabilidad
+    # `Category.loyalty` (alta en categorias de habito, baja en las exploratorias).
+    preferred = np.full((len(customers), n_cat), -1, dtype=np.int32)
+    loyalty = np.array([c.loyalty for c in cat.CATEGORIES], dtype=np.float64)
+
     # --- Numero de lineas por cesta ---
     household = customers["household_size_est"].to_numpy()
     hh_size_factor = np.where(cust_idx >= 0, 0.70 + 0.12 * household[cust_idx], 0.60)
@@ -671,17 +681,38 @@ def _generate_baskets_and_items(
             j = int(np.searchsorted(cum, u_cat[slot] * total))
             j = min(j, n_cat - 1)
 
-            # Producto dentro de la categoria, con uplift de promocion si aplica hoy.
+            # Producto dentro de la categoria. Tres efectos, en este orden:
+            #   1. fidelidad de marca: la referencia preferida del cliente se lleva una
+            #      cuota fija `loyalty[j]` de la eleccion;
+            #   2. popularidad: el resto del surtido se reparte por su cola larga;
+            #   3. uplift de promocion: se aplica encima, asi una promocion de la
+            #      competencia solo puede llevarse la parte no fiel de la categoria --
+            #      que es exactamente lo que hace una promocion en gran consumo.
             idxs = cat_products[j]
             active = day_promos.get(j)
-            if active:
-                pw, promo_of = _apply_promo_uplift(pop[idxs], idxs, active)
-                pcum = np.cumsum(pw)
-            else:
+            pref_i = int(preferred[ci, j]) if ci >= 0 else -1
+
+            if pref_i < 0 and active is None:
+                # Camino rapido: ni habito que respetar ni promocion que aplicar.
                 pcum = cat_cumw[j]
                 promo_of = {}
+            else:
+                pw = pop[idxs].astype(np.float64)
+                if pref_i >= 0:
+                    local = int(np.searchsorted(idxs, pref_i))
+                    rest = pw.sum() - pw[local]
+                    if rest > 0:
+                        pw = pw / rest * (1.0 - loyalty[j])
+                        pw[local] = loyalty[j]
+                if active:
+                    pw, promo_of = _apply_promo_uplift(pw, idxs, active)
+                else:
+                    promo_of = {}
+                pcum = np.cumsum(pw)
             pi = int(np.searchsorted(pcum, u_prod[slot] * pcum[-1]))
             prod_i = int(idxs[min(pi, idxs.size - 1)])
+            if ci >= 0 and pref_i < 0:
+                preferred[ci, j] = prod_i
 
             out_basket[slot] = b
             out_prod[slot] = prod_i
