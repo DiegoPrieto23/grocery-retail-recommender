@@ -10,7 +10,31 @@ python -m src.catalog.build_assets --force      # vuelve a descargar todo
 python -m src.catalog.build_assets --offline    # regenera los CSV sin tocar la red
 ```
 
-Se verifica con `pytest tests/test_catalog.py` (29 tests, ninguno llama a Pexels).
+Se verifica con `pytest tests/test_catalog.py` (30 tests, ninguno llama a Pexels).
+
+---
+
+## Rehecha en la Fase 7e, sin llamar a Pexels
+
+La Fase 7a redujo el catálogo de 1.500 a 496 productos (8 referencias por categoría) y
+renumeró los `product_id`. Lo que eso cambió aquí, y lo que no:
+
+- **Los 60 `visual_group` y sus términos de búsqueda son los mismos.** El mapa va por
+  `category`, y las 62 categorías no cambiaron: `visual_groups.csv` sale byte-idéntico.
+  Las 60 fotos y `image_credits.csv` se reutilizan tal cual; **0 llamadas a la API**.
+- **`product_catalog.csv` sí había que regenerarlo**, y es el único fichero que cambia
+  (1.500 → 496 filas). Se hizo con `python -m src.catalog.build_assets --offline`.
+- **El fallo no se veía.** Los `product_id` son correlativos, así que el CSV viejo
+  (`P00001`–`P01500`) seguía cruzando con los 496 ids nuevos, pero solo el 1,6 % caía en su
+  grupo correcto: la demo pintaba nombres y fotos de otra categoría sin ningún error.
+  Ahora lo impiden dos cosas: `check_catalog_matches` en `src/demo/catalog.py`, que hace
+  fallar la demo con el comando que lo arregla, y
+  `test_el_csv_final_corresponde_al_catalogo_actual`.
+- **El umbral de fusión ya no discrimina.** Con 8 referencias por categoría, 58 de los 60
+  grupos quedan por debajo de `MIN_GROUP_SIZE = 15`. Las dos fusiones de abajo se
+  mantienen porque se sostienen en las condiciones que mandan (mismo objeto físico, mismo
+  departamento), no en el tamaño; los recuentos de sus tablas son los del catálogo de
+  1.500 con el que se decidieron.
 
 ---
 
@@ -38,8 +62,8 @@ Pexels ninguna foto que ya esté descargada.
 | Columna | Valores | Por qué no |
 | --- | ---: | --- |
 | `department` | 8 | Demasiado amplio: una sola foto para "Frescos" tendría que representar a la vez leche, pan, fruta, carne y pescado. |
-| `brand` | 144 | Son razones sociales generadas por Faker ("Familia Mir S.A."), sin aspecto propio: dos marcas de leche no se ven distintas. |
-| `product_id` | 1.500 | El SKU: 1.500 fotos distintas para un dataset sintético, y ninguna diría nada que no diga ya la categoría. |
+| `brand` | 133 | Son razones sociales generadas por Faker ("Familia Mir S.A."), sin aspecto propio: dos marcas de leche no se ven distintas. |
+| `product_id` | 496 | El SKU: 496 fotos distintas para un dataset sintético, y ninguna diría nada que no diga ya la categoría. |
 | **`category`** | **62** | El nivel que pide el reto: "Leche", "Yogur", "Pescado blanco" son justo el tipo de grupo reutilizable del ejemplo (`leche_entera`, `yogur_griego`, `salmón`). |
 
 **`visual_group` no parte la categoría en trozos más finos**, y esto es una limitación
@@ -166,7 +190,8 @@ El dataset **no tiene un nombre de producto propio** (`DATA_SPEC.md`), así que
 
 - `Familia Mir S.A.` → `Familia Mir`, `Comercial Bru y asociados S.L.L.` → `Comercial Bru`.
 - `Leche Familia Mir`, `Leche Comercial Bru - Pack 6`.
-- Categoría, marca y formato no bastan para 1.500 SKU distintos (177 colisiones), así que
+- Categoría, marca y formato no bastan para 496 SKU distintos (10 productos con
+  nombre repetido; eran 177 sobre los 1.500 del catálogo anterior a la Fase 7a), así que
   los nombres repetidos se numeran: `Leche Familia Mir (1)`, `Leche Familia Mir (2)`. En un
   lineal real serían variedades; aquí basta con que la demo no muestre dos tarjetas con el
   mismo título.
@@ -175,70 +200,72 @@ El dataset **no tiene un nombre de producto propio** (`DATA_SPEC.md`), así que
 
 ## El recuento completo
 
-60 grupos, 1.500 productos, 25 productos por grupo de media (mínimo 7, máximo 41).
+60 grupos, 496 productos: 8 por grupo, salvo los dos fusionados, que suman 16. Hasta la
+Fase 7a eran 1.500 productos y 25 por grupo de media (mínimo 7, máximo 41); los grupos y
+los términos de búsqueda no han cambiado.
 
 | `visual_group` | Departamento | Categorías que agrupa | Productos | Término de búsqueda |
 | --- | --- | --- | ---: | --- |
-| `leche_infantil` | Bebe | Leche infantil | 23 | baby formula powder tin white background |
-| `panales` | Bebe | Panales | 34 | disposable diapers stack folded |
-| `potitos` | Bebe | Potitos | 26 | jars of baby food puree row |
-| `toallitas` | Bebe | Toallitas humedas | 31 | wet wipes tissue pack |
-| `agua` | Bebidas | Agua | 34 | bottled water plastic bottle white background |
-| `cava` | Bebidas | Cava y espumosos | 10 | sparkling wine bottle and glass |
-| `cerveza` | Bebidas | Cerveza | 31 | beer bottles isolated white background |
-| `refrescos` | Bebidas | Refrescos | 32 | aluminium soft drink cans stack |
-| `vino` | Bebidas | Vino | 26 | red wine bottle isolated white background |
-| `zumos` | Bebidas | Zumos | 26 | orange juice bottle white background |
-| `helados` | Congelados | Helados | 20 | ice cream tub isolated white background |
-| `marisco` | Congelados | Marisco | 13 | raw prawns shrimp white background |
-| `pizza` | Congelados | Pizza congelada | 24 | frozen pizza isolated white background |
-| `precocinados` | Congelados | Precocinados congelados | 22 | frozen ready meal package white background |
-| `verduras_congeladas` | Congelados | Verduras congeladas | 22 | frozen peas vegetables white background |
-| `aceite_oliva` | Despensa | Aceite de oliva | 23 | olive oil bottle white background |
-| `arroz` | Despensa | Arroz | 26 | uncooked white rice grains in bowl |
-| `azucar` | Despensa | Azucar y edulcorante | 21 | white sugar cubes in bowl |
-| `cafe` | Despensa | Cafe | 29 | coffee beans package white background |
-| `cereales` | Despensa | Cereales | 26 | breakfast cereal box white background |
-| `chocolate` | Despensa | Chocolate y huevos de Pascua | 29 | dark chocolate bar squares broken |
-| `conservas_pescado` | Despensa | Conservas de pescado | 25 | canned tuna tin white background |
-| `especias` | Despensa | Sal y especias | 18 | spice jars isolated white background |
-| `galletas` | Despensa | Galletas | 29 | biscuits cookies isolated white background |
-| `harina` | Despensa | Harina | 17 | flour bag baking white background |
-| `legumbres` | Despensa | Legumbres | 23 | dried beans lentils white background |
-| `palomitas` | Despensa | Palomitas de microondas | 18 | popcorn bowl isolated white background |
-| `pasta` | Despensa | Pasta | 31 | dry spaghetti pasta white background |
-| `salsa_tomate` | Despensa | Salsa de tomate | 26 | tomato sauce jar white background |
-| `snacks` | Despensa | Snacks y aperitivos | 32 | potato chips snack bag white background |
-| `sopas` | Despensa | Sopas y caldos | 20 | vegetable soup can tin label |
-| `turron` | Despensa | Turron y mazapan | 7 | nougat almond bar sweet white background |
-| `bolsas_basura` | Drogueria | Bolsas de basura | 19 | roll of garbage bags plastic isolated |
-| `detergente` | Drogueria | Detergente | 25 | laundry detergent bottle white background |
-| `lavavajillas` | Drogueria | Lavavajillas | 21 | dishwasher detergent tablets white background |
-| **`limpiadores_hogar`** | Drogueria | **Lejia y limpiadores + Limpiacristales** | 36 | cleaning spray bottles white background |
-| `protector_solar` | Drogueria | Protector solar | 10 | sunscreen bottle isolated white background |
-| `suavizante` | Drogueria | Suavizante | 21 | fabric softener blue bottle laundry care |
-| `carne_pollo` | Frescos | Carne de pollo | 29 | raw chicken breast white background |
-| `carne_ternera` | Frescos | Carne de ternera | 23 | raw beef steak white background |
-| `embutido` | Frescos | Embutido y fiambre | 29 | sliced cured ham charcuterie white background |
-| `fruta` | Frescos | Fruta | 38 | fresh fruit assortment white background |
-| `huevos` | Frescos | Huevos | 31 | eggs carton isolated white background |
-| `leche` | Frescos | Leche | 41 | milk bottle isolated white background |
-| `pan` | Frescos | Pan | 39 | loaf of bread isolated white background |
-| **`pescado_blanco`** | Frescos | **Bacalao + Pescado blanco** | 32 | raw white fish fillet white background |
-| `queso` | Frescos | Queso | 29 | cheese wedge isolated white background |
+| `leche_infantil` | Bebe | Leche infantil | 8 | baby formula powder tin white background |
+| `panales` | Bebe | Panales | 8 | disposable diapers stack folded |
+| `potitos` | Bebe | Potitos | 8 | jars of baby food puree row |
+| `toallitas` | Bebe | Toallitas humedas | 8 | wet wipes tissue pack |
+| `agua` | Bebidas | Agua | 8 | bottled water plastic bottle white background |
+| `cava` | Bebidas | Cava y espumosos | 8 | sparkling wine bottle and glass |
+| `cerveza` | Bebidas | Cerveza | 8 | beer bottles isolated white background |
+| `refrescos` | Bebidas | Refrescos | 8 | aluminium soft drink cans stack |
+| `vino` | Bebidas | Vino | 8 | red wine bottle isolated white background |
+| `zumos` | Bebidas | Zumos | 8 | orange juice bottle white background |
+| `helados` | Congelados | Helados | 8 | ice cream tub isolated white background |
+| `marisco` | Congelados | Marisco | 8 | raw prawns shrimp white background |
+| `pizza` | Congelados | Pizza congelada | 8 | frozen pizza isolated white background |
+| `precocinados` | Congelados | Precocinados congelados | 8 | frozen ready meal package white background |
+| `verduras_congeladas` | Congelados | Verduras congeladas | 8 | frozen peas vegetables white background |
+| `aceite_oliva` | Despensa | Aceite de oliva | 8 | olive oil bottle white background |
+| `arroz` | Despensa | Arroz | 8 | uncooked white rice grains in bowl |
+| `azucar` | Despensa | Azucar y edulcorante | 8 | white sugar cubes in bowl |
+| `cafe` | Despensa | Cafe | 8 | coffee beans package white background |
+| `cereales` | Despensa | Cereales | 8 | breakfast cereal box white background |
+| `chocolate` | Despensa | Chocolate y huevos de Pascua | 8 | dark chocolate bar squares broken |
+| `conservas_pescado` | Despensa | Conservas de pescado | 8 | canned tuna tin white background |
+| `especias` | Despensa | Sal y especias | 8 | spice jars isolated white background |
+| `galletas` | Despensa | Galletas | 8 | biscuits cookies isolated white background |
+| `harina` | Despensa | Harina | 8 | flour bag baking white background |
+| `legumbres` | Despensa | Legumbres | 8 | dried beans lentils white background |
+| `palomitas` | Despensa | Palomitas de microondas | 8 | popcorn bowl isolated white background |
+| `pasta` | Despensa | Pasta | 8 | dry spaghetti pasta white background |
+| `salsa_tomate` | Despensa | Salsa de tomate | 8 | tomato sauce jar white background |
+| `snacks` | Despensa | Snacks y aperitivos | 8 | potato chips snack bag white background |
+| `sopas` | Despensa | Sopas y caldos | 8 | vegetable soup can tin label |
+| `turron` | Despensa | Turron y mazapan | 8 | nougat almond bar sweet white background |
+| `bolsas_basura` | Drogueria | Bolsas de basura | 8 | roll of garbage bags plastic isolated |
+| `detergente` | Drogueria | Detergente | 8 | laundry detergent bottle white background |
+| `lavavajillas` | Drogueria | Lavavajillas | 8 | dishwasher detergent tablets white background |
+| **`limpiadores_hogar`** | Drogueria | **Lejia y limpiadores + Limpiacristales** | 16 | cleaning spray bottles white background |
+| `protector_solar` | Drogueria | Protector solar | 8 | sunscreen bottle isolated white background |
+| `suavizante` | Drogueria | Suavizante | 8 | fabric softener blue bottle laundry care |
+| `carne_pollo` | Frescos | Carne de pollo | 8 | raw chicken breast white background |
+| `carne_ternera` | Frescos | Carne de ternera | 8 | raw beef steak white background |
+| `embutido` | Frescos | Embutido y fiambre | 8 | sliced cured ham charcuterie white background |
+| `fruta` | Frescos | Fruta | 8 | fresh fruit assortment white background |
+| `huevos` | Frescos | Huevos | 8 | eggs carton isolated white background |
+| `leche` | Frescos | Leche | 8 | milk bottle isolated white background |
+| `pan` | Frescos | Pan | 8 | loaf of bread isolated white background |
+| **`pescado_blanco`** | Frescos | **Bacalao + Pescado blanco** | 16 | raw white fish fillet white background |
+| `queso` | Frescos | Queso | 8 | cheese wedge isolated white background |
 | `torrijas` | Frescos | Torrijas y bolleria de Cuaresma | 8 | sweet pastry bun sugar white background |
-| `verdura` | Frescos | Verdura | 36 | fresh vegetables isolated white background |
-| `yogur` | Frescos | Yogur | 31 | greek yogurt bowl with spoon |
-| `acondicionador` | Higiene | Acondicionador | 19 | hair conditioner bottle white background |
-| `champu` | Higiene | Champu | 22 | shampoo bottle isolated white background |
-| `desodorante` | Higiene | Desodorante | 20 | deodorant spray can cosmetic product |
-| `gel_ducha` | Higiene | Gel de ducha | 23 | body wash shower gel bathroom bottle |
-| `higiene_femenina` | Higiene | Higiene femenina | 19 | menstrual pads tampons box product |
-| `papel_higienico` | Higiene | Papel higienico | 29 | toilet paper rolls white background |
-| `pasta_dientes` | Higiene | Pasta de dientes | 21 | toothpaste tube white background |
-| `arena_gato` | Mascotas | Arena para gato | 20 | cat litter granules pellets |
-| `comida_gato` | Mascotas | Comida para gato | 27 | cat food kibble bowl white background |
-| `comida_perro` | Mascotas | Comida para perro | 28 | dry dog food kibble pile |
+| `verdura` | Frescos | Verdura | 8 | fresh vegetables isolated white background |
+| `yogur` | Frescos | Yogur | 8 | greek yogurt bowl with spoon |
+| `acondicionador` | Higiene | Acondicionador | 8 | hair conditioner bottle white background |
+| `champu` | Higiene | Champu | 8 | shampoo bottle isolated white background |
+| `desodorante` | Higiene | Desodorante | 8 | deodorant spray can cosmetic product |
+| `gel_ducha` | Higiene | Gel de ducha | 8 | body wash shower gel bathroom bottle |
+| `higiene_femenina` | Higiene | Higiene femenina | 8 | menstrual pads tampons box product |
+| `papel_higienico` | Higiene | Papel higienico | 8 | toilet paper rolls white background |
+| `pasta_dientes` | Higiene | Pasta de dientes | 8 | toothpaste tube white background |
+| `arena_gato` | Mascotas | Arena para gato | 8 | cat litter granules pellets |
+| `comida_gato` | Mascotas | Comida para gato | 8 | cat food kibble bowl white background |
+| `comida_perro` | Mascotas | Comida para perro | 8 | dry dog food kibble pile |
 
 ---
 

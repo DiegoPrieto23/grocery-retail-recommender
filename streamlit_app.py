@@ -28,9 +28,10 @@ from src.demo.baskets import (
     basket_label,
     build_basket,
     customer_baskets,
-    hits,
     load_carts,
     load_queries,
+    load_reference_hit_rates,
+    score_hits,
 )
 from src.demo.catalog import (
     Product,
@@ -93,6 +94,12 @@ def get_queries() -> pd.DataFrame:
 def get_carts() -> pd.DataFrame:
     """Lo que habia en el carrito en el corte de cada una de esas cestas."""
     return load_carts()
+
+
+@st.cache_data(show_spinner=False)
+def get_reference_hit_rates() -> dict[str, float] | None:
+    """Acierto medio en test (Fase 7c), leido del informe y no copiado a mano."""
+    return load_reference_hit_rates()
 
 
 @st.cache_data(show_spinner=False)
@@ -269,7 +276,8 @@ st.title("Supermercado online")
 st.caption(
     "Cesta en curso, recomendaciones del sistema de dos etapas (ALS + co-compra + "
     "popularidad, reordenado con LambdaRank) y próxima mejor acción. Todo es inferencia "
-    "sobre los modelos ya entrenados de las Fases 3 y 4."
+    "sobre los modelos ya entrenados de las Fases 3 y 4, reentrenados en las 7c y 7d "
+    "sobre el catálogo de 496 referencias."
 )
 
 
@@ -468,11 +476,16 @@ else:
 
     # Sobre una cesta real se puede decir algo que en una inventada no: si el cliente
     # acabo comprando lo que se le recomendo. El acierto pisa al motivo en la insignia,
-    # porque es el dato mas fuerte de la tarjeta.
-    acertados: set[str] = set()
-    if loaded is not None:
-        acertados = hits(top5, loaded.target)
-        for product_id in acertados:
+    # porque es el dato mas fuerte de la tarjeta. Se distinguen dos niveles: el producto
+    # exacto y "otra referencia de la misma categoria", que tambien es una recomendacion
+    # util en gran consumo y que el SKU exacto solo no deja ver.
+    score = None
+    if loaded is not None and loaded.target:
+        category_of = catalog.set_index("product_id")["category"].to_dict()
+        score = score_hits(top5, loaded.target, category_of)
+        for product_id in score.category_only:
+            badges[product_id] = ("categoría acertada", "yellow")
+        for product_id in score.exact:
             badges[product_id] = ("lo compró de verdad", "green")
 
     product_grid(
@@ -487,12 +500,37 @@ else:
         "no de una explicación escrita a posteriori."
     )
 
-    if loaded is not None and loaded.target:
-        aciertos = len(acertados)
-        st.markdown(
-            f"**{aciertos} de {len(top5)}** recomendaciones estaban en lo que el cliente "
-            f"añadió después ({len(loaded.target)} líneas)."
+    if score is not None:
+        st.markdown(score.describe())
+        st.caption(
+            f"El cliente añadió {len(loaded.target)} líneas después del corte, de "
+            f"{len(score.target_categories)} categorías distintas. «Acertar la categoría» "
+            "es recomendar un producto de una categoría que sí compró, aunque fuera otra "
+            "referencia; es la misma definición que usa el informe del recomendador."
         )
+        reference = get_reference_hit_rates()
+        if reference:
+            def es(value: float, fmt: str) -> str:
+                return format(value, fmt).replace(".", ",")
+
+            st.caption(
+                ":material/query_stats: En las cestas de test del recomendador, de media "
+                f"{es(reference['cat_per_basket'], '.2f')} de 5 recomendaciones aciertan "
+                f"la categoría y {es(reference['sku_per_basket'], '.2f')} el producto "
+                f"exacto; el {es(reference['cat_hit_rate'], '.1%')} de las cestas tiene al "
+                f"menos un acierto de categoría y el {es(reference['sku_hit_rate'], '.1%')} "
+                "al menos uno exacto. Una cesta suelta puede quedar por encima o por debajo."
+            )
+
+        # En el target se marca lo mismo desde el otro lado: que linea se acerto tal cual
+        # y cual solo por categoria (se recomendo otra referencia de la suya).
+        recommended_categories = {category_of.get(p) for p in score.category} - {None}
+        target_badges = {
+            p: ("categoría acertada", "yellow")
+            for p in loaded.target
+            if category_of.get(p) in recommended_categories
+        }
+        target_badges.update({p: ("acertada", "green") for p in score.exact})
         with st.expander("Ver lo que compró realmente después del corte"):
             st.caption(
                 "Es el `target` del split: las líneas que el cliente añadió tras el "
@@ -502,14 +540,7 @@ else:
                 get_products(catalog, loaded.target),
                 key_prefix="target",
                 columns=5,
-                badges={p: ("acertada", "green") for p in acertados},
-            )
-        if aciertos == 0:
-            st.caption(
-                "Cero aciertos en esta cesta es lo normal, no un fallo: el hit_rate@5 "
-                "medido en la Fase 3 es del 11,8 %, y el diagnóstico de esa fase explica "
-                "por qué (el sistema acierta la categoría el 51,4 % de las veces, pero "
-                "dentro de ella el generador elige la referencia casi al azar)."
+                badges=target_badges,
             )
 
 

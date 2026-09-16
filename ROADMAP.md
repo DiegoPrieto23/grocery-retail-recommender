@@ -107,7 +107,7 @@ referencias distintas por compra** — es decir, casi nunca repite SKU — y só
 las líneas de una cesta futura son productos que ya había comprado, frente al **88,6 %**
 cuando se mira la categoría. La fidelidad está en la categoría, no en la referencia.
 
-- [~] **Deuda para más adelante: dar fidelidad de marca/SKU al generador.** En gran consumo
+- [x] **Deuda para más adelante: dar fidelidad de marca/SKU al generador.** En gran consumo
       real un cliente repite referencia (siempre la misma leche), y ahí es donde un
       recomendador de SKU tiene margen. Implica tocar la elección de producto dentro de
       categoría en `_generate_baskets_and_items`, regenerar el dataset (cambian los
@@ -118,7 +118,7 @@ cuando se mira la categoría. La fidelidad está en la categoría, no en la refe
       (7b-7e), que es donde se verá si el NDCG@5 de SKU sube.
       · **Subió**: la 7c reentrena sobre el dataset nuevo y el NDCG@5 pasa de 0,0343 a
       0,1752, con el hit_rate de SKU de 11,8 % a 49,5 %. La 7d rehace la Fase 4 sin cambios
-      notables. Queda la Fase 6a (7e).
+      notables, y la 7e rehace la 6a y lleva el acierto de categoría a la demo. Cerrada.
 
 ## Fase 4 — Next Best Action
 
@@ -214,7 +214,8 @@ supuesto es el tamaño del premio, no el signo.
 Paso previo a la app, se ejecuta una sola vez con `python -m src.catalog.build_assets`.
 Es la única parte del proyecto que necesita internet — el resultado se cachea en `assets/`
 y a partir de ahí todo vuelve a ser local. La lógica vive en `src/catalog/` y está
-verificada por `tests/test_catalog.py` (29 tests).
+verificada por `tests/test_catalog.py` (29 tests; 30 desde la 7e, que la rehízo sobre el
+catálogo de 496 productos — ver más abajo).
 
 - [x] `.env` con `PEXELS_API_KEY` (en `.gitignore`, nunca comiteado) + `.env.example` sin
       valores reales, comiteado como documentación de qué variable hace falta
@@ -623,15 +624,56 @@ original"** de `reports/nba/metrics.md`) contra `reports/nba/baseline_fase4.json
 
 ### 7e — Rehacer la Fase 6a y arreglar la Fase 6b
 
-- [ ] Rehacer la Fase 6a (los `product_id` cambiaron): revisar `visual_group`/`search_term`
+Hecha. Se verifica con `pytest tests/test_catalog.py tests/test_demo_hits.py
+tests/test_demo_baskets.py tests/test_serving_parity.py` (59 tests, ninguno saltado) y
+arrancando la demo. Con esto **la Fase 7 queda cerrada**, salvo el `README.md` (ver la
+nota de la 7b).
+
+- [x] Rehacer la Fase 6a (los `product_id` cambiaron): revisar `visual_group`/`search_term`
       y regenerar el CSV de imágenes — reutilizar `assets/` existente donde el
       `visual_group` no haya cambiado, para no volver a llamar a Pexels de más
-- [ ] En la demo (Fase 6b), cambiar el indicador de acierto: en vez de solo "X de 5
+      · **los 60 `visual_group` y sus términos siguen valiendo**: las 62 categorías no
+      cambiaron y el mapa va por categoría, así que `visual_groups.csv`, las 60 fotos e
+      `image_credits.csv` quedan byte-idénticos · **0 llamadas a Pexels**:
+      `python -m src.catalog.build_assets --offline` · `assets/product_catalog.csv` pasa
+      de 1.500 a **496 filas, 0 sin foto**, 10 nombres desempatados con ordinal (antes 177)
+      · **el CSV viejo rompía la demo sin avisar**: con ids correlativos seguía cruzando con
+      los 496 nuevos, pero solo el 1,6 % caía en su grupo, así que se pintaban nombres y
+      fotos de otra categoría. Ahora lo impiden `check_catalog_matches` (la demo falla con
+      el comando que lo arregla; comprobado contra el CSV del commit `e719f62`) y
+      `test_el_csv_final_corresponde_al_catalogo_actual`
+      · con 8 referencias por categoría, `MIN_GROUP_SIZE = 15` ya no discrimina (58 de 60
+      grupos quedan por debajo); las dos fusiones se mantienen por el criterio de mismo
+      objeto físico, y se deja escrito en `visual_groups.py` y `docs/VISUAL_CATALOG.md`
+- [x] En la demo (Fase 6b), cambiar el indicador de acierto: en vez de solo "X de 5
       recomendaciones estaban en lo que añadiste después" (SKU exacto), mostrar también el
       acierto de categoría por separado — algo como "X de 5 acertaron la categoría, de esas
       Y acertaron el producto exacto". No ocultar el número de SKU exacto, solo dar más
       contexto honesto junto a él
-- [ ] Re-apuntar la demo a los modelos y al CSV de imágenes nuevos
+      · `score_hits` / `HitSummary` en `src/demo/baskets.py`, con **la misma definición que
+      `category_metrics`** del informe · la frase es "**X de 5** acertaron la categoría de
+      lo que el cliente añadió después; de esas, **Y** eran el producto exacto", con los
+      dos números en negrita · un acierto exacto se cuenta siempre, aunque faltara su
+      categoría en el mapa, así que el número de SKU no puede perderse por el camino
+      · las tarjetas distinguen "lo compró de verdad" (verde) de "categoría acertada"
+      (amarillo), y el desplegable del target marca lo mismo desde el otro lado
+      · debajo, el acierto medio del test (**0,88 de 5** por categoría y **0,64** exacto;
+      **60,0 %** y **49,5 %** de cestas con algún acierto), leído de
+      `reports/recommender/metrics.json` por `load_reference_hit_rates` en vez de escrito
+      a mano. Sustituye al texto que citaba las cifras de la Fase 3 (11,8 % / 51,4 %)
+      · verificado por los 12 tests de `tests/test_demo_hits.py`
+- [x] Re-apuntar la demo a los modelos y al CSV de imágenes nuevos
+      · la app lee rutas fijas que las 7c y 7d ya sobrescribieron
+      (`models/recommender_ranker_lgbm.txt`, `data/serving/` con 496 productos indexados,
+      `predictions/nba_actions.parquet`), así que no hizo falta cambiar ninguna ruta; lo que
+      estaba desfasado era el CSV de imágenes · la paridad del serving con el ranker nuevo
+      la sigue fijando `tests/test_serving_parity.py`
+- [x] Comprobar que `streamlit run` arranca sin errores
+      · `AppTest` cargando 18 cestas reales de 6 clientes: 0 excepciones, y salen los tres
+      casos (aciertos exactos, solo de categoría y ninguno) · `streamlit run` real:
+      `/_stcore/health` → `ok`, `/` → `200`, y abierta en Chromium sin cabeza: 0
+      excepciones de Streamlit, 0 errores de JavaScript, las fotos de las tarjetas casan
+      con la categoría del producto
 
 ## Fuera de alcance (por ahora)
 

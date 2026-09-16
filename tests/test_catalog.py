@@ -25,6 +25,7 @@ from src.catalog.pexels import score_photo
 from src.catalog.visual_groups import (
     CATEGORY_TO_GROUP,
     MERGES,
+    assign_visual_groups,
     build_group_table,
     build_product_catalog,
     build_product_name,
@@ -37,6 +38,7 @@ ASSETS_DIR = PROJECT_ROOT / "assets"
 GROUPS_CSV = ASSETS_DIR / "visual_groups.csv"
 CATALOG_CSV = ASSETS_DIR / "product_catalog.csv"
 CREDITS_CSV = ASSETS_DIR / "image_credits.csv"
+PROCESSED_PRODUCTS = PROJECT_ROOT / "data" / "processed" / "products.parquet"
 
 needs_assets = pytest.mark.skipif(
     not CATALOG_CSV.exists(),
@@ -81,8 +83,8 @@ def test_el_grupo_no_es_ni_el_departamento_ni_el_sku(products: pd.DataFrame) -> 
     """El grano visual esta entre los dos extremos que el reto descarta."""
     grupos = {group for group, _ in CATEGORY_TO_GROUP.values()}
     assert len(grupos) == 60
-    # Mas grupos que departamentos (8) y muchos menos que productos (1.500).
-    assert 8 < len(grupos) < 1500
+    # Mas grupos que departamentos (8) y muchos menos que productos (496 desde la 7a).
+    assert 8 < len(grupos) < 496
 
 
 def test_cada_grupo_tiene_un_unico_termino_de_busqueda() -> None:
@@ -257,6 +259,29 @@ def test_el_csv_final_tiene_las_cuatro_columnas_pedidas() -> None:
     ]
     assert catalogo["product_id"].is_unique
     assert catalogo["product_name"].is_unique
+
+
+@needs_assets
+@pytest.mark.skipif(
+    not PROCESSED_PRODUCTS.is_file(),
+    reason="falta data/processed/products.parquet; lanza `python -m src.etl.run_etl`",
+)
+def test_el_csv_final_corresponde_al_catalogo_actual() -> None:
+    """Una fila por producto de `products` actual, con el grupo que le toca hoy.
+
+    Este es el test que habria cazado el desfase de la Fase 7a: el CSV de 1.500 filas
+    seguia cruzando con los 496 `product_id` nuevos, pero con otra categoria detras.
+    """
+    products = pd.read_parquet(PROCESSED_PRODUCTS)
+    catalogo = pd.read_csv(CATALOG_CSV)
+    assert set(catalogo["product_id"]) == set(products["product_id"])
+
+    esperado = assign_visual_groups(products).set_index("product_id")["visual_group"]
+    actual = catalogo.set_index("product_id")["visual_group"]
+    distintos = (actual != esperado.reindex(actual.index)).sum()
+    assert distintos == 0, f"{distintos} productos con un `visual_group` que no les toca"
+    assert (catalogo["image_path"] != "").all()
+    assert catalogo["image_path"].notna().all()
 
 
 @needs_assets

@@ -2,8 +2,8 @@
 
 La logica de negocio vive aqui y no en `streamlit_app.py`, que se limita a invocarla y
 dibujar (misma regla que `CLAUDE.md` fija para los notebooks). Asi el motivo de una
-recomendacion y el buscador del catalogo se prueban con un test, sin levantar la app:
-lo hace `tests/test_demo.py`.
+recomendacion y el buscador del catalogo se pueden probar sin levantar la app; la guarda
+`check_catalog_matches` la prueba `tests/test_demo_hits.py`.
 """
 
 from __future__ import annotations
@@ -79,6 +79,35 @@ def _normalize(text: pd.Series | str) -> pd.Series | str:
     )
 
 
+def check_catalog_matches(products: pd.DataFrame, visual: pd.DataFrame) -> None:
+    """Falla si el mapeo de la Fase 6a no es el del catalogo actual.
+
+    Los `product_id` son correlativos (`P00001`, `P00002`...), asi que un
+    `product_catalog.csv` de un dataset anterior **sigue cruzando**: tras la Fase 7a el
+    CSV viejo de 1.500 filas cubria los 496 ids nuevos, y la demo pintaba nombres y fotos
+    de otra categoria sin ningun error. Por eso no basta con que cada producto tenga fila:
+    los dos conjuntos de ids tienen que ser iguales, y cada `product_name` tiene que
+    empezar por la categoria real del producto (asi lo compone la Fase 6a).
+    """
+    ids_products, ids_visual = set(products["product_id"]), set(visual["product_id"])
+    stale = ids_products != ids_visual
+    if not stale:
+        names = products[["product_id", "category"]].merge(
+            visual[["product_id", "product_name"]], on="product_id"
+        )
+        stale = not all(
+            str(name).startswith(str(category))
+            for name, category in zip(names["product_name"], names["category"])
+        )
+    if stale:
+        raise ValueError(
+            f"{CATALOG_CSV.relative_to(PROJECT_ROOT)} no corresponde al catálogo actual "
+            f"({len(ids_visual)} filas frente a {len(ids_products)} productos, o con "
+            "categorías que no casan). Regenéralo sin llamar a Pexels: "
+            "`python -m src.catalog.build_assets --offline`."
+        )
+
+
 def load_catalog(processed_dir: Path | None = None) -> pd.DataFrame:
     """Cruza `products` con el mapeo visual de la Fase 6a.
 
@@ -101,6 +130,7 @@ def load_catalog(processed_dir: Path | None = None) -> pd.DataFrame:
     directory = processed_dir or (PROJECT_ROOT / "data" / "processed")
     products = pd.read_parquet(directory / "products.parquet")
     visual = pd.read_csv(CATALOG_CSV)
+    check_catalog_matches(products, visual)
     merged = products.merge(visual, on="product_id", how="left")
     merged["product_name"] = merged["product_name"].fillna(merged["category"])
     merged["image_path"] = merged["image_path"].fillna("")
@@ -121,7 +151,7 @@ def _cheapest_first(frame: pd.DataFrame, exclude: list[str] | None, limit: int) 
     """Del mas barato al mas caro, quitando lo que ya esta en la cesta.
 
     El orden por precio es una decision de escaparate, no del modelo: dentro de una
-    categoria las ~24 referencias solo se distinguen por marca y precio, asi que
+    categoria las 8 referencias solo se distinguen por marca y precio, asi que
     ordenarlas por precio da una lista estable y con sentido para quien compra. El
     ranking del modelo se ve en "Te recomendamos", que es donde toca.
     """

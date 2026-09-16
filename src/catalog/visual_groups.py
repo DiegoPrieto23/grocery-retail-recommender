@@ -7,11 +7,12 @@ Por que `category` y no otra columna
 
 - `department` es demasiado amplio: una sola foto para "Frescos" tendria que representar
   a la vez leche, pan, fruta, carne y pescado.
-- `brand` y `product_id` son demasiado especificos: 1.500 fotos distintas, y ademas las
+- `brand` y `product_id` son demasiado especificos: 496 fotos distintas, y ademas las
   marcas son razones sociales sinteticas ("Familia Mir S.A."), no tienen aspecto propio.
 - `category` cae justo en el nivel que pide el reto: "Leche", "Yogur", "Pescado blanco"
   son el tipo de grupo reutilizable del ejemplo (`leche_entera`, `yogur_griego`,
-  `salmon`). 1.500 productos en 62 categorias: 24 productos por grupo de media.
+  `salmon`). Desde la Fase 7a son 496 productos en 62 categorias, 8 por categoria
+  (la Fase 6a original se hizo sobre 1.500, ~24 por categoria).
 
 Por eso `visual_group` **no** parte la categoria en trozos mas finos: el dataset no tiene
 ningun atributo (variedad, formato, sabor) con el que hacerlo, y dividir "Leche" en
@@ -47,6 +48,11 @@ import unicodedata
 import pandas as pd
 
 # Umbral por debajo del cual una categoria se considera candidata a fusion (ver modulo).
+# Se fijo con el catalogo de 1.500 productos. Desde la Fase 7a todas las categorias
+# tienen 8 referencias, asi que el umbral ya no discrimina (58 de 60 grupos quedan por
+# debajo) y las dos fusiones se sostienen solo por las condiciones (2) y (3): siguen
+# siendo el mismo objeto fisico en el mismo departamento. Se deja tal cual a proposito:
+# rebajarlo para que "vuelva a cuadrar" seria ajustar el criterio al resultado.
 MIN_GROUP_SIZE = 15
 
 # category -> (visual_group, search_term en ingles).

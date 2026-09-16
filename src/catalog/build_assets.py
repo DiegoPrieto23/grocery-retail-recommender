@@ -9,7 +9,7 @@ resultados de busqueda de Pexels no son reproducibles por semilla (el catalogo d
 cambia con el tiempo), asi que volver a lanzarlo con `--force` puede dar otras fotos. Por
 eso el modo por defecto respeta lo ya descargado y no vuelve a llamar a la API.
 
-Aqui se usa pandas y no PySpark a proposito: son 1.500 filas y un puñado de llamadas HTTP,
+Aqui se usa pandas y no PySpark a proposito: son 496 filas y un puñado de llamadas HTTP,
 no un ETL a escala.
 """
 

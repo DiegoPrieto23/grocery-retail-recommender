@@ -49,6 +49,8 @@ el numero bueno es el `n_items` que trae la propia query.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -222,3 +224,108 @@ def build_basket(
 def hits(recommended: list[str], target: list[str]) -> set[str]:
     """Los productos recomendados que el cliente acabo comprando de verdad."""
     return set(recommended) & set(target)
+
+
+@dataclass(frozen=True)
+class HitSummary:
+    """Acierto de un top-k contra el `target` de una cesta real, en dos niveles.
+
+    Por que dos niveles
+    -------------------
+    Contar solo el SKU exacto esconde la mitad de la historia: recomendar una leche a quien
+    acaba comprando otra leche no es lo mismo que recomendarle comida de gato. La Fase 7
+    nacio justo de eso — en la demo el "0 de 5" de SKU se leia como "no acierta nada" —, y
+    la respuesta no es cambiar el numero sino poner el de categoria **al lado**.
+
+    La definicion es la de `category_metrics` en `src/recommender/evaluate.py`, para que lo
+    que ensena la demo y lo que mide el informe sean la misma cosa: un recomendado acierta
+    la categoria si su categoria esta entre las de lo que el cliente anadio despues. Un
+    acierto exacto acierta tambien la categoria, asi que `exact` esta siempre dentro de
+    `category` y se puede leer como "de esas, tantas".
+    """
+
+    n_recommended: int
+    category: frozenset[str]
+    """Recomendados cuya categoria compro el cliente (incluye los exactos)."""
+    exact: frozenset[str]
+    """Recomendados que el cliente compro tal cual. Siempre contenido en `category`."""
+    target_categories: frozenset[str]
+    """Categorias de lo que el cliente anadio despues."""
+
+    @property
+    def category_only(self) -> frozenset[str]:
+        """Acertaron la categoria pero no la referencia."""
+        return self.category - self.exact
+
+    def describe(self) -> str:
+        """La frase de la app: categoria primero y, de esas, el producto exacto.
+
+        El numero de SKU exacto no se sustituye ni se esconde: va en la misma frase y en
+        negrita, igual que el de categoria.
+        """
+        n_cat, n_exact = len(self.category), len(self.exact)
+        acertaron = "acertó" if n_cat == 1 else "acertaron"
+        if n_cat == 0:
+            return (
+                f"**0 de {self.n_recommended}** recomendaciones acertaron la categoría "
+                "de lo que el cliente añadió después, y por tanto **0** acertaron el "
+                "producto exacto."
+            )
+        era = "era" if n_exact == 1 else "eran"
+        return (
+            f"**{n_cat} de {self.n_recommended}** {acertaron} la categoría de lo que el "
+            f"cliente añadió después; de esas, **{n_exact}** {era} el producto exacto."
+        )
+
+
+def score_hits(
+    recommended: list[str],
+    target: list[str],
+    category_of: Mapping[str, str],
+) -> HitSummary:
+    """Puntua un top-k contra el `target`, a nivel de categoria y de SKU.
+
+    `category_of` mapea `product_id -> category`. El acierto exacto no depende del mapa:
+    se cuenta siempre, y cuenta tambien como acierto de categoria (es el mismo producto).
+    Un producto sin categoria en el mapa solo puede acertar por esa via — con el catalogo
+    regenerado no deberia pasar, y si pasa es mejor quedarse corto en la categoria que
+    inventarla o, peor, perder el numero de SKU.
+    """
+    exact = frozenset(hits(recommended, target))
+    target_categories = frozenset(category_of[p] for p in target if p in category_of)
+    by_category = {p for p in recommended if category_of.get(p) in target_categories}
+    return HitSummary(
+        n_recommended=len(recommended),
+        category=frozenset(by_category) | exact,
+        exact=exact,
+        target_categories=target_categories,
+    )
+
+
+def load_reference_hit_rates(metrics_json: Path | None = None) -> dict[str, float] | None:
+    """Cifras de referencia del test de la Fase 3 (7c) para poner el caso en contexto.
+
+    Se leen del `metrics.json` que escribe `python -m src.recommender.pipeline` en vez de
+    copiarlas a mano en la app, que es lo que `CLAUDE.md` pide para cualquier metrica que
+    se ensene. Devuelve `None` si el informe no esta: la app lo omite en vez de fallar.
+
+    Claves: `cat_hit_rate`, `sku_hit_rate` (cestas con al menos un acierto) y
+    `cat_per_basket`, `sku_per_basket` (aciertos medios de 5 por cesta).
+    """
+    path = metrics_json or (PROJECT_ROOT / "reports" / "recommender" / "metrics.json")
+    if not path.is_file():
+        return None
+    metrics = json.loads(path.read_text(encoding="utf-8"))
+    total = next(
+        (row for row in metrics.get("by_category", []) if row.get("grupo") == "total"),
+        None,
+    )
+    if total is None:
+        return None
+    k = int(metrics.get("top_k", 5))
+    return {
+        "cat_hit_rate": float(total[f"cat_hit_rate@{k}"]),
+        "sku_hit_rate": float(total[f"sku_hit_rate@{k}"]),
+        "cat_per_basket": float(total[f"cat_precision@{k}"]) * k,
+        "sku_per_basket": float(total[f"sku_precision@{k}"]) * k,
+    }
