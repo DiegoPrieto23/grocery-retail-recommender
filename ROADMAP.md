@@ -117,7 +117,8 @@ cuando se mira la categoría. La fidelidad está en la categoría, no en la refe
       distintas por compra. Falta rehacer las Fases 2, 3, 4 y 6a sobre el dataset nuevo
       (7b-7e), que es donde se verá si el NDCG@5 de SKU sube.
       · **Subió**: la 7c reentrena sobre el dataset nuevo y el NDCG@5 pasa de 0,0343 a
-      0,1752, con el hit_rate de SKU de 11,8 % a 49,5 %. Quedan las Fases 4 y 6a (7d-7e).
+      0,1752, con el hit_rate de SKU de 11,8 % a 49,5 %. La 7d rehace la Fase 4 sin cambios
+      notables. Queda la Fase 6a (7e).
 
 ## Fase 4 — Next Best Action
 
@@ -577,11 +578,48 @@ incluida la comparación con la Fase 3, que el pipeline recalcula contra
 
 ### 7d — Rehacer la Fase 4 (NBA) sobre el dataset nuevo
 
-- [ ] Reentrenar los dos modelos de propensión y recalcular la política de valor esperado
+Hecha. Se re-ejecuta entera con `python -m src.nba.pipeline` (6 min en local), que
+reescribe `models/nba_*_lgbm.txt`, `predictions/nba_actions.parquet` y `reports/nba/`.
+La comparación con la Fase 4 la recalcula el propio pipeline (sección **"Frente a la Fase 4
+original"** de `reports/nba/metrics.md`) contra `reports/nba/baseline_fase4.json`, el
+`metrics.json` de la Fase 4 congelado con `git show 2327f25:reports/nba/metrics.json`.
+
+- [x] Reentrenar los dos modelos de propensión y recalcular la política de valor esperado
       sobre el dataset regenerado
-- [ ] Comprobar que las conclusiones de la Fase 4 (AUC, el barrido de sensibilidad de
+      · mismo código, mismos cortes y mismos supuestos · churn con **17 árboles** (antes
+      15), compra en categoría con **97** (antes 67) · mismas filas que antes: 34.557 de
+      entrenamiento de churn, 726.764 pares de categoría, 18.729 clientes y 370.300 pares
+      en test — la 7a cambia *qué referencia* se compra, no cuándo ni en qué categoría,
+      así que las cabeceras de cesta y las etiquetas no se mueven · la comprobación de
+      cordura contra `churn_label` sigue en **83,4 %** · los 73 tests de `test_nba.py`,
+      `test_tracking.py`, `test_impact.py` y `test_demo_baskets.py` siguen pasando
+- [x] Comprobar que las conclusiones de la Fase 4 (AUC, el barrido de sensibilidad de
       `churn_reduction`) se mantienen razonablemente estables — si cambian mucho, avisar
       antes de darlo por bueno
+      · **estables, sin desvíos notables**:
+
+      | Métrica | Fase 4 | Fase 7d |
+      | --- | ---: | ---: |
+      | Churn 4 semanas: AUC / PR-AUC | 0,8531 / 0,8556 | **0,8527 / 0,8550** |
+      | Compra categoría 7 días: AUC / PR-AUC | 0,7634 / 0,2190 | **0,7630 / 0,2185** |
+      | Política frente a no actuar | 4.012 € | **3.938 €** (−1,9 %) |
+      | Ventaja sobre la mejor alternativa trivial | 3.082 € | **3.030 €** |
+      | Clientes con acción | 75,6 % | **75,2 %** |
+
+      | `churn_reduction` | Fase 4 | Fase 7d | Cupones 7d |
+      | ---: | ---: | ---: | ---: |
+      | 0,00 | 1.210 € | **1.189 €** | 0 % |
+      | 0,05 | 1.734 € | **1.706 €** | 43,7 % |
+      | 0,10 | 4.012 € | **3.938 €** | 66,2 % |
+      | 0,20 | 8.862 € | **8.662 €** | 72,0 % |
+
+      Las conclusiones de la Fase 4 se sostienen tal cual: con `churn_reduction = 0` la
+      política sigue ganando (1.189 € frente a 907 € de "recomendar siempre") y deja de
+      repartir cupones, y las tres features dominantes del churn siguen siendo
+      `n_baskets_90d`, `avg_days_between_baskets` y `recency_days`. La pequeña bajada de
+      valor se ve también en "cupón a todos" (−1.430 € → −1.592 €) y "recomendar siempre"
+      (930 € → 907 €): afecta a todas las políticas, no solo a la de valor esperado. Era lo esperable: el NBA trabaja a nivel de cliente y
+      categoría, no de SKU
 
 ### 7e — Rehacer la Fase 6a y arreglar la Fase 6b
 

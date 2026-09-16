@@ -39,6 +39,12 @@ from src.nba import propensity as prop
 from src.nba import targets as tgt
 from src.nba.config import NBAConfig, REQUIRED_TABLES
 
+# Metricas de la Fase 4 original (dataset anterior a la Fase 7a), congeladas con
+# `git show 2327f25:reports/nba/metrics.json`. Es lo que permite que la comparacion de la
+# Fase 7d se recalcule en cada ejecucion en vez de copiarse a mano.
+BASELINE_FILENAME = "baseline_fase4.json"
+POLICY_NAME = "politica de valor esperado"
+
 
 class _Timer:
     """Cronometro de etapas, igual que en el ETL y en el recomendador."""
@@ -321,13 +327,83 @@ def _metrics_table(name: str, m: dict[str, float]) -> str:
     )
 
 
+def _policy_summary(comparison: list[dict]) -> tuple[float, float, float]:
+    """Valor de la politica, su ventaja sobre la mejor alternativa trivial y su % de accion."""
+    policy = next(r for r in comparison if r["politica"] == POLICY_NAME)
+    best_trivial = max(r["valor_total"] for r in comparison if r["politica"] != POLICY_NAME)
+    return policy["valor_total"], policy["valor_total"] - best_trivial, policy["pct_accion"]
+
+
+def _baseline_section(cfg: NBAConfig, result: dict[str, object]) -> str:
+    """Comparacion con la Fase 4 original, si la referencia congelada esta disponible."""
+    path = Path(cfg.reports_dir) / BASELINE_FILENAME
+    if not path.is_file():
+        return ""
+    base = json.loads(path.read_text(encoding="utf-8"))
+    comparison: pd.DataFrame = result["comparison"]  # type: ignore[assignment]
+    old_value, old_gap, old_pct = _policy_summary(base["comparison"])
+    new_value, new_gap, new_pct = _policy_summary(comparison.to_dict(orient="records"))
+
+    rows: list[tuple[str, str, str]] = []
+    for label, key in (("Churn 4 semanas", "churn_metrics"), ("Compra categoria", "purchase_metrics")):
+        old, new = base[key], result[key]
+        for metric in ("base_rate", "auc", "pr_auc"):
+            rows.append((f"{label}: {metric}", f"{old[metric]:.4f}", f"{new[metric]:.4f}"))  # type: ignore[index]
+        rows.append(
+            (
+                f"{label}: lift decil 1",
+                f"{old['lift_top_decile']:.2f}x",
+                f"{new['lift_top_decile']:.2f}x",  # type: ignore[index]
+            )
+        )
+    rows += [
+        ("Politica: valor frente a no actuar", f"{old_value:,.0f} EUR", f"{new_value:,.0f} EUR"),
+        ("Politica: ventaja sobre la mejor trivial", f"{old_gap:,.0f} EUR", f"{new_gap:,.0f} EUR"),
+        ("Politica: clientes con accion", f"{old_pct:.1%}", f"{new_pct:.1%}"),
+    ]
+    metric_lines = [f"| {name} | {a} | {b} |" for name, a, b in rows]
+
+    old_sweep = {r["reduccion_churn"]: r for r in base["sensitivity_retention"]}
+    new_sweep: pd.DataFrame = result["sensitivity_retention"]  # type: ignore[assignment]
+    sweep_lines = []
+    for r in new_sweep.to_dict(orient="records"):
+        o = old_sweep.get(r["reduccion_churn"])
+        if o is None:
+            continue
+        sweep_lines.append(
+            f"| {r['reduccion_churn']:.2f} | {o['valor_politica']:,.0f} EUR | "
+            f"{r['valor_politica']:,.0f} EUR | {o['pct_cupon']:.1%} | {r['pct_cupon']:.1%} |"
+        )
+
+    return "\n".join(
+        [
+            "## Frente a la Fase 4 original",
+            "",
+            "La Fase 4 se entreno sobre el dataset anterior a la Fase 7a (1.500 productos, sin "
+            "fidelidad de marca). Sus cifras estan congeladas en "
+            f"`{Path(cfg.reports_dir).as_posix()}/{BASELINE_FILENAME}`. Mismo codigo, mismos "
+            "cortes y mismos supuestos; cambia el dato.",
+            "",
+            "| Metrica | Fase 4 (dataset viejo) | Fase 7d (dataset nuevo) |",
+            "| --- | ---: | ---: |",
+            *metric_lines,
+            "",
+            "### Barrido de `churn_reduction`",
+            "",
+            "| reduccion_churn | valor Fase 4 | valor Fase 7d | cupones Fase 4 | cupones Fase 7d |",
+            "| ---: | ---: | ---: | ---: | ---: |",
+            *sweep_lines,
+        ]
+    )
+
+
 def _write_reports(cfg: NBAConfig, result: dict[str, object]) -> None:
     """Deja el informe de la fase en `reports/nba/`."""
     reports = Path(cfg.reports_dir)
     reports.mkdir(parents=True, exist_ok=True)
 
     comparison: pd.DataFrame = result["comparison"]  # type: ignore[assignment]
-    policy_row = comparison.loc[comparison["politica"] == "politica de valor esperado"].iloc[0]
+    policy_row = comparison.loc[comparison["politica"] == POLICY_NAME].iloc[0]
     coupon_row = comparison.loc[
         comparison["politica"] == "actuar siempre: enviar_cupon_categoria"
     ].iloc[0]
@@ -450,6 +526,8 @@ el cupon no retiene a nadie.
 
 Lo que **no** es un supuesto es el reparto: con los efectos fijados, toda la diferencia
 entre la politica y "actuar siempre" viene de acertar a quien, y eso es merito del modelo.
+
+{_baseline_section(cfg, result)}
 
 ## Que features usan los modelos
 
