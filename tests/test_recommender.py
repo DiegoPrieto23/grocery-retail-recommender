@@ -416,6 +416,46 @@ def test_ndcg_y_recall_contra_el_calculo_a_mano() -> None:
     assert resumen.loc[0, "ndcg@5"] == pytest.approx(esperado, abs=1e-6)
 
 
+def test_precision_y_f1_contra_el_calculo_a_mano() -> None:
+    """Dos cestas, para que las dos variantes de F1@5 se separen.
+
+    B1: 1 acierto, T = 2  ->  P = 1/5, R = 1/2, F1 = 2/7
+    B2: 0 aciertos, T = 3 ->  P = 0,   R = 0,   F1 = 0
+    Media de P = 0,1 ; media de R = 0,25
+    F1@5 (armonica de las medias) = 2 x 0,1 x 0,25 / 0,35 = 1/7
+    F1@5 por cesta (media de los F1)                       = 1/7 tambien, por casualidad:
+    se rompe la igualdad con B2 acertando algo, que es la tercera comprobacion.
+    """
+    scored = _scored(
+        [
+            ("B1", "P1", 0.9, 0),
+            ("B1", "P2", 0.8, 1),
+            ("B2", "P1", 0.9, 0),
+        ]
+    )
+    queries = pd.DataFrame(
+        [
+            {"basket_id": "B1", "profile": 4, "n_target": 2},
+            {"basket_id": "B2", "profile": 4, "n_target": 3},
+        ]
+    )
+    resumen, por_query = ev.evaluate(scored, queries, k=5)
+    por_query = por_query.set_index("basket_id")
+    assert por_query.loc["B1", "precision"] == pytest.approx(0.2)
+    assert por_query.loc["B1", "f1"] == pytest.approx(2 / 7)
+    assert por_query.loc["B2", "f1"] == 0.0
+    assert resumen.loc[0, "precision@5"] == pytest.approx(0.1)
+    assert resumen.loc[0, "f1@5"] == pytest.approx(2 * 0.1 * 0.25 / 0.35)
+
+    # Con B2 acertando uno de tres, las dos variantes dejan de coincidir.
+    scored.loc[scored["basket_id"] == "B2", "label"] = 1
+    resumen, _ = ev.evaluate(scored, queries, k=5)
+    p, r = (0.2 + 0.2) / 2, (0.5 + 1 / 3) / 2
+    assert resumen.loc[0, "f1@5"] == pytest.approx(2 * p * r / (p + r))
+    assert resumen.loc[0, "f1@5_por_cesta"] == pytest.approx((2 / 7 + 2 / 8) / 2)
+    assert resumen.loc[0, "f1@5"] != pytest.approx(resumen.loc[0, "f1@5_por_cesta"])
+
+
 def test_el_orden_perfecto_da_ndcg_uno() -> None:
     """Con los dos aciertos en los dos primeros huecos, NDCG@5 = 1."""
     scored = _scored(

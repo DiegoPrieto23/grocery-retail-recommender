@@ -1,6 +1,6 @@
-"""Evaluacion del recomendador: NDCG@5 y Recall@5 sobre las cestas ocultas.
+"""Evaluacion del recomendador: NDCG@5, Recall@5, Precision@5 y F1@5 sobre las cestas ocultas.
 
-## Las dos metricas
+## Las metricas
 
 Para una query con `T` productos que hay que adivinar y una lista de `k` recomendaciones:
 
@@ -8,9 +8,21 @@ Para una query con `T` productos que hay que adivinar y una lista de `k` recomen
     IDCG@k  = suma_{i=1..min(k, T)} 1 / log2(i + 1)
     NDCG@k  = DCG@k / IDCG@k
     Recall@k = aciertos en el top-k / T
+    Precision@k = aciertos en el top-k / k
+    F1@k = 2 x Precision@k x Recall@k / (Precision@k + Recall@k)
 
 **NDCG@5** premia acertar arriba: el mismo acierto vale el doble en el primer hueco que en
-el quinto. **Recall@5** mide cobertura y no mira el orden.
+el quinto. **Recall@5** mide cobertura y no mira el orden. **Precision@5** mide que parte
+de los cinco huecos se aprovecha; su denominador es siempre `k`, porque el sistema siempre
+ensena cinco productos aunque el pool tuviera menos.
+
+El F1@5 se reporta de dos formas, porque no dan lo mismo:
+
+- `f1@5`: la media armonica de la Precision@5 media y el Recall@5 medio. Es la definicion
+  del `ROADMAP.md` (Fase 7c) y la cifra de cabecera.
+- `f1@5_por_cesta`: el F1 de cada cesta, `2 x aciertos / (k + T)`, promediado. Es como
+  puntuaba la competicion de Kaggle "Instacart Market Basket Analysis" (mean F1 por
+  pedido), asi que es la variante que se usa al lado de ese benchmark.
 
 Dos decisiones que cambian el numero y conviene tener escritas:
 
@@ -58,7 +70,7 @@ def top_k_predictions(scored: pd.DataFrame, *, k: int, score_col: str = "score")
 def per_query_metrics(
     top_k: pd.DataFrame, queries: pd.DataFrame, *, k: int
 ) -> pd.DataFrame:
-    """NDCG@k, Recall@k y acierto/no acierto de cada query.
+    """NDCG@k, Recall@k, Precision@k, F1@k y acierto/no acierto de cada query.
 
     Args:
         top_k: Salida de `top_k_predictions`, con `label` y `rank`.
@@ -82,19 +94,34 @@ def per_query_metrics(
     out["n_hits"] = out["basket_id"].map(n_hits).fillna(0).astype(int)
     out["ndcg"] = out["dcg"] / _idcg(out["n_target"].to_numpy(), k)
     out["recall"] = out["n_hits"] / out["n_target"]
+    out["precision"] = out["n_hits"] / k
+    # Con P = h/k y R = h/T, la media armonica se simplifica a 2h / (k + T), que ademas
+    # vale 0 sin division por cero cuando no hay aciertos.
+    out["f1"] = 2 * out["n_hits"] / (k + out["n_target"])
     out["hit"] = (out["n_hits"] > 0).astype(float)
     return out
+
+
+def harmonic_f1(precision: float, recall: float) -> float:
+    """Media armonica de dos medias ya agregadas; 0 si las dos son 0."""
+    total = precision + recall
+    return 0.0 if total == 0 else 2 * precision * recall / total
 
 
 def summarise(per_query: pd.DataFrame, *, k: int, label: str = "total") -> pd.DataFrame:
     """Agrega las metricas por perfil y en total, con el numero de queries de cada uno."""
 
     def block(frame: pd.DataFrame, name: str) -> dict:
+        precision = float(frame["precision"].mean())
+        recall = float(frame["recall"].mean())
         return {
             "grupo": name,
             "n_queries": int(len(frame)),
             f"ndcg@{k}": float(frame["ndcg"].mean()),
-            f"recall@{k}": float(frame["recall"].mean()),
+            f"recall@{k}": recall,
+            f"precision@{k}": precision,
+            f"f1@{k}": harmonic_f1(precision, recall),
+            f"f1@{k}_por_cesta": float(frame["f1"].mean()),
             f"hit_rate@{k}": float(frame["hit"].mean()),
             "n_target_medio": float(frame["n_target"].mean()),
         }
@@ -166,7 +193,7 @@ def category_metrics(
     Separa dos fallos que la metrica de SKU confunde en un solo numero:
 
     - *"no se que necesita este cliente"* -- ni siquiera acierta la categoria;
-    - *"se que necesita leche, pero no cual de las 24 referencias de leche"*.
+    - *"se que necesita leche, pero no cual de las referencias de leche"*.
 
     En gran consumo el segundo es un problema distinto y mucho mas benigno: si el cliente
     va a comprar leche, cualquier leche recomendada es una recomendacion util aunque no

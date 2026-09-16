@@ -1,7 +1,7 @@
 """Primera etapa del recomendador: generacion de candidatos.
 
-Reducir 1.500 productos a un centenar antes de puntuarlos es lo que hace viable el patron
-de dos etapas de `CHALLENGE.md`: el ranker de la segunda etapa puede permitirse features
+Reducir el catalogo (496 productos desde la Fase 7a; 1.500 antes) a un pool acotado antes
+de puntuarlo es lo que hace viable el patron de dos etapas de `CHALLENGE.md`: el ranker de la segunda etapa puede permitirse features
 caras porque solo ve el pool, no el catalogo.
 
 Cada fuente es **independiente** y aporta su propia senal. Ninguna sabe de las otras, y el
@@ -215,7 +215,8 @@ def candidates_affinity_category(
     """Co-compra por categoria, para los productos que la afinidad de SKU no alcanza.
 
     `affinity_product` solo cubre los productos con al menos 50 cestas en comun con otro
-    (712 de 1.500 en este dataset): la cola larga del surtido se queda fuera. Bajando por
+    (712 de 1.500 en el dataset de la Fase 3; 479 de 496 desde la Fase 7a, sobre todo el
+    historial): la cola larga del surtido se queda fuera. Bajando por
     categoria se llega igualmente a un SKU concreto, con menos precision pero mas
     cobertura.
     """

@@ -69,6 +69,9 @@ def _summary_row(grupo: str, ndcg: float) -> dict:
         "n_queries": 100,
         "ndcg@5": ndcg,
         "recall@5": ndcg / 2,
+        "precision@5": ndcg / 4,
+        "f1@5": ndcg / 3,
+        "f1@5_por_cesta": ndcg / 3.5,
         "hit_rate@5": ndcg * 3,
         "n_target_medio": 4.0,
     }
@@ -125,6 +128,10 @@ def test_las_metricas_del_recomendador_incluyen_las_dos_ablaciones():
     # Sin las tres en el mismo run, la comparacion entre ellas habria que hacerla a mano.
     assert metrics["pool_recall"] == pytest.approx(0.31)
     assert metrics["cat_hit_rate@5"] == pytest.approx(0.51)
+    # F1@5 (Fase 7c) viaja con sus dos variantes.
+    assert metrics["precision@5"] == pytest.approx(0.0075)
+    assert metrics["f1@5"] == pytest.approx(0.01)
+    assert metrics["f1@5_por_cesta"] == pytest.approx(0.03 / 3.5)
 
 
 def test_las_metricas_del_recomendador_se_desglosan_por_perfil():

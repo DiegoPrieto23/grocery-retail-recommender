@@ -116,6 +116,8 @@ cuando se mira la categoría. La fidelidad está en la categoría, no en la refe
       lealtad por categoría, con la repetición de SKU subiendo de 0,850 a 0,440 referencias
       distintas por compra. Falta rehacer las Fases 2, 3, 4 y 6a sobre el dataset nuevo
       (7b-7e), que es donde se verá si el NDCG@5 de SKU sube.
+      · **Subió**: la 7c reentrena sobre el dataset nuevo y el NDCG@5 pasa de 0,0343 a
+      0,1752, con el hit_rate de SKU de 11,8 % a 49,5 %. Quedan las Fases 4 y 6a (7d-7e).
 
 ## Fase 4 — Next Best Action
 
@@ -499,17 +501,79 @@ cerrar la fase.
 
 ### 7c — Rehacer la Fase 3 (recomendador): reentrenar, F1@5 y comparación con Kaggle
 
-- [ ] Reentrenar el pipeline completo (candidatos + ranker) sobre el dataset nuevo
-- [ ] Añadir Precision@5 y F1@5 a la evaluación (ya se tiene Recall@5; F1@5 es su media
+Hecha. Se re-ejecuta entera con `python -m src.recommender.pipeline` (23 min en local), que
+reescribe `models/recommender_ranker_lgbm.txt`, `predictions/recommend*.parquet` y
+`reports/recommender/`. Todas las cifras de abajo salen de `reports/recommender/metrics.md`,
+incluida la comparación con la Fase 3, que el pipeline recalcula contra
+`reports/recommender/baseline_fase3.json` (el `metrics.json` de la Fase 3 congelado con
+`git show b3c29ba:reports/recommender/metrics.json`).
+
+- [x] Reentrenar el pipeline completo (candidatos + ranker) sobre el dataset nuevo
+      · mismo código, mismas ventanas, mismos tamaños de muestra (14.500 queries de
+      ranker, 18.000 de test) · LambdaRank de **87 árboles** (antes 84), NDCG@5 de
+      validación 0,2166 (antes 0,0836) · pool de **139 candidatos** por cesta sobre 496 productos
+      (antes 155 sobre 1.500), `pool_recall` **31,1 % → 76,9 %** · los topes de
+      `CandidateConfig` **no se han reajustado** al catálogo nuevo
+      · derivados regenerados en la misma pasada: `reports/recommender/profiles_demo.md`
+      (`python -m src.recommender.demo_profiles`) y el bundle de `data/serving/`
+      (`python -m src.serving.export_bundle`), para que `tests/test_serving_parity.py`
+      compare contra el modelo nuevo
+- [x] Añadir Precision@5 y F1@5 a la evaluación (ya se tiene Recall@5; F1@5 es su media
       armónica con Precision@5)
-- [ ] Comparar el F1@5 con el 1er puesto de la competición de Kaggle "Instacart Market
+      · `src/recommender/evaluate.py` · `precision@5` por cesta (aciertos / 5) y dos
+      variantes de F1: **`f1@5`**, la media armónica de Precision@5 y Recall@5 medios (la
+      definición de esta fase, cifra de cabecera), y **`f1@5_por_cesta`**, la media del F1
+      de cada cesta, que es como agregaba Instacart · verificado por
+      `test_precision_y_f1_contra_el_calculo_a_mano` en `tests/test_recommender.py`, que
+      además fija un caso donde las dos variantes no coinciden
+      · **Precision@5 = 0,1282 · F1@5 = 0,1454 · F1@5 por cesta = 0,1367**
+- [x] Comparar el F1@5 con el 1er puesto de la competición de Kaggle "Instacart Market
       Basket Analysis" (F1 ≈ 0,41) — documentando explícitamente que no es una comparación
       100% equivalente: Instacart predice solo recompras con un conjunto de tamaño variable
       optimizado por F1-maximization, mientras que aquí se predice un top-5 fijo que mezcla
       recompra con descubrimiento (popularidad/co-compra/ALS) — dejarlo dicho en el
       informe, no solo el número
-- [ ] Verificar si el SKU-hit_rate@5, NDCG@5 y el ratio SKU/categoría mejoraron de forma
+      · sección **"F1@5 frente a Kaggle"** de `reports/recommender/metrics.md`: 0,1454
+      (0,1367 por cesta) frente a ≈ 0,41, con la salvedad escrita al lado de la tabla.
+      Además de las dos diferencias pedidas (solo recompra frente a recompra +
+      descubrimiento; tamaño variable con F1-maximization frente a top-5 fijo), recoge
+      otras tres: el ranker optimiza NDCG y no F1, aquí se predice a mitad de cesta, e
+      Instacart promediaba el F1 por pedido
+- [x] Verificar si el SKU-hit_rate@5, NDCG@5 y el ratio SKU/categoría mejoraron de forma
       clara frente a los números viejos (11,8% / 0,0343 / 51,4% categoría vs 11,8% SKU)
+      · **sí, con claridad**:
+
+      | Métrica | Fase 3 | Fase 7c | Cambio |
+      | --- | ---: | ---: | ---: |
+      | NDCG@5 | 0,0343 | **0,1752** | ×5,1 |
+      | Recall@5 | 0,0332 | **0,1678** | ×5,1 |
+      | Precision@5 | 0,0251 | **0,1282** | ×5,1 |
+      | F1@5 | 0,0286 | **0,1454** | ×5,1 |
+      | hit_rate@5 (SKU) | 11,8 % | **49,5 %** | ×4,2 |
+      | hit_rate@5 (categoría) | 51,4 % | **60,0 %** | ×1,2 |
+      | SKU / categoría (hit_rate) | 23,0 % | **82,4 %** | ×3,6 |
+      | SKU / categoría (precision) | 13,7 % | **72,7 %** | ×5,3 |
+
+      La brecha categoría/SKU casi se cierra: la categoría apenas mejora y el SKU se
+      multiplica, que es exactamente el efecto que buscaba la 7a. Mejoran los cuatro
+      perfiles, incluido el cold-start (perfil 1: NDCG@5 0,0212 → 0,1185)
+
+#### Lo que hay que tener en cuenta al leer la mejora
+
+- **Parte de la subida es el catálogo, no el modelo.** Con 496 productos en vez de 1.500,
+  cualquier ordenación acierta más. El baseline de popularidad sobre el mismo pool pasa de
+  0,0200 a **0,0868** de NDCG@5 (×4,3). Lo que sí es mérito del ranker es la distancia
+  a ese baseline, que crece de **×1,71 a ×2,02**.
+- **El sistema se apoya ahora en el historial personal.** En los perfiles recurrentes, la
+  fuente `hist` está detrás del 98–99 % de las recomendaciones (antes el 42–49 %;
+  `profiles_demo.md`). Es la consecuencia natural de la fidelidad de marca.
+- **La señal de sesión pesa menos.** Pasa de +13,2 % a **+5,1 %** de NDCG@5 sobre la
+  ablación sin sesión. Con el historial prediciendo bien la referencia, lo que el cliente
+  mira en la web aporta menos información nueva. La cifra de +13 % de la Fase 3 queda
+  como histórica.
+- **El F1@5 no está cerca de 0,41, y no debería leerse como un fallo.** Aparte de las
+  diferencias de planteamiento, un top-5 fijo contra 3,9 productos por adivinar de media
+  pone techo a Precision y Recall a la vez.
 
 ### 7d — Rehacer la Fase 4 (NBA) sobre el dataset nuevo
 

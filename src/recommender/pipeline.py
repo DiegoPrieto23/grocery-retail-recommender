@@ -45,6 +45,17 @@ from src.recommender import splits
 from src.recommender.config import REQUIRED_TABLES, RecommenderConfig
 
 
+# F1 del primer puesto de "Instacart Market Basket Analysis" (Kaggle, 2017), redondeado.
+# Es una referencia de orden de magnitud, no un benchmark equivalente: ver
+# `_kaggle_section`.
+INSTACART_TOP_F1 = 0.41
+
+# Metricas de la Fase 3 original (1.500 productos, sin fidelidad de marca), congeladas con
+# `git show b3c29ba:reports/recommender/metrics.json`. Es lo que permite que la comparacion
+# de la Fase 7c se recalcule en cada ejecucion en vez de copiarse a mano.
+BASELINE_FILENAME = "baseline_fase3.json"
+
+
 class _Timer:
     """Cronometro de etapas, igual que en el ETL de la Fase 2."""
 
@@ -440,6 +451,114 @@ def _table(df: pd.DataFrame) -> str:
     return "\n".join([header, sep, *rows])
 
 
+def _system_row(name: str, frame: pd.DataFrame, k: int, *, bold: bool = False) -> str:
+    """Una fila de la tabla de comparacion entre sistemas."""
+    row = frame.iloc[0]
+    metrics = ("ndcg", "recall", "precision", "f1", "hit_rate")
+    fmt = "**{:.4f}**" if bold else "{:.4f}"
+    cells = [fmt.format(row[f"{m}@{k}"]) for m in metrics]
+    return "| " + " | ".join([name, *cells]) + " |"
+
+
+def _sku_category_paragraph(row: pd.Series, k: int) -> str:
+    """Lectura de la tabla SKU/categoria, con las cifras de esta ejecucion."""
+    cat, sku = row[f"cat_hit_rate@{k}"], row[f"sku_hit_rate@{k}"]
+    return (
+        f"El sistema acierta la categoria en el **{cat:.1%}** de las cestas y el SKU exacto "
+        f"en el **{sku:.1%}**; el cociente entre las dos es **{sku / cat:.1%}**. La "
+        "distancia entre las dos columnas mide cuanto del error esta en *elegir la "
+        "referencia* y no en *saber que categoria toca*. Desde la Fase 7a el surtido es de "
+        "8 referencias por categoria y el cliente repite su referencia preferida con la "
+        "lealtad de la categoria (`DATA_SPEC.md`, \"Fidelidad de marca\")."
+    )
+
+
+def _kaggle_section(summary: pd.DataFrame, k: int) -> str:
+    """F1@k frente al primer puesto de Instacart, con la salvedad al lado del numero."""
+    total = summary.iloc[0]
+    f1, f1_basket = total[f"f1@{k}"], total[f"f1@{k}_por_cesta"]
+    return f"""## F1@{k} frente a Kaggle "Instacart Market Basket Analysis"
+
+| | F1 |
+| --- | ---: |
+| Este sistema, F1@{k} (media armonica de Precision@{k} y Recall@{k} medios) | {f1:.4f} |
+| Este sistema, F1@{k} por cesta (media del F1 de cada cesta) | {f1_basket:.4f} |
+| Instacart, 1er puesto (aprox.) | {INSTACART_TOP_F1:.2f} |
+
+**No es el mismo benchmark y las cifras no se deben leer como una comparacion directa.**
+Se ponen juntas solo como orden de magnitud, con estas diferencias de planteamiento:
+
+- **Que se predice.** Instacart pide solo *recompras*: que productos que el usuario ya
+  compro antes estaran en su siguiente pedido. Aqui el top-{k} mezcla recompra con
+  *descubrimiento* (popularidad, co-compra, ALS), y el target incluye productos que el
+  cliente no habia comprado nunca.
+- **Tamano de la lista.** En Instacart cada pedido recibe un conjunto de **tamano
+  variable**, elegido para maximizar el F1 esperado de ese pedido (F1-maximization),
+  incluida la opcion de predecir "ninguno". Aqui la lista es **siempre de {k}**: con
+  {total['n_target_medio']:.1f} productos por adivinar de media, la Precision@{k} y el
+  Recall@{k} estan acotados por el propio formato, acierte lo que acierte el modelo.
+- **Que se optimiza.** El ranker se entrena con LambdaRank para NDCG@{k}, no para F1.
+- **Contexto.** Aqui se predice a mitad de cesta: lo que ya esta en el carrito queda fuera
+  del target. Instacart predice el pedido entero.
+- **Agregacion.** Instacart promediaba el F1 de cada pedido; la variante mas cercana es la
+  segunda fila ("por cesta"), no la de cabecera.
+"""
+
+
+def _baseline_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
+    """Comparacion con la Fase 3 original, si la referencia congelada esta disponible."""
+    path = Path(cfg.reports_dir) / BASELINE_FILENAME
+    if not path.is_file():
+        return ""
+    base = json.loads(path.read_text(encoding="utf-8"))
+    old, old_cat = base["summary"][0], base["by_category"][0]
+    new = result["summary"].iloc[0]  # type: ignore[union-attr]
+    new_cat = result["by_category"].iloc[0]  # type: ignore[union-attr]
+
+    # La Fase 3 no guardaba Precision@k, pero es exactamente su `sku_precision@k`.
+    old_precision = old_cat[f"sku_precision@{k}"]
+    rows = [
+        (f"NDCG@{k}", old[f"ndcg@{k}"], new[f"ndcg@{k}"]),
+        (f"Recall@{k}", old[f"recall@{k}"], new[f"recall@{k}"]),
+        (f"Precision@{k}", old_precision, new[f"precision@{k}"]),
+        (f"F1@{k}", ev.harmonic_f1(old_precision, old[f"recall@{k}"]), new[f"f1@{k}"]),
+        (f"hit_rate@{k} (SKU)", old[f"hit_rate@{k}"], new[f"hit_rate@{k}"]),
+        (f"hit_rate@{k} (categoria)", old_cat[f"cat_hit_rate@{k}"], new_cat[f"cat_hit_rate@{k}"]),
+        (
+            "SKU / categoria (hit_rate)",
+            old_cat[f"sku_hit_rate@{k}"] / old_cat[f"cat_hit_rate@{k}"],
+            new_cat[f"sku_hit_rate@{k}"] / new_cat[f"cat_hit_rate@{k}"],
+        ),
+        # Otra lectura del mismo cociente: de las recomendaciones que aciertan la
+        # categoria, cuantas son ademas el SKU exacto. Es el "13 %" de la Fase 3.
+        (
+            "SKU / categoria (precision)",
+            old_cat[f"sku_precision@{k}"] / old_cat[f"cat_precision@{k}"],
+            new_cat[f"sku_precision@{k}"] / new_cat[f"cat_precision@{k}"],
+        ),
+    ]
+    lines = [f"| {name} | {a:.4f} | {b:.4f} | {b / a:.2f}x |" for name, a, b in rows]
+    return "\n".join(
+        [
+            "## Frente a la Fase 3 original",
+            "",
+            "La Fase 3 se entreno sobre el dataset anterior a la Fase 7a (1.500 productos, "
+            "~24 referencias por categoria y eleccion de SKU casi aleatoria). Sus cifras "
+            f"estan congeladas en `{Path(cfg.reports_dir).as_posix()}/{BASELINE_FILENAME}`. "
+            "Mismo codigo, mismas ventanas y mismo numero de queries de test; cambia el dato.",
+            "",
+            "| Metrica | Fase 3 (dataset viejo) | Fase 7c (dataset nuevo) | Cambio |",
+            "| --- | ---: | ---: | ---: |",
+            *lines,
+            "",
+            "Un matiz al leerlo: el catalogo pasa de 1.500 a 496 productos, asi que un "
+            "top-5 al azar tambien acierta mas que antes. El baseline de popularidad de la "
+            "tabla de comparacion, sobre el mismo pool, es lo que aisla lo que aporta el "
+            "ranker.",
+        ]
+    )
+
+
 def _write_reports(cfg: RecommenderConfig, result: dict[str, object]) -> None:
     """Deja el informe de la fase en `reports/recommender/`."""
     reports = Path(cfg.reports_dir)
@@ -477,11 +596,11 @@ fuentes de candidatos se reajustan para cada ventana con solo el pasado de esa v
 Mismo pool de candidatos, distinta forma de ordenarlo. Es lo que aisla la aportacion del
 ranker de la de la primera etapa.
 
-| Sistema | NDCG@{k} | Recall@{k} | hit_rate@{k} |
-| --- | ---: | ---: | ---: |
-| Popularidad reciente x estacionalidad (sin aprendizaje) | {result['summary_popularity'].iloc[0][f'ndcg@{k}']:.4f} | {result['summary_popularity'].iloc[0][f'recall@{k}']:.4f} | {result['summary_popularity'].iloc[0][f'hit_rate@{k}']:.4f} |
-| LambdaRank sin senal de sesion | {result['summary_no_session'].iloc[0][f'ndcg@{k}']:.4f} | {result['summary_no_session'].iloc[0][f'recall@{k}']:.4f} | {result['summary_no_session'].iloc[0][f'hit_rate@{k}']:.4f} |
-| **LambdaRank completo** | **{total[f'ndcg@{k}']:.4f}** | **{total[f'recall@{k}']:.4f}** | **{total[f'hit_rate@{k}']:.4f}** |
+| Sistema | NDCG@{k} | Recall@{k} | Precision@{k} | F1@{k} | hit_rate@{k} |
+| --- | ---: | ---: | ---: | ---: | ---: |
+{_system_row("Popularidad reciente x estacionalidad (sin aprendizaje)", result["summary_popularity"], k)}
+{_system_row("LambdaRank sin senal de sesion", result["summary_no_session"], k)}
+{_system_row("**LambdaRank completo**", summary, k, bold=True)}
 
 ### Por perfil, sin senal de sesion
 
@@ -495,12 +614,11 @@ referencia concreta fuera otra.
 
 {_table(result['by_category'])}
 
-La distancia entre las dos columnas es la respuesta a por que el NDCG@5 de SKU es bajo:
-el sistema **si sabe que categoria toca**, y falla al elegir cual de las ~24 referencias de
-esa categoria. En este dataset ese segundo paso esta cerca del azar por construccion --
-un cliente con tres o mas compras en una categoria compra 0,86 referencias distintas por
-compra, es decir casi nunca repite SKU--, asi que el techo de la metrica de SKU lo pone el
-generador, no el modelo. Ver la nota de la Fase 3 en `ROADMAP.md`.
+{_sku_category_paragraph(result['by_category'].iloc[0], k)}
+
+{_kaggle_section(summary, k)}
+
+{_baseline_section(cfg, result, k)}
 
 ## Techo de la primera etapa
 

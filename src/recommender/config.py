@@ -47,8 +47,12 @@ TEST_START = dt.date(2025, 11, 1)
 class CandidateConfig:
     """Cuantos candidatos aporta cada fuente antes de unirlas.
 
-    Son topes por *query*, no por catalogo: el pool final ronda los 155 productos unicos
-    de los 1.500 posibles.
+    Son topes por *query*, no por catalogo: el pool final ronda los 139 productos unicos
+    de los 496 posibles (155 de 1.500 antes de la Fase 7a).
+
+    Las cifras de esta nota se midieron en la Fase 3, sobre el dataset anterior a la 7a.
+    Los topes no se han reajustado al catalogo nuevo: con ellos el `pool_recall` sube al
+    76,9 % (`reports/recommender/metrics.md`).
 
     Los tamanos no son redondos por gusto, salen de medir el techo de cada fuente sobre
     las cestas de test. El historial personal es el caso claro: un cliente tiene 117
