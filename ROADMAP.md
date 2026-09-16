@@ -449,10 +449,53 @@ se rehagan en 7b-7e.
 
 ### 7b — Rehacer la Fase 2 (ETL) sobre el dataset nuevo
 
-- [ ] Volver a ejecutar limpieza, Data Trust Score, RFM, `due_for_repurchase` y afinidad de
+Hecha. Se re-ejecuta entera con `python -m src.etl.run_etl` (234 s en local), que reescribe
+`data/processed/` y `reports/etl/`. No hizo falta tocar una línea del ETL: el cambio de la
+7a no altera el esquema, así que la misma lógica corre sobre los datos nuevos tal cual.
+
+- [x] Volver a ejecutar limpieza, Data Trust Score, RFM, `due_for_repurchase` y afinidad de
       cesta sobre el dataset regenerado
-- [ ] Comprobar que los 10 pares de afinidad de `DATA_SPEC.md` siguen saliendo con lift
+      · **Data Trust Score 91,42 (C) → 100,00 (A)**, con 9 de 79 comprobaciones fallando
+      sobre el crudo (antes 10 de 79 y 89,99). La nota del crudo sube 1,43 puntos por una
+      sola razón: `customers.signup_within_period` pasa de 3 filas malas a 0. No es un
+      defecto que se haya dejado de inyectar, es un **colateral** del que sí se inyecta —
+      al mover el alta de 58 clientes a "unos días después de su primera compra", antes
+      3 de esos saltos caían más allá del 2025-12-31 y con el reparto nuevo ninguno lo
+      hace. Los 58 fallos de `signup_before_first_purchase` siguen ahí. El limpio vuelve a
+      dar 100,00 en las cinco dimensiones · `reports/etl/data_trust.md`
+      · **Limpieza**: mismos recuentos salvo donde el catálogo encogió. `basket_items`
+      3.103.685 → 3.057.825 (45.860 duplicados, 1,478 %; 12.314 cantidades negativas,
+      0,397 % — antes 45.859 y 12.308). `products` baja de 1.500 a 496 filas, así que sus
+      defectos escalan con ella: 20 grafías de categoría (4,03 %, antes 60 sobre 1.500 =
+      4,00 %) y 5 marcas nulas (1,01 %, antes 17 = 1,13 %). `baskets` 1.192 importes
+      recalculados, idéntico. `customers` 154 ciudades nulas y 58 altas corregidas (antes
+      163 y 58). `session_events` 79 duplicados sobre 897.674 (antes 33 sobre 900.143) ·
+      `reports/etl/cleaning_report.md`
+      · **Features**: `rfm` 20.000, `repurchase_features` 608.885 con el **52,4 %** de los
+      pares vencidos (mismas cifras que antes), `affinity_category` 3.780 pares y
+      `affinity_product` 8.438 (antes 9.281 — son menos consecuentes porque hay 496
+      productos en vez de 1.500, no porque se haya perdido señal)
+      · los 110 tests de `test_cleaning.py`, `test_data_trust.py`, `test_rfm.py`,
+      `test_repurchase.py`, `test_affinity.py` y `test_schemas.py` siguen pasando
+- [x] Comprobar que los 10 pares de afinidad de `DATA_SPEC.md` siguen saliendo con lift
       alto (no debería haber cambiado mucho, pero verificarlo)
+      · **no se ha movido nada**: `reports/etl/affinity_expected_pairs.md` sale
+      byte-idéntico al de la Fase 2 original, con los mismos lift, soporte y confianza
+      hasta el segundo decimal. Era lo esperable — la fidelidad de marca de la 7a decide
+      *qué referencia* se lleva el cliente dentro de una categoría ya elegida, y la
+      afinidad se mide entre categorías, así que la señal vive en una capa que el cambio
+      no toca
+      · comprobación adicional sobre la tabla nueva: cada uno de los 10 consecuentes es el
+      **puesto 1 por lift** de sus 61 candidatos para esa categoría disparadora. El rango
+      va de 1,84 (Pan → Embutido) a 13,39 (Pañales → Toallitas), y los desvíos frente al
+      objetivo son los mismos de siempre (los pares de categorías grandes se quedan por
+      debajo porque compiten con el resto de la cesta, Pañales se dispara porque su
+      marginal es minúscula)
+
+**Pendiente para el final de la Fase 7**: el `README.md` sigue citando las cifras viejas
+(1.500 productos, Data Trust 89,99, 10 de 79). No se toca aquí porque también cita los
+números de las Fases 3, 4 y 6, que no se rehacen hasta 7c-7e: se actualiza de una vez al
+cerrar la fase.
 
 ### 7c — Rehacer la Fase 3 (recomendador): reentrenar, F1@5 y comparación con Kaggle
 

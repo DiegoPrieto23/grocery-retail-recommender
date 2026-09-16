@@ -200,7 +200,7 @@
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -210,7 +210,7 @@
       "dimension": "completeness",
       "name": "department_not_null",
       "description": "`department` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -220,7 +220,7 @@
       "dimension": "completeness",
       "name": "category_not_null",
       "description": "`category` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -230,7 +230,7 @@
       "dimension": "completeness",
       "name": "brand_not_null",
       "description": "`brand` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -240,7 +240,7 @@
       "dimension": "completeness",
       "name": "is_private_label_not_null",
       "description": "`is_private_label` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -250,7 +250,7 @@
       "dimension": "completeness",
       "name": "is_perishable_not_null",
       "description": "`is_perishable` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -260,7 +260,7 @@
       "dimension": "completeness",
       "name": "unit_price_not_null",
       "description": "`unit_price` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -270,7 +270,7 @@
       "dimension": "completeness",
       "name": "pack_size_not_null",
       "description": "`pack_size` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -280,7 +280,7 @@
       "dimension": "completeness",
       "name": "typical_repurchase_days_not_null",
       "description": "`typical_repurchase_days` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -290,7 +290,7 @@
       "dimension": "uniqueness",
       "name": "product_id_unique",
       "description": "`product_id` sin repetir",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -300,7 +300,7 @@
       "dimension": "validity",
       "name": "category_canonical",
       "description": "`category` sin mayusculas ni espacios inconsistentes",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -310,7 +310,7 @@
       "dimension": "validity",
       "name": "unit_price_positive",
       "description": "`unit_price` mayor que 0",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -320,7 +320,7 @@
       "dimension": "validity",
       "name": "pack_size_positive",
       "description": "`pack_size` mayor que 0",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -330,7 +330,7 @@
       "dimension": "validity",
       "name": "repurchase_days_positive",
       "description": "`typical_repurchase_days` mayor que 0",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -630,7 +630,7 @@
       "dimension": "consistency",
       "name": "promo_active_on_basket_date",
       "description": "La promocion aplicada estaba vigente el dia de la cesta",
-      "rows_total": 81975,
+      "rows_total": 155937,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -660,7 +660,7 @@
       "dimension": "integrity",
       "name": "promotion_id_fk",
       "description": "`promotion_id` existe en `promotion_id`",
-      "rows_total": 81975,
+      "rows_total": 155937,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -760,7 +760,7 @@
       "dimension": "completeness",
       "name": "session_id_not_null",
       "description": "`session_id` informada",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -770,7 +770,7 @@
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -780,7 +780,7 @@
       "dimension": "completeness",
       "name": "event_type_not_null",
       "description": "`event_type` informada",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -790,7 +790,7 @@
       "dimension": "completeness",
       "name": "event_timestamp_not_null",
       "description": "`event_timestamp` informada",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -800,7 +800,7 @@
       "dimension": "uniqueness",
       "name": "no_duplicate_rows",
       "description": "Sin filas duplicadas exactas",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -810,7 +810,7 @@
       "dimension": "validity",
       "name": "event_type_domain",
       "description": "`event_type` en view/add_to_cart",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -820,7 +820,7 @@
       "dimension": "consistency",
       "name": "event_after_session_start",
       "description": "El evento no es anterior al inicio de su sesion",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -830,7 +830,7 @@
       "dimension": "integrity",
       "name": "session_id_fk",
       "description": "`session_id` existe en `session_id`",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -840,7 +840,7 @@
       "dimension": "integrity",
       "name": "product_id_fk",
       "description": "`product_id` existe en `product_id`",
-      "rows_total": 900110,
+      "rows_total": 897595,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true

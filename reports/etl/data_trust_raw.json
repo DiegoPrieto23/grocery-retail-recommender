@@ -1,13 +1,13 @@
 {
-  "score": 89.99,
+  "score": 91.42,
   "grade": "C",
   "checks_total": 79,
-  "checks_failing": 10,
+  "checks_failing": 9,
   "dimension_scores": {
     "completeness": 97.41,
     "uniqueness": 81.07,
     "validity": 93.61,
-    "consistency": 77.88,
+    "consistency": 85.02,
     "integrity": 100.0
   },
   "dimension_detail": {
@@ -26,7 +26,7 @@
       "checks_failing": 3
     },
     "validity": {
-      "row_score": 99.73,
+      "row_score": 99.72,
       "check_score": 87.5,
       "score": 93.61,
       "checks": 16,
@@ -34,10 +34,10 @@
     },
     "consistency": {
       "row_score": 98.62,
-      "check_score": 57.14,
-      "score": 77.88,
+      "check_score": 71.43,
+      "score": 85.02,
       "checks": 7,
-      "checks_failing": 3
+      "checks_failing": 2
     },
     "integrity": {
       "row_score": 100.0,
@@ -91,8 +91,8 @@
       "name": "city_not_null",
       "description": "`city` informada",
       "rows_total": 20000,
-      "rows_failed": 163,
-      "pass_rate": 0.99185,
+      "rows_failed": 154,
+      "pass_rate": 0.9923,
       "passed": false
     },
     {
@@ -191,16 +191,16 @@
       "name": "signup_within_period",
       "description": "`signup_date` no posterior al fin del periodo observado",
       "rows_total": 20000,
-      "rows_failed": 3,
-      "pass_rate": 0.99985,
-      "passed": false
+      "rows_failed": 0,
+      "pass_rate": 1.0,
+      "passed": true
     },
     {
       "table": "products",
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -210,7 +210,7 @@
       "dimension": "completeness",
       "name": "department_not_null",
       "description": "`department` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -220,7 +220,7 @@
       "dimension": "completeness",
       "name": "category_not_null",
       "description": "`category` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -230,9 +230,9 @@
       "dimension": "completeness",
       "name": "brand_not_null",
       "description": "`brand` informada",
-      "rows_total": 1500,
-      "rows_failed": 17,
-      "pass_rate": 0.988667,
+      "rows_total": 496,
+      "rows_failed": 5,
+      "pass_rate": 0.989919,
       "passed": false
     },
     {
@@ -240,7 +240,7 @@
       "dimension": "completeness",
       "name": "is_private_label_not_null",
       "description": "`is_private_label` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -250,7 +250,7 @@
       "dimension": "completeness",
       "name": "is_perishable_not_null",
       "description": "`is_perishable` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -260,7 +260,7 @@
       "dimension": "completeness",
       "name": "unit_price_not_null",
       "description": "`unit_price` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -270,7 +270,7 @@
       "dimension": "completeness",
       "name": "pack_size_not_null",
       "description": "`pack_size` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -280,7 +280,7 @@
       "dimension": "completeness",
       "name": "typical_repurchase_days_not_null",
       "description": "`typical_repurchase_days` informada",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -290,7 +290,7 @@
       "dimension": "uniqueness",
       "name": "product_id_unique",
       "description": "`product_id` sin repetir",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -300,9 +300,9 @@
       "dimension": "validity",
       "name": "category_canonical",
       "description": "`category` sin mayusculas ni espacios inconsistentes",
-      "rows_total": 1500,
-      "rows_failed": 60,
-      "pass_rate": 0.96,
+      "rows_total": 496,
+      "rows_failed": 20,
+      "pass_rate": 0.959677,
       "passed": false
     },
     {
@@ -310,7 +310,7 @@
       "dimension": "validity",
       "name": "unit_price_positive",
       "description": "`unit_price` mayor que 0",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -320,7 +320,7 @@
       "dimension": "validity",
       "name": "pack_size_positive",
       "description": "`pack_size` mayor que 0",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -330,7 +330,7 @@
       "dimension": "validity",
       "name": "repurchase_days_positive",
       "description": "`typical_repurchase_days` mayor que 0",
-      "rows_total": 1500,
+      "rows_total": 496,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -531,8 +531,8 @@
       "name": "total_amount_matches_items",
       "description": "`total_amount` cuadra con la suma de sus lineas",
       "rows_total": 600174,
-      "rows_failed": 56340,
-      "pass_rate": 0.906127,
+      "rows_failed": 56205,
+      "pass_rate": 0.906352,
       "passed": false
     },
     {
@@ -550,7 +550,7 @@
       "dimension": "completeness",
       "name": "basket_id_not_null",
       "description": "`basket_id` informada",
-      "rows_total": 3103684,
+      "rows_total": 3103685,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -560,7 +560,7 @@
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 3103684,
+      "rows_total": 3103685,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -570,7 +570,7 @@
       "dimension": "completeness",
       "name": "quantity_not_null",
       "description": "`quantity` informada",
-      "rows_total": 3103684,
+      "rows_total": 3103685,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -580,7 +580,7 @@
       "dimension": "completeness",
       "name": "unit_price_paid_not_null",
       "description": "`unit_price_paid` informada",
-      "rows_total": 3103684,
+      "rows_total": 3103685,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -590,9 +590,9 @@
       "dimension": "uniqueness",
       "name": "no_duplicate_rows",
       "description": "Sin filas duplicadas exactas",
-      "rows_total": 3103684,
-      "rows_failed": 45506,
-      "pass_rate": 0.985338,
+      "rows_total": 3103685,
+      "rows_failed": 45474,
+      "pass_rate": 0.985348,
       "passed": false
     },
     {
@@ -600,8 +600,8 @@
       "dimension": "uniqueness",
       "name": "basket_product_unique",
       "description": "Una sola linea por cesta y producto",
-      "rows_total": 3103684,
-      "rows_failed": 45859,
+      "rows_total": 3103685,
+      "rows_failed": 45860,
       "pass_rate": 0.985224,
       "passed": false
     },
@@ -610,9 +610,9 @@
       "dimension": "validity",
       "name": "quantity_positive",
       "description": "`quantity` mayor que 0",
-      "rows_total": 3103684,
-      "rows_failed": 12308,
-      "pass_rate": 0.996034,
+      "rows_total": 3103685,
+      "rows_failed": 12314,
+      "pass_rate": 0.996032,
       "passed": false
     },
     {
@@ -620,7 +620,7 @@
       "dimension": "validity",
       "name": "unit_price_paid_positive",
       "description": "`unit_price_paid` mayor que 0",
-      "rows_total": 3103684,
+      "rows_total": 3103685,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -630,7 +630,7 @@
       "dimension": "consistency",
       "name": "promo_active_on_basket_date",
       "description": "La promocion aplicada estaba vigente el dia de la cesta",
-      "rows_total": 83214,
+      "rows_total": 158226,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -640,7 +640,7 @@
       "dimension": "integrity",
       "name": "basket_id_fk",
       "description": "`basket_id` existe en `basket_id`",
-      "rows_total": 3103684,
+      "rows_total": 3103685,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -650,7 +650,7 @@
       "dimension": "integrity",
       "name": "product_id_fk",
       "description": "`product_id` existe en `product_id`",
-      "rows_total": 3103684,
+      "rows_total": 3103685,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -660,7 +660,7 @@
       "dimension": "integrity",
       "name": "promotion_id_fk",
       "description": "`promotion_id` existe en `promotion_id`",
-      "rows_total": 83214,
+      "rows_total": 158226,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -760,7 +760,7 @@
       "dimension": "completeness",
       "name": "session_id_not_null",
       "description": "`session_id` informada",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -770,7 +770,7 @@
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -780,7 +780,7 @@
       "dimension": "completeness",
       "name": "event_type_not_null",
       "description": "`event_type` informada",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -790,7 +790,7 @@
       "dimension": "completeness",
       "name": "event_timestamp_not_null",
       "description": "`event_timestamp` informada",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -800,9 +800,9 @@
       "dimension": "uniqueness",
       "name": "no_duplicate_rows",
       "description": "Sin filas duplicadas exactas",
-      "rows_total": 900143,
-      "rows_failed": 33,
-      "pass_rate": 0.999963,
+      "rows_total": 897674,
+      "rows_failed": 79,
+      "pass_rate": 0.999912,
       "passed": false
     },
     {
@@ -810,7 +810,7 @@
       "dimension": "validity",
       "name": "event_type_domain",
       "description": "`event_type` en view/add_to_cart",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -820,7 +820,7 @@
       "dimension": "consistency",
       "name": "event_after_session_start",
       "description": "El evento no es anterior al inicio de su sesion",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -830,7 +830,7 @@
       "dimension": "integrity",
       "name": "session_id_fk",
       "description": "`session_id` existe en `session_id`",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -840,7 +840,7 @@
       "dimension": "integrity",
       "name": "product_id_fk",
       "description": "`product_id` existe en `product_id`",
-      "rows_total": 900143,
+      "rows_total": 897674,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
