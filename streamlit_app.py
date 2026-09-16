@@ -23,6 +23,15 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from src.demo.baskets import (
+    RealBasket,
+    basket_label,
+    build_basket,
+    customer_baskets,
+    hits,
+    load_carts,
+    load_queries,
+)
 from src.demo.catalog import (
     Product,
     browse,
@@ -75,6 +84,18 @@ def get_nba() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def get_queries() -> pd.DataFrame:
+    """Las 18.000 cestas reales de la ventana de test."""
+    return load_queries()
+
+
+@st.cache_data(show_spinner=False)
+def get_carts() -> pd.DataFrame:
+    """Lo que habia en el carrito en el corte de cada una de esas cestas."""
+    return load_carts()
+
+
+@st.cache_data(show_spinner=False)
 def sample_customers(n: int = 60) -> list[str]:
     """Unos cuantos clientes con historial, para el selector.
 
@@ -91,6 +112,11 @@ def sample_customers(n: int = 60) -> list[str]:
 if "cart" not in st.session_state:
     st.session_state.cart = []
 
+# La cesta real cargada, si la hay. Se guarda entera (no solo lo que se siembra) porque
+# su `target` es lo que permite contrastar el top-5 con lo que el cliente compro.
+if "loaded_basket" not in st.session_state:
+    st.session_state.loaded_basket = None
+
 
 def add_to_cart(product_id: str) -> None:
     if product_id not in st.session_state.cart:
@@ -103,6 +129,21 @@ def remove_from_cart(product_id: str) -> None:
 
 def clear_cart() -> None:
     st.session_state.cart = []
+    st.session_state.loaded_basket = None
+
+
+def load_real_basket(basket: RealBasket) -> None:
+    """Siembra el carrito con una cesta real y alinea su contexto.
+
+    Se llama desde un `on_click`, que corre **antes** del rerun: por eso aqui si se puede
+    escribir sobre las claves de `date_input` y `segmented_control`. Alinear dia y canal
+    no es cosmetico — mueven la estacionalidad, las promociones vigentes y la señal de
+    sesion, asi que sin ellos el recomendador veria un contexto que nunca existio.
+    """
+    st.session_state.cart = list(basket.cart)
+    st.session_state.loaded_basket = basket
+    st.session_state.basket_day = basket.basket_day
+    st.session_state.channel = basket.channel
 
 
 # --------------------------------------------------------------------------------------
@@ -260,21 +301,65 @@ with st.sidebar:
             f"{int(ficha['cust_n_products'])} referencias distintas · "
             f"ticket medio {ficha['cust_avg_ticket']:.2f} €".replace(".", ",")
         )
+        st.caption(
+            f"Su historial hasta el {bundle.window_start:%d/%m/%Y}: cestas cerradas y "
+            "referencias distintas compradas, no lo que lleva ahora en el carrito."
+        )
+
+        # --- Sembrar el carrito con una cesta real de test ---
+        st.subheader("Cargar una cesta real")
+        suyas = customer_baskets(get_queries(), customer_id)
+        if suyas.empty:
+            st.caption(
+                ":material/info: Este cliente no tiene ninguna cesta en la muestra de "
+                "test, así que aquí solo se puede construir la cesta a mano."
+            )
+        else:
+            elegida = st.selectbox(
+                "Cesta de test",
+                range(len(suyas)),
+                format_func=lambda i: basket_label(suyas.iloc[i]),
+                help=(
+                    "Cestas suyas posteriores al corte. Se carga lo que ya llevaba en el "
+                    "carrito; lo que añadió después es lo que el recomendador debe acertar."
+                ),
+            )
+            real = build_basket(suyas.iloc[elegida], get_carts())
+            st.button(
+                "Cargar esta cesta",
+                icon=":material/shopping_basket:",
+                on_click=load_real_basket,
+                args=(real,),
+                width="stretch",
+                type="primary",
+            )
+            if not real.has_cart:
+                st.caption(
+                    ":material/info: Esta cesta corta en 0: el carrito se queda vacío a "
+                    "propósito (perfil 3). Es la mitad del reparto que hace el split, no "
+                    "un fallo de carga."
+                )
     else:
         st.caption(
             ":material/person_add: Sin historial: solo popularidad y co-compra tienen señal."
         )
 
     st.header("Contexto")
+    # Las dos con `key`: al cargar una cesta real, `load_real_basket` escribe sobre ellas
+    # para que el dia y el canal sean los que esa compra tuvo de verdad. El valor inicial
+    # se siembra en el estado y **no** se pasa por `value=`/`default=`: hacer las dos
+    # cosas a la vez es lo que dispara el aviso de Streamlit por valor duplicado.
+    st.session_state.setdefault("basket_day", bundle.window_start)
+    st.session_state.setdefault("channel", "app")
     basket_day = st.date_input(
         "Día de la compra",
-        value=bundle.window_start,
         min_value=bundle.window_start,
         max_value=DATASET_END,
         format="DD/MM/YYYY",
         help="Mueve la estacionalidad y las promociones vigentes.",
+        key="basket_day",
     )
-    channel = st.segmented_control("Canal", ["app", "web", "store"], default="app")
+    channel = st.segmented_control("Canal", ["app", "web", "store"], key="channel")
 
     if st.session_state.cart:
         st.button(
@@ -293,6 +378,13 @@ with st.sidebar:
 # --------------------------------------------------------------------------------------
 # Perfil activo y Next Best Action
 # --------------------------------------------------------------------------------------
+# Si se cambia de cliente, la cesta real del anterior deja de tener sentido: se
+# atribuiria a quien no la compro y el contraste con el `target` seria falso. Se descarta
+# solo en ese caso; una cesta construida a mano (sin `loaded_basket`) se respeta.
+_loaded = st.session_state.loaded_basket
+if _loaded is not None and _loaded.customer_id != customer_id:
+    clear_cart()
+
 cart_ids: list[str] = st.session_state.cart
 is_known = customer_id is not None
 profile = (3 if is_known else 1) + (1 if cart_ids else 0)
@@ -311,6 +403,32 @@ nba_banner(customer_id)
 # Cesta
 # --------------------------------------------------------------------------------------
 st.subheader("Tu cesta")
+
+loaded: RealBasket | None = st.session_state.loaded_basket
+if loaded is not None:
+    tocada = list(cart_ids) != list(loaded.cart)
+    st.caption(
+        f":material/history: Cesta real **{loaded.basket_id}** del "
+        f"{loaded.basket_day:%d/%m/%Y} ({loaded.channel}) · se cargó lo que el cliente ya "
+        f"llevaba en el carrito en el instante del corte "
+        f"({loaded.n_bought_in_cart} de las {loaded.n_items} líneas del ticket)"
+        + (" · **modificada a mano desde entonces**" if tocada else "")
+    )
+    if loaded.abandoned:
+        # No es un detalle decorativo: son lineas que el ranker vio en el carrito y por
+        # eso excluyo de los candidatos, pero que no cuentan como acierto.
+        n = len(loaded.abandoned)
+        frase = (
+            "1 producto del carrito no llegó al ticket (lo abandonó). Se carga igual"
+            if n == 1
+            else f"{n} productos del carrito no llegaron al ticket (los abandonó). "
+            "Se cargan igual"
+        )
+        st.caption(
+            f":material/remove_shopping_cart: {frase}, porque es lo que el recomendador "
+            "tenía delante, pero no cuentan como acierto."
+        )
+
 if not cart_ids:
     st.caption(
         "La cesta está vacía. Busca o navega el catálogo de abajo y añade productos: "
@@ -340,14 +458,25 @@ with st.spinner("Calculando…"):
 if recommendations.empty:
     st.caption("No hay candidatos para esta combinación.")
 else:
+    top5 = recommendations["product_id"].tolist()
     badges = {row["product_id"]: explain(row) for _, row in recommendations.iterrows()}
     promos = {
         row["product_id"]: label
         for _, row in recommendations.iterrows()
         if (label := promo_badge(row))
     }
+
+    # Sobre una cesta real se puede decir algo que en una inventada no: si el cliente
+    # acabo comprando lo que se le recomendo. El acierto pisa al motivo en la insignia,
+    # porque es el dato mas fuerte de la tarjeta.
+    acertados: set[str] = set()
+    if loaded is not None:
+        acertados = hits(top5, loaded.target)
+        for product_id in acertados:
+            badges[product_id] = ("lo compró de verdad", "green")
+
     product_grid(
-        get_products(catalog, recommendations["product_id"].tolist()),
+        get_products(catalog, top5),
         key_prefix="rec",
         badges=badges,
         promos=promos,
@@ -357,6 +486,31 @@ else:
         "El motivo de cada tarjeta sale de las features con las que el ranker ordenó, "
         "no de una explicación escrita a posteriori."
     )
+
+    if loaded is not None and loaded.target:
+        aciertos = len(acertados)
+        st.markdown(
+            f"**{aciertos} de {len(top5)}** recomendaciones estaban en lo que el cliente "
+            f"añadió después ({len(loaded.target)} líneas)."
+        )
+        with st.expander("Ver lo que compró realmente después del corte"):
+            st.caption(
+                "Es el `target` del split: las líneas que el cliente añadió tras el "
+                "instante del corte. El ranker no las ha visto."
+            )
+            product_grid(
+                get_products(catalog, loaded.target),
+                key_prefix="target",
+                columns=5,
+                badges={p: ("acertada", "green") for p in acertados},
+            )
+        if aciertos == 0:
+            st.caption(
+                "Cero aciertos en esta cesta es lo normal, no un fallo: el hit_rate@5 "
+                "medido en la Fase 3 es del 11,8 %, y el diagnóstico de esa fase explica "
+                "por qué (el sistema acierta la categoría el 51,4 % de las veces, pero "
+                "dentro de ella el generador elige la referencia casi al azar)."
+            )
 
 
 # --------------------------------------------------------------------------------------
