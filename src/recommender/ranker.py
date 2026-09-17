@@ -48,10 +48,16 @@ def collect_for_ranking(df: DataFrame, *, with_label: bool = True) -> pd.DataFra
     - **El orden por query se hace en Spark.** LightGBM lee tamanos de grupo, no
       identificadores, asi que las filas de una cesta tienen que llegar contiguas; un
       `sort_values` en pandas sobre 2 M de filas duplica la memoria en el peor momento.
-    - **La recogida va por Arrow con `split_blocks` y `self_destruct`.** El `toPandas()`
+    - **La recogida va por trozos de `basket_id`.** `_collect_as_arrow` acumula en el heap
+      del driver todos los lotes de lo que recoge. Con el historial as-of (punto A1) la
+      matriz entera ya no cabia en 3-4 GB de driver, y con 6 GB la JVM mas la copia de
+      Python agotaban un portatil de 16 GB. Por trozos, el driver solo aloja uno cada
+      vez; las tablas de Arrow se concatenan sin copiar y se convierten una sola vez.
+      Cada trozo va ordenado por `(basket_id, product_id)`, y los trozos se piden en
+      orden, asi que la matriz final queda ordenada igual que con un `orderBy` global.
+    - **La conversion a pandas usa `split_blocks` y `self_destruct`.** El `to_pandas()`
       normal consolida todas las columnas en un unico bloque de numpy, lo que exige tener
-      a la vez la copia vieja y la nueva. Asi cada columna se convierte por separado y el
-      lote de Arrow se libera segun se copia.
+      a la vez la copia vieja y la nueva.
     """
     import pyarrow as pa
 
@@ -60,14 +66,51 @@ def collect_for_ranking(df: DataFrame, *, with_label: bool = True) -> pd.DataFra
     if with_label:
         selected.append(F.col("label").cast("byte").alias("label"))
 
-    ordered = df.select(*selected).orderBy("basket_id", "product_id")
+    # Cacheada: sin cache, cada trozo recalcularia la matriz entera.
+    projected = df.select(*selected).cache()
+    try:
+        bounds = [None, *_basket_cuts(projected), None]
+        tables = []
+        for lo, hi in zip(bounds[:-1], bounds[1:]):
+            chunk = projected
+            if lo is not None:
+                chunk = chunk.filter(F.col("basket_id") > F.lit(lo))
+            if hi is not None:
+                chunk = chunk.filter(F.col("basket_id") <= F.lit(hi))
+            batches = chunk.orderBy("basket_id", "product_id")._collect_as_arrow()  # noqa: SLF001
+            if batches:
+                tables.append(pa.Table.from_batches(batches, schema=batches[0].schema))
+            del batches
+    finally:
+        projected.unpersist()
 
-    batches = ordered._collect_as_arrow()  # noqa: SLF001 - unica via Arrow en PySpark 3.5
-    if not batches:
-        return pd.DataFrame(columns=[c.name for c in ordered.schema])
-    table = pa.Table.from_batches(batches, schema=batches[0].schema)
-    del batches
+    if not tables:
+        return pd.DataFrame(columns=[c.name for c in projected.schema])
+    table = pa.concat_tables(tables)
+    del tables
     return table.to_pandas(split_blocks=True, self_destruct=True)
+
+
+# Trozos en que se recoge la matriz del ranker (ver `collect_for_ranking`).
+COLLECT_CHUNKS = 8
+
+
+def _basket_cuts(df: DataFrame) -> list[str]:
+    """`COLLECT_CHUNKS - 1` cortes de `basket_id` que reparten las filas en trozos parecidos.
+
+    Se calculan sobre los identificadores distintos ordenados (unas decenas de miles, que
+    si caben en el driver), pesando cada cesta por su numero de filas.
+    """
+    counts = df.groupBy("basket_id").count().orderBy("basket_id").toPandas()
+    if counts.empty:
+        return []
+    cumulative = counts["count"].cumsum().to_numpy()
+    total = cumulative[-1]
+    cuts = []
+    for i in range(1, COLLECT_CHUNKS):
+        pos = int(np.searchsorted(cumulative, total * i / COLLECT_CHUNKS))
+        cuts.append(str(counts["basket_id"].iloc[min(pos, len(counts) - 1)]))
+    return sorted(set(cuts))
 
 
 def group_sizes(pdf: pd.DataFrame) -> np.ndarray:

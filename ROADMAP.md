@@ -70,6 +70,12 @@ perfil.
 - [x] Feature engineering para el ranker: señal de cada fuente de candidatos,
       recency/frequency, promoción, popularidad reciente, señal de sesión
       · `src/recommender/features.py` · 57 features en 6 familias (la de carrito, del punto A2)
+      · desde el punto A1, el historial personal (fuente `hist`, `due_for_repurchase` y
+      las features de cliente) se calcula **as-of el día de cada cesta**
+      (`src/recommender/history.py`), con las fórmulas compartidas con la demo en
+      `formulas.py` · verificado por `tests/test_asof_features.py` (corte estricto y
+      paridad Spark/pandas), `tests/test_serving_parity.py` y la sección de huecos por
+      recencia de `verify_recommender_diagnostics`
 - [x] **Deuda detectada en la Fase 2 (Q9 del EDA): la señal de sesión estaba contaminada.**
       **Resuelta arreglando el generador.** El problema era peor de lo anotado: no sólo
       `add_to_cart`, también los `view` cubrían el 100 % de la cesta. `_generate_sessions`

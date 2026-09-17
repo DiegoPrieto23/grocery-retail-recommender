@@ -34,12 +34,12 @@ import datetime as dt
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 
-# Coeficientes del ajuste por tamano de hogar (ver docstring del modulo).
-HOUSEHOLD_BASE = 1.45
-HOUSEHOLD_SLOPE = 0.125
-
-# Suelo del ciclo esperado: por corto que sea, nadie repone una categoria cada medio dia.
-MIN_EXPECTED_DAYS = 2.0
+# Las formulas del ciclo (y sus coeficientes) se comparten con el recomendador y con la
+# ruta de serving en pandas: viven en `src/recommender/formulas.py`. Se reexportan aqui
+# para no romper a quien las importaba de este modulo.
+from src.recommender import formulas as fx
+from src.recommender.formulas import HOUSEHOLD_BASE, HOUSEHOLD_SLOPE, MIN_EXPECTED_DAYS  # noqa: F401
+from src.recommender.formulas_spark import SPARK_OPS
 
 
 def _reference_date_column(
@@ -169,22 +169,23 @@ def repurchase_features(
             "customer_id",
             "left",
         )
-        # Hogar mas grande, ciclo mas corto. `coalesce` a 1 hogar si falta el dato.
-        household_factor = F.lit(household_base) - F.lit(household_slope) * F.coalesce(
-            F.col("household_size_est"), F.lit(1)
+        # Hogar mas grande, ciclo mas corto. Sin dato se asume un hogar de 1.
+        household_factor = fx.household_factor(
+            F.col("household_size_est"), SPARK_OPS, base=household_base, slope=household_slope
         )
         enriched = enriched.withColumn("household_factor", F.round(household_factor, 4))
     else:
         enriched = enriched.withColumn("household_factor", F.lit(1.0))
 
-    adjusted_typical = F.greatest(
-        F.col("typical_repurchase_days") * F.col("household_factor"),
-        F.lit(MIN_EXPECTED_DAYS),
-    )
     # El intervalo observado manda en cuanto hay evidencia suficiente; si no, el tipico.
     observed = F.when(F.col("n_purchase_days") >= min_observations, F.col("mean_gap_days"))
-    expected = F.greatest(
-        F.coalesce(observed, adjusted_typical), F.lit(MIN_EXPECTED_DAYS)
+    expected = fx.expected_repurchase_days(
+        F.col("n_purchase_days"),
+        F.col("mean_gap_days"),
+        F.col("typical_repurchase_days"),
+        F.col("household_factor"),
+        SPARK_OPS,
+        min_observations=min_observations,
     )
 
     out = (

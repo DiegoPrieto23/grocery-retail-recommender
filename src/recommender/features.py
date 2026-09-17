@@ -6,7 +6,9 @@ Cada fila es un par `(query, candidato)` y todas sus columnas se calculan con in
 1. **Senal de cada fuente de candidatos** (`candidates.SOURCE_COLUMNS`): score y puesto de
    quien lo propuso, y cuantas fuentes coincidieron.
 2. **Cliente x producto y cliente x categoria**: cuantas veces lo ha comprado, cuando fue
-   la ultima, y el estado del ciclo de reposicion de su categoria (Tarea 2).
+   la ultima, y el estado del ciclo de reposicion de su categoria (Tarea 2). Desde el
+   punto A1 del diagnostico se calculan **as-of el dia de la cesta** (`history.py`), no
+   con la foto del inicio de la ventana.
 3. **Producto**: popularidad global y reciente, indice estacional del mes de la cesta,
    precio, marca blanca, perecedero.
 4. **Contexto y promocion**: canal, mes, dia de la semana, tamano del carrito, RFM del
@@ -30,12 +32,11 @@ util y claramente imperfecta, que es lo que debe ser. Ver `DATA_SPEC.md`, "Embud
 
 from __future__ import annotations
 
-import datetime as dt
-
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 from src.recommender.candidates import SOURCE_COLUMNS, SOURCE_NAMES
+from src.recommender.history import AsOfHistory, with_repurchase_state
 from src.recommender.schema import (
     CART_FEATURES,
     CATEGORICAL_FEATURES,
@@ -204,8 +205,10 @@ def customer_profile(history_baskets: DataFrame, history_items: DataFrame) -> Da
     """RFM ligero calculado **solo con el historial de la ventana**.
 
     No se reutiliza `data/processed/rfm`: aquella tabla mide la recencia contra el ultimo
-    dia del dataset, es decir contra el futuro de cualquier cesta de test. Recalcularla
-    aqui cuesta un `groupBy` y evita una fuga silenciosa.
+    dia del dataset, es decir contra el futuro de cualquier cesta de test.
+
+    Ya no alimenta al ranker (sus columnas salen as-of de `history.asof_history`); queda
+    como ficha del cliente al inicio de la ventana servida, que es lo que ensena la demo.
     """
     identified = history_baskets.filter(F.col("customer_id").isNotNull())
     per_customer = identified.groupBy("customer_id").agg(
@@ -231,9 +234,7 @@ def build_feature_matrix(
     *,
     products: DataFrame,
     popularity: DataFrame,
-    customer_products: DataFrame,
-    customer_stats: DataFrame,
-    repurchase: DataFrame,
+    history: AsOfHistory,
     customers: DataFrame,
     promotions: DataFrame,
     session_product: DataFrame,
@@ -248,9 +249,7 @@ def build_feature_matrix(
         queries: Cabeceras de query (`splits.build_queries`).
         products: Catalogo ya indexado por `index_products`.
         popularity: Tabla completa producto x mes de `candidates.fit_popularity`.
-        customer_products: Historial cliente x producto.
-        customer_stats: Salida de `customer_profile`.
-        repurchase: `repurchase_features` recalculada sobre el historial de la ventana.
+        history: Historial de cada query al dia de su cesta (`history.asof_history`).
         customers: Maestro de clientes (hogar y tier).
         promotions: Promociones limpias.
         session_product: Vistas por producto antes del corte.
@@ -308,46 +307,26 @@ def build_feature_matrix(
     )
 
     # --- Cliente x producto: lo compre quien lo compre, no solo si lo propuso `hist` ---
-    hist = customer_products.select(
-        "customer_id",
-        "product_id",
-        "hist_n_baskets",
-        "hist_units",
-        "hist_last_day",
-    )
     df = (
-        df.join(hist, ["customer_id", "product_id"], "left")
+        df.join(history.products, ["basket_id", "product_id"], "left")
         .withColumn("hist_days_since", F.datediff("basket_day", "hist_last_day").cast("double"))
         .withColumn("hist_ever_bought", F.col("hist_n_baskets").isNotNull().cast("double"))
         .drop("hist_last_day")
     )
 
-    # --- Cliente x categoria: el ciclo de reposicion de la Tarea 2 ---
-    rep = repurchase.select(
-        "customer_id",
-        "category",
-        F.col("n_purchase_days").cast("double").alias("cat_n_purchase_days"),
-        F.col("last_purchase_date").alias("cat_last_day"),
-        F.col("expected_repurchase_days").alias("cat_expected_days"),
-    )
-    df = (
-        df.join(rep, ["customer_id", "category"], "left")
-        .withColumn("cat_days_since", F.datediff("basket_day", "cat_last_day").cast("double"))
-        # El `overdue_ratio` se recalcula contra el dia de la cesta, no contra la fecha de
-        # corte del ETL: entre una y otra pueden pasar semanas.
-        .withColumn("cat_overdue_ratio", F.col("cat_days_since") / F.col("cat_expected_days"))
-        .withColumn("cat_due", (F.col("cat_overdue_ratio") >= 1.0).cast("double"))
-        .drop("cat_last_day")
-    )
+    # --- Cliente x categoria: el ciclo de reposicion de la Tarea 2, al dia de la cesta ---
+    df = with_repurchase_state(
+        df.join(history.categories, ["basket_id", "category"], "left")
+    ).drop("cat_last_day")
 
-    # --- Cliente: RFM de la ventana + maestro ---
+    # --- Cliente: RFM al dia de la cesta + maestro ---
     master = customers.select(
         "customer_id",
         F.col("household_size_est").cast("double").alias("household_size_est"),
         "loyalty_tier",
     )
     df = (
-        df.join(F.broadcast(customer_stats), "customer_id", "left")
+        df.join(F.broadcast(history.customer), "basket_id", "left")
         .withColumn("cust_recency_days", F.datediff("basket_day", "cust_last_day").cast("double"))
         .drop("cust_last_day")
         .join(F.broadcast(master), "customer_id", "left")
@@ -413,9 +392,3 @@ def build_feature_matrix(
     if target is not None:
         keep.append("label")
     return df.select(*[F.col(c).alias(c) for c in keep])
-
-
-def default_reference_date(window_start: dt.date | str) -> str:
-    """Fecha de corte del `repurchase_features` de una ventana: el dia anterior a su inicio."""
-    day = window_start if isinstance(window_start, dt.date) else dt.date.fromisoformat(window_start)
-    return str(day - dt.timedelta(days=1))

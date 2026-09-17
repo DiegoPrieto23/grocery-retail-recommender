@@ -120,6 +120,13 @@ def test_la_lista_del_oraculo_se_concreta_en_su_mejor_referencia() -> None:
 # --------------------------------------------------------------------------------------
 # Baselines
 # --------------------------------------------------------------------------------------
+def _per_query(frame: dict, baskets: tuple[str, ...] = ("Q1", "Q2")) -> pd.DataFrame:
+    """El mismo historial de C1 para cada una de sus queries (clave `basket_id`)."""
+    return pd.concat(
+        [pd.DataFrame(frame).assign(basket_id=b) for b in baskets], ignore_index=True
+    )
+
+
 def _baseline_inputs(**overrides) -> ev.BaselineInputs:
     """Cuatro categorias con dos referencias cada una y tres queries.
 
@@ -155,16 +162,14 @@ def _baseline_inputs(**overrides) -> ev.BaselineInputs:
         category_popularity=pd.DataFrame(
             {"category": ["leche", "pan", "yogur", "zumo"], "n_baskets": [100.0, 75.0, 50.0, 9.0]}
         ),
-        customer_products=pd.DataFrame(
+        customer_products=_per_query(
             {
-                "customer_id": ["C1", "C1", "C1"],
                 "product_id": ["Z2", "Y1", "Y2"],
                 "n_baskets": [6.0, 2.0, 1.0],
             }
         ),
-        customer_categories=pd.DataFrame(
+        customer_categories=_per_query(
             {
-                "customer_id": ["C1", "C1"],
                 "category": ["zumo", "yogur"],
                 "n_purchase_days": [6, 2],
                 "last_purchase_date": ["2025-11-08", "2025-10-01"],
@@ -224,9 +229,8 @@ def test_due_for_repurchase_adelanta_lo_que_toca_reponer(baselines) -> None:
     # zumo se compro hace 2 dias (no toca): 6. yogur hace 40 dias (toca): 2 x 2 = 4.
     assert _lists(baselines["personal_due"])["Q1"] == ["Z2", "Y1", "L1"]
     inputs = _baseline_inputs(
-        customer_categories=pd.DataFrame(
+        customer_categories=_per_query(
             {
-                "customer_id": ["C1", "C1"],
                 "category": ["zumo", "yogur"],
                 "n_purchase_days": [3, 2],
                 "last_purchase_date": ["2025-11-08", "2025-10-01"],
@@ -301,3 +305,89 @@ def test_el_bloque_de_diagnostico_sobrevive_a_reescribir_metrics_md() -> None:
 
     # Sin bloque previo, el informe queda igual.
     assert pl.with_diagnostics("# Informe\n", "") == "# Informe\n"
+
+
+def test_el_historial_de_los_baselines_es_de_cada_query() -> None:
+    """Dos queries del mismo cliente pueden ver historiales distintos (punto A1)."""
+    categories = pd.DataFrame(
+        {
+            "basket_id": ["Q1", "Q1", "Q2", "Q2"],
+            "category": ["zumo", "yogur", "zumo", "yogur"],
+            "n_purchase_days": [3, 2, 3, 2],
+            # Q2 sabe que el yogur se repuso ayer; Q1 no.
+            "last_purchase_date": ["2025-11-08", "2025-10-01", "2025-11-08", "2025-11-09"],
+            "expected_repurchase_days": [7.0, 7.0, 7.0, 7.0],
+        }
+    )
+    recs = _lists(
+        ev.run_baselines(
+            _baseline_inputs(customer_categories=categories), k=3, seed=42, min_confidence=0.1
+        )["personal_due"]
+    )
+    assert recs["Q1"][:2] == ["Y1", "Z2"]  # yogur vencido: 2 x 2 = 4 > 3
+    assert recs["Q2"][:2] == ["Z2", "Y1"]  # yogur recien repuesto: 2 < 3
+
+
+# --------------------------------------------------------------------------------------
+# Huecos por recencia (punto A1)
+# --------------------------------------------------------------------------------------
+RECENCY_PRODUCTS = pd.DataFrame(
+    {"product_id": ["L1", "P1", "Y1", "Z1"], "category": ["leche", "pan", "yogur", "zumo"]}
+)
+RECENCY_QUERIES = pd.DataFrame(
+    {"basket_id": ["Q1", "Q2"], "basket_day": pd.to_datetime(["2025-12-20", "2025-12-20"])}
+)
+RECENCY_TARGET = pd.DataFrame({"basket_id": ["Q1", "Q2"], "product_id": ["P1", "L1"]})
+# Ultima compra de cada categoria antes del 20-dic.
+RECENCY_LAST = pd.DataFrame(
+    {
+        "basket_id": ["Q1", "Q1", "Q1", "Q2"],
+        "category": ["leche", "pan", "yogur", "leche"],
+        "last_day": pd.to_datetime(["2025-12-17", "2025-12-10", "2025-10-01", "2025-12-19"]),
+    }
+)
+
+
+def _top(rows: list[tuple[str, str, int]]) -> pd.DataFrame:
+    top = pd.DataFrame(rows, columns=["basket_id", "product_id", "rank"])
+    truth = set(map(tuple, RECENCY_TARGET.to_numpy()))
+    top["label"] = [int((b, p) in truth) for b, p in zip(top["basket_id"], top["product_id"])]
+    return top
+
+
+def _slots(top: pd.DataFrame) -> pd.DataFrame:
+    return ev.recency_slots(top, RECENCY_QUERIES, RECENCY_TARGET, RECENCY_LAST, RECENCY_PRODUCTS)
+
+
+def test_huecos_por_recencia() -> None:
+    # Q1: leche (hace 3 dias), pan (10 dias, acierta), yogur (80), zumo (nunca).
+    # Q2: leche (ayer, acierta aunque la penalizacion lo haga raro).
+    top = _top([("Q1", "L1", 1), ("Q1", "P1", 2), ("Q1", "Y1", 3), ("Q1", "Z1", 4), ("Q2", "L1", 1)])
+    out = ev.recency_slot_metrics(_slots(top), window_start="2025-11-01").set_index("grupo")
+
+    assert out.loc["<= 7 dias", "huecos"] == 2
+    assert out.loc["<= 7 dias", "proporcion_huecos"] == pytest.approx(2 / 5)
+    assert out.loc["<= 7 dias", "sku_precision"] == pytest.approx(0.5)
+    assert out.loc["<= 14 dias", "huecos"] == 3
+    assert out.loc["8-14 dias", "sku_precision"] == pytest.approx(1.0)
+    assert out.loc["comprada en la ventana, antes de la cesta", "huecos"] == 3
+    # yogur (comprado antes de la ventana) y zumo (nunca) no son de la ventana.
+    assert out.loc["sin compra en la ventana", "huecos"] == 2
+    assert out.loc["sin compra en la ventana", "cat_precision"] == 0.0
+    assert out.loc["total", "huecos"] == 5
+
+
+def test_comparacion_en_las_queries_con_huecos_recientes() -> None:
+    before = _top([("Q1", "L1", 1), ("Q1", "Y1", 2), ("Q2", "Y1", 1), ("Q2", "Z1", 2)])
+    after = _top([("Q1", "P1", 1), ("Q1", "Y1", 2), ("Q2", "Y1", 1), ("Q2", "Z1", 2)])
+    out = ev.recency_query_comparison(
+        {"antes": _slots(before), "despues": _slots(after)}, "antes", k=2
+    ).set_index(["umbral_dias", "sistema"])
+
+    # Solo Q1 tenia un hueco reciente (leche, hace 3 dias) en la lista de antes.
+    assert out.loc[(7, "antes"), "n_queries"] == 1
+    assert out.loc[(7, "antes"), "huecos_recientes@2"] == pytest.approx(0.5)
+    assert out.loc[(7, "despues"), "huecos_recientes@2"] == 0.0
+    assert out.loc[(7, "antes"), "sku_precision@2"] == 0.0
+    assert out.loc[(7, "despues"), "sku_precision@2"] == pytest.approx(0.5)
+    assert out.loc[(7, "despues"), "cat_hit_rate@2"] == 1.0

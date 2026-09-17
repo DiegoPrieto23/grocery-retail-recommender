@@ -16,6 +16,15 @@ El orden de las operaciones sigue deliberadamente el de `src/recommender/candida
 `src/recommender/features.py`, funcion por funcion, para que las dos versiones se puedan
 leer en paralelo cuando algo no cuadre.
 
+## Historial al dia de la cesta (punto A1)
+
+El historial del cliente no es una foto del inicio de la ventana: `asof_history` agrega,
+para cada query, todas las cestas de su cliente anteriores al dia de la query, igual que
+`src/recommender/history.py` en Spark. Por eso el bundle lleva las lineas de todas las
+cestas identificadas (`customer_lines`) y no un historial ya agregado. Las formulas del
+ciclo de reposicion y del orden de la fuente `hist` no se reescriben aqui: son las de
+`src/recommender/formulas.py`, las mismas que usa Spark.
+
 ## Diferencia deliberada con el entrenamiento
 
 En la demo no hay sesion: quien juega con la cesta no ha dejado un rastro de `view` /
@@ -35,8 +44,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.recommender import formulas as fx
 from src.recommender import rerank as rr
 from src.recommender.config import CandidateConfig, RerankConfig
+from src.recommender.formulas import PANDAS_OPS
 
 # Del modulo `schema`, no de `candidates` / `features`: esos importan PySpark, que es justo
 # lo que esta ruta evita. Las constantes son las mismas, no una copia.
@@ -87,9 +98,10 @@ class ServingBundle:
     affinity_product: pd.DataFrame
     affinity_category: pd.DataFrame
     category_leaders: pd.DataFrame
-    customer_products: pd.DataFrame
+    # Ficha del cliente al inicio de la ventana servida. Solo la usa la interfaz de la
+    # demo (selector y ficha); el modelo recibe el historial as-of de `asof_history`.
     customer_stats: pd.DataFrame
-    repurchase: pd.DataFrame
+    category_repurchase_days: pd.DataFrame
     known_customers: pd.DataFrame
     als_topn: pd.DataFrame
     products: pd.DataFrame
@@ -102,11 +114,11 @@ class ServingBundle:
     # generaron las predicciones contra las que compara el test de paridad.
     rerank: RerankConfig = RerankConfig()
 
-    # Vistas indexadas por `customer_id` de las tres tablas grandes. Sin ellas, cada
-    # recomendacion recorre los 2,2 M de filas del historial y tarda ~3,5 s; con ellas,
-    # la busqueda del cliente es directa y la demo responde en decimas.
-    customer_products_by_customer: pd.DataFrame = None  # type: ignore[assignment]
-    repurchase_by_customer: pd.DataFrame = None  # type: ignore[assignment]
+    # Eventos del cliente (lineas y cabeceras de todas sus cestas) y top-N del ALS,
+    # indexados por `customer_id`. Sin el indice, cada recomendacion recorreria los ~3 M
+    # de lineas; con el, la busqueda del cliente es directa y la demo responde en decimas.
+    lines_by_customer: pd.DataFrame = None  # type: ignore[assignment]
+    baskets_by_customer: pd.DataFrame = None  # type: ignore[assignment]
     als_by_customer: pd.DataFrame = None  # type: ignore[assignment]
 
     @property
@@ -120,11 +132,36 @@ def _by_customer(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _for_customers(indexed: pd.DataFrame, customer_ids) -> pd.DataFrame:
-    """Filas de los clientes pedidos, tolerando los que no estan en la tabla."""
+    """Filas de los clientes pedidos, tolerando los que no estan en la tabla.
+
+    Las columnas categoricas vuelven como texto: el recorte es pequeno y asi los joins
+    posteriores contra columnas de texto no cambian de tipo por el camino.
+    """
     present = indexed.index.intersection(pd.Index(customer_ids).dropna().unique())
-    if len(present) == 0:
-        return indexed.iloc[:0].reset_index()
-    return indexed.loc[present].reset_index()
+    out = indexed.iloc[:0] if len(present) == 0 else indexed.loc[present]
+    out = out.reset_index()
+    categorical = [c for c in out.columns if isinstance(out[c].dtype, pd.CategoricalDtype)]
+    return out.astype({c: object for c in categorical})
+
+
+def index_customer_events(
+    lines: pd.DataFrame, baskets: pd.DataFrame, products: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Prepara `customer_lines` y `customer_baskets` para buscar por cliente.
+
+    La categoria de cada linea se pega una sola vez aqui, no en cada recomendacion: es un
+    join estatico de millones de filas que no depende de la cesta. Los textos van como
+    categoricos para que la tabla quepa holgada en memoria; `_for_customers` los devuelve
+    como texto al recortar.
+    """
+    lines = lines.merge(products[["product_id", "category"]], on="product_id")
+    lines["basket_day"] = pd.to_datetime(lines["basket_day"])
+    lines = lines.astype(
+        {"basket_id": "category", "product_id": "category", "category": "category"}
+    )
+    baskets = baskets.copy()
+    baskets["basket_day"] = pd.to_datetime(baskets["basket_day"])
+    return _by_customer(lines), _by_customer(baskets)
 
 
 def load_bundle(
@@ -146,14 +183,9 @@ def load_bundle(
         return pd.read_parquet(directory / f"{name}.parquet")
 
     products = table("products_indexed")
-    customer_products = table("customer_products")
-    repurchase = table("repurchase")
     als_topn = table("als_topn")
-
-    # La categoria de cada producto se pega una sola vez aqui, no en cada recomendacion:
-    # es un join estatico de 2,2 M de filas que no depende de la cesta.
-    customer_products_with_category = customer_products.merge(
-        products[["product_id", "category"]], on="product_id"
+    lines_by_customer, baskets_by_customer = index_customer_events(
+        table("customer_lines"), table("customer_baskets"), products
     )
 
     return ServingBundle(
@@ -161,9 +193,8 @@ def load_bundle(
         affinity_product=table("affinity_product"),
         affinity_category=table("affinity_category"),
         category_leaders=table("category_leaders"),
-        customer_products=customer_products,
         customer_stats=table("customer_stats"),
-        repurchase=repurchase,
+        category_repurchase_days=table("category_repurchase_days"),
         known_customers=table("known_customers"),
         als_topn=als_topn,
         products=products,
@@ -172,8 +203,8 @@ def load_bundle(
         booster=lgb.Booster(model_file=str(models_dir / "recommender_ranker_lgbm.txt")),
         window_start=dt.date.fromisoformat(metadata["window_start"]),
         cfg=CandidateConfig(),
-        customer_products_by_customer=_by_customer(customer_products_with_category),
-        repurchase_by_customer=_by_customer(repurchase),
+        lines_by_customer=lines_by_customer,
+        baskets_by_customer=baskets_by_customer,
         als_by_customer=_by_customer(als_topn),
     )
 
@@ -287,38 +318,125 @@ def candidates_affinity_category(
     )
 
 
-def candidates_personal(queries: pd.DataFrame, bundle: ServingBundle) -> pd.DataFrame:
-    identified = queries.loc[
+@dataclass
+class AsOfHistory:
+    """Espejo de `src.recommender.history.AsOfHistory`: todo con clave `basket_id`."""
+
+    products: pd.DataFrame
+    categories: pd.DataFrame
+    customer: pd.DataFrame
+
+
+def asof_history(queries: pd.DataFrame, bundle: ServingBundle) -> AsOfHistory:
+    """Historial de cada query con las cestas de su cliente anteriores al dia de la query.
+
+    Espejo de `src.recommender.history.asof_history`: mismo corte (dia estrictamente
+    anterior), mismas agregaciones y las mismas formulas de `formulas.py`.
+    """
+    q = queries.loc[
         queries["customer_id"].notna(), ["basket_id", "customer_id", "basket_day"]
+    ].rename(columns={"basket_day": "_query_day"})
+    wanted = q["customer_id"]
+    past = {"basket_id": "_past_basket", "basket_day": "_past_day"}
+
+    visits = q.merge(
+        _for_customers(bundle.baskets_by_customer, wanted).rename(columns=past),
+        on="customer_id",
+    )
+    visits = visits.loc[visits["_past_day"] < visits["_query_day"]]
+    lines = q.merge(
+        _for_customers(bundle.lines_by_customer, wanted).rename(columns=past),
+        on="customer_id",
+    )
+    lines = lines.loc[lines["_past_day"] < lines["_query_day"]]
+
+    # --- Cliente ---
+    customer = visits.groupby("basket_id", as_index=False).agg(
+        cust_frequency=("_past_basket", "nunique"),
+        cust_avg_ticket=("total_amount", "mean"),
+        cust_last_day=("_past_day", "max"),
+    )
+    n_products = lines.groupby("basket_id", as_index=False).agg(
+        cust_n_products=("product_id", "nunique")
+    )
+    customer = customer.merge(n_products, on="basket_id", how="left").astype(
+        {"cust_frequency": float, "cust_n_products": float}
+    )
+
+    # --- Cliente x producto ---
+    products = lines.groupby(["basket_id", "product_id"], as_index=False).agg(
+        hist_n_baskets=("_past_basket", "nunique"),
+        hist_units=("quantity", "sum"),
+        hist_last_day=("_past_day", "max"),
+    ).astype({"hist_n_baskets": float, "hist_units": float})
+
+    # --- Cliente x categoria ---
+    days = lines[["basket_id", "customer_id", "category", "_past_day"]].drop_duplicates()
+    if days.empty:
+        # Nadie con historial (clientes anonimos o nuevos): tablas vacias con su esquema.
+        empty_categories = _empty(
+            ["basket_id", "category", "cat_n_purchase_days", "cat_last_day", "cat_expected_days"]
+        ).astype({"cat_last_day": "datetime64[ns]", "cat_expected_days": float})
+        return AsOfHistory(products=products, categories=empty_categories, customer=customer)
+    categories = (
+        days.groupby(["basket_id", "customer_id", "category"], as_index=False)
+        .agg(
+            _n=("_past_day", "size"),
+            cat_last_day=("_past_day", "max"),
+            _first_day=("_past_day", "min"),
+        )
+        .merge(bundle.category_repurchase_days, on="category", how="left")
+        .merge(
+            bundle.customers[["customer_id", "household_size_est"]],
+            on="customer_id",
+            how="left",
+        )
+    )
+    n = categories["_n"]
+    span = (categories["cat_last_day"] - categories["_first_day"]).dt.days
+    categories["cat_n_purchase_days"] = n.astype(float)
+    categories["cat_expected_days"] = fx.expected_repurchase_days(
+        n,
+        fx.mean_gap_days(n, span, PANDAS_OPS),
+        categories["typical_repurchase_days"].astype(float),
+        fx.household_factor(categories["household_size_est"], PANDAS_OPS),
+        PANDAS_OPS,
+    )
+    categories = categories[
+        ["basket_id", "category", "cat_n_purchase_days", "cat_last_day", "cat_expected_days"]
     ]
-    if identified.empty:
-        return _empty(["basket_id", "product_id", "hist_rank"])
+    return AsOfHistory(products=products, categories=categories, customer=customer)
 
-    # Solo el historial de los clientes de estas queries: la tabla completa son 2,2 M de
-    # filas y recorrerla entera en cada recomendacion es lo que hacia lenta la demo.
-    wanted = identified["customer_id"]
-    due = _for_customers(bundle.repurchase_by_customer, wanted)[
-        ["customer_id", "category", "due_for_repurchase", "overdue_ratio"]
-    ].rename(
-        columns={"due_for_repurchase": "cat_due", "overdue_ratio": "cat_overdue_ratio"}
+
+def _with_repurchase_state(df: pd.DataFrame) -> pd.DataFrame:
+    """Espejo de `history.with_repurchase_state`."""
+    df["cat_days_since"] = (
+        df["basket_day"] - pd.to_datetime(df["cat_last_day"])
+    ).dt.days.astype("float64")
+    df["cat_overdue_ratio"] = fx.overdue_ratio(df["cat_days_since"], df["cat_expected_days"])
+    df["cat_due"] = fx.is_due(df["cat_overdue_ratio"], PANDAS_OPS)
+    return df
+
+
+def candidates_personal(
+    queries: pd.DataFrame, bundle: ServingBundle, history: AsOfHistory
+) -> pd.DataFrame:
+    scoped = (
+        queries[["basket_id", "basket_day"]]
+        .merge(history.products, on="basket_id")
+        .merge(bundle.products[["product_id", "category"]], on="product_id")
+        .merge(history.categories, on=["basket_id", "category"], how="left")
     )
-    due = due.assign(cat_due=due["cat_due"].astype(float))
-
-    per_customer = _for_customers(bundle.customer_products_by_customer, wanted).merge(
-        due, on=["customer_id", "category"], how="left"
-    )
-    per_customer["cat_due"] = per_customer["cat_due"].fillna(0.0)
-
-    scoped = identified.merge(per_customer, on="customer_id")
     if scoped.empty:
         return _empty(["basket_id", "product_id", "hist_rank"])
 
+    scoped = _with_repurchase_state(scoped)
     scoped["hist_days_since"] = (
         scoped["basket_day"] - pd.to_datetime(scoped["hist_last_day"])
     ).dt.days
-    scoped["_score"] = scoped["hist_n_baskets"] * (1.0 + scoped["cat_due"]) + scoped[
-        "cat_overdue_ratio"
-    ].fillna(0.0)
+    scoped["_score"] = fx.personal_score(
+        scoped["hist_n_baskets"], scoped["cat_due"], scoped["cat_overdue_ratio"], PANDAS_OPS
+    )
 
     ranked = scoped.sort_values(
         ["basket_id", "_score", "hist_days_since", "product_id"],
@@ -406,13 +524,17 @@ def build_feature_matrix(
     bundle: ServingBundle,
     *,
     cart: pd.DataFrame,
+    history: AsOfHistory | None = None,
     session_product: pd.DataFrame | None = None,
     session_query: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Cruza el pool de candidatos con las familias de features.
 
     `cart` es lo mismo que se excluye del pool: lo que el cliente tiene en el carrito.
+    `history` es el de `asof_history`; si no se pasa, se calcula aqui.
     """
+    if history is None:
+        history = asof_history(queries, bundle)
     q = queries[
         [
             "basket_id",
@@ -453,40 +575,20 @@ def build_feature_matrix(
     # --- Carrito (espejo de features.cart_features) ---
     df = _add_cart(df, cart, bundle.products)
 
-    # --- Cliente x producto ---
-    # Igual que en las fuentes: se recorta a los clientes de estas queries antes de cruzar.
-    customers_here = df["customer_id"]
-    hist = _for_customers(bundle.customer_products_by_customer, customers_here)[
-        ["customer_id", "product_id", "hist_n_baskets", "hist_units", "hist_last_day"]
-    ]
-    df = df.merge(hist, on=["customer_id", "product_id"], how="left")
+    # --- Cliente x producto, al dia de la cesta ---
+    df = df.merge(history.products, on=["basket_id", "product_id"], how="left")
     df["hist_days_since"] = (
         df["basket_day"] - pd.to_datetime(df["hist_last_day"])
     ).dt.days.astype("float64")
     df["hist_ever_bought"] = df["hist_n_baskets"].notna().astype(float)
     df = df.drop(columns="hist_last_day")
 
-    # --- Cliente x categoria: ciclo de reposicion ---
-    rep = _for_customers(bundle.repurchase_by_customer, customers_here).rename(
-        columns={
-            "n_purchase_days": "cat_n_purchase_days",
-            "last_purchase_date": "cat_last_day",
-            "expected_repurchase_days": "cat_expected_days",
-        }
-    )[["customer_id", "category", "cat_n_purchase_days", "cat_last_day", "cat_expected_days"]].copy()
-    rep["cat_n_purchase_days"] = rep["cat_n_purchase_days"].astype(float)
-    df = df.merge(rep, on=["customer_id", "category"], how="left")
-    df["cat_days_since"] = (
-        df["basket_day"] - pd.to_datetime(df["cat_last_day"])
-    ).dt.days.astype("float64")
-    df["cat_overdue_ratio"] = df["cat_days_since"] / df["cat_expected_days"]
-    # `>= 1.0` sobre un NaN da False en pandas y null en Spark; el relleno a 0 posterior
-    # deja las dos versiones en 0, que es lo que quiere decir "no le toca".
-    df["cat_due"] = (df["cat_overdue_ratio"] >= 1.0).astype(float)
-    df = df.drop(columns="cat_last_day")
+    # --- Cliente x categoria: ciclo de reposicion al dia de la cesta ---
+    df = df.merge(history.categories, on=["basket_id", "category"], how="left")
+    df = _with_repurchase_state(df).drop(columns="cat_last_day")
 
-    # --- Cliente: RFM de la ventana + maestro ---
-    df = df.merge(bundle.customer_stats, on="customer_id", how="left")
+    # --- Cliente: RFM al dia de la cesta + maestro ---
+    df = df.merge(history.customer, on="basket_id", how="left")
     df["cust_recency_days"] = (
         df["basket_day"] - pd.to_datetime(df["cust_last_day"])
     ).dt.days.astype("float64")
@@ -617,11 +719,12 @@ def rank_queries(
     defecto es el propio prefijo; el test de paridad pasa el carrito de la Fase 3, que
     ademas incluye los `add_to_cart` de sesion. `rerank` por defecto es el del bundle.
     """
+    history = asof_history(queries, bundle)
     sources = {
         "pop": candidates_popularity(queries, bundle),
         "aff": candidates_affinity_product(prefix, bundle),
         "cataff": candidates_affinity_category(prefix, bundle),
-        "hist": candidates_personal(queries, bundle),
+        "hist": candidates_personal(queries, bundle, history),
         "als": candidates_als(queries, bundle),
     }
     exclude = cart if cart is not None else prefix[["basket_id", "product_id"]]
@@ -634,6 +737,7 @@ def rank_queries(
         queries,
         bundle,
         cart=exclude,
+        history=history,
         session_product=session_product,
         session_query=session_query,
     )
@@ -658,9 +762,10 @@ def recommend(
 ) -> pd.DataFrame:
     """Top-k para una cesta en curso. Es la funcion que consume la demo.
 
-    `basket_day` por defecto es el primer dia de la ventana servida, que es donde el
-    bundle tiene toda su informacion; pasar otra fecha mueve la estacionalidad y las
-    promociones vigentes, que es justo lo que hace interesante el selector de la demo.
+    `basket_day` por defecto es el primer dia de la ventana servida. Pasar otra fecha
+    mueve la estacionalidad, las promociones vigentes y el historial del cliente (todo lo
+    que compro antes de ese dia), que es justo lo que hace interesante el selector de la
+    demo.
     """
     day = basket_day or bundle.window_start
     queries = build_query(

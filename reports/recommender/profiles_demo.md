@@ -14,87 +14,87 @@ algo que decir.
 
 | Perfil | popularidad/estacionalidad | co-compra (producto) | co-compra (categoria) | historial + recompra | ALS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 - nuevo, carrito vacio | 100% | 0% | 0% | 0% | 0% |
-| 2 - nuevo, con articulos | 92% | 20% | 33% | 0% | 0% |
-| 3 - recurrente, carrito vacio | 57% | 0% | 0% | 99% | 42% |
-| 4 - recurrente, con articulos | 56% | 15% | 17% | 98% | 41% |
+| 1 - nuevo, carrito vacio | 91% | 0% | 0% | 21% | 0% |
+| 2 - nuevo, con articulos | 88% | 14% | 29% | 19% | 0% |
+| 3 - recurrente, carrito vacio | 51% | 0% | 0% | 99% | 39% |
+| 4 - recurrente, con articulos | 49% | 12% | 15% | 99% | 38% |
 
 ---
 
 ### 1 · nuevo, carrito vacio
 
-_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 37.2% de las 521 cestas._
+_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 39.5% de las 521 cestas._
 
-- **Cesta**: `B0554100`, canal `store`, 2025-11-17
-- **Cliente**: compra anonima (sin `customer_id`)
+- **Cesta**: `B0570723`, canal `app`, 2025-12-05
+- **Cliente**: `C003414` - bronze, hogar de 4, Santander
 - **Ya en el carrito** (0): _vacio_
-- **Falta por anadir** (6): Leche - Marca Blanca Basico (P00006); Agua - Inmobiliaria RPIA S.L. (P00243); Verduras congeladas - Gonzalez y Yáñez S.Com. (P00461); Cerveza - Marca Blanca Basico (P00269); Panales - Marca Blanca Seleccion (P00406); Refrescos - Farmaceútica Vera & Asociados S.L.N.E (P00250)
-- **Resultado**: NDCG@5 = 0.339, Recall@5 = 0.167 (1 de 6)
+- **Falta por anadir** (7): Leche - Marca Blanca Basico (P00006); Cereales - Logística Higueras & Asociados S.C.P (P00170); Zumos - Carmela Dalmau Landa S.Coop. (P00258); Fruta - Inmobiliaria Luján S.Coop. (P00049); Verdura - Farmaceútica Revilla S.A. (P00060); Conservas de pescado - Marca Blanca Bio (P00139); Legumbres - Marca Blanca Bio (P00133)
+- **Resultado**: NDCG@5 = 0.316, Recall@5 = 0.286 (2 de 7)
 
 | # | Recomendacion | Fuentes que lo propusieron | ¿Acierto? |
 | ---: | --- | --- | :---: |
-| 1 | Leche - Marca Blanca Basico (P00006) | popularidad/estacionalidad, en promocion | SI |
-| 2 | Pan - Marca Blanca Bio (P00040) | popularidad/estacionalidad | no |
-| 3 | Verdura - Hnos Trillo S.A. (P00058) | popularidad/estacionalidad | no |
-| 4 | Chocolate y huevos de Pascua - Noemí Ramírez Falcón S.A. (P00222) | popularidad/estacionalidad, en promocion | no |
-| 5 | Embutido y fiambre - Infraestructuras Carlos S.L.N.E (P00044) | popularidad/estacionalidad | no |
+| 1 | Cafe - Inversiones Sebastián S.Com. (P00155) | historial + recompra | no |
+| 2 | Vino - Hervia y Medina S.L. (P00276) | historial + recompra | no |
+| 3 | Leche - Marca Blanca Basico (P00006) | popularidad/estacionalidad | SI |
+| 4 | Cereales - Logística Higueras & Asociados S.C.P (P00170) | historial + recompra | SI |
+| 5 | Agua - Inmobiliaria RPIA S.L. (P00243) | popularidad/estacionalidad, en promocion | no |
 
 ---
 
 ### 2 · nuevo, con articulos
 
-_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 20.9% de las 421 cestas._
+_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 24.0% de las 421 cestas._
 
-- **Cesta**: `B0562753`, canal `store`, 2025-11-27
+- **Cesta**: `B0582622`, canal `web`, 2025-12-16
 - **Cliente**: compra anonima (sin `customer_id`)
-- **Ya en el carrito** (1): Embutido y fiambre - Infraestructuras Carlos S.L.N.E (P00044)
-- **Falta por anadir** (1): Chocolate y huevos de Pascua - Banca Privada OLMJ S.L.N.E (P00221)
-- **Resultado**: NDCG@5 = 0.387, Recall@5 = 1.000 (1 de 1)
+- **Ya en el carrito** (2): Snacks y aperitivos - Familia Julián S.A. (P00188); Fruta - Hervia y Medina S.L. (P00054)
+- **Falta por anadir** (2): Leche - Marca Blanca Basico (P00006); Zumos - Marca Blanca Basico (P00259)
+- **Resultado**: NDCG@5 = 0.387, Recall@5 = 0.500 (1 de 2)
 
 | # | Recomendacion | Fuentes que lo propusieron | ¿Acierto? |
 | ---: | --- | --- | :---: |
-| 1 | Pan - Marca Blanca Bio (P00040) | popularidad/estacionalidad, co-compra (producto), co-compra (categoria) | no |
-| 2 | Leche - Marca Blanca Basico (P00006) | popularidad/estacionalidad, co-compra (categoria), en promocion | no |
-| 3 | Verdura - Hnos Trillo S.A. (P00058) | popularidad/estacionalidad, co-compra (categoria) | no |
-| 4 | Pan - Belda & Asociados S.C.P (P00034) | popularidad/estacionalidad, co-compra (producto), co-compra (categoria) | no |
-| 5 | Chocolate y huevos de Pascua - Banca Privada OLMJ S.L.N.E (P00221) | popularidad/estacionalidad, co-compra (categoria), en promocion | SI |
+| 1 | Salsa de tomate - Jordán y asociados S.C.P (P00113) | popularidad/estacionalidad, en promocion | no |
+| 2 | Leche - Marca Blanca Basico (P00006) | popularidad/estacionalidad, co-compra (categoria) | SI |
+| 3 | Pan - Marca Blanca Bio (P00040) | popularidad/estacionalidad | no |
+| 4 | Verdura - Hnos Trillo S.A. (P00058) | popularidad/estacionalidad, co-compra (categoria) | no |
+| 5 | Embutido y fiambre - Infraestructuras Carlos S.L.N.E (P00044) | popularidad/estacionalidad, co-compra (categoria) | no |
 
 ---
 
 ### 3 · recurrente, carrito vacio
 
-_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 57.5% de las 8,713 cestas._
+_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 62.9% de las 8,713 cestas._
 
-- **Cesta**: `B0595134`, canal `app`, 2025-12-26
-- **Cliente**: `C019738` - bronze, hogar de 2, Valencia
+- **Cesta**: `B0554521`, canal `store`, 2025-11-17
+- **Cliente**: `C010112` - silver, hogar de 1, Sevilla
 - **Ya en el carrito** (0): _vacio_
-- **Falta por anadir** (6): Precocinados congelados - Consultoría del Norte S.A. (P00480); Yogur - Alimentación Villanueva & Asociados S.A. (P00014); Pasta - Fábrica KNI S.Coop. (P00106); Fruta - Hervia y Medina S.L. (P00054); Salsa de tomate - Jordán y asociados S.C.P (P00113); Pizza congelada - Restauración XRI S.Com. (P00472)
-- **Resultado**: NDCG@5 = 0.316, Recall@5 = 0.333 (2 de 6)
+- **Falta por anadir** (5): Verdura - Comercial ZRYW S.L.L. (P00061); Agua - Giménez y Torrents S.A.T. (P00241); Aceite de oliva - Marca Blanca Bio (P00148); Leche - Marca Blanca Basico (P00006); Fruta - Familia Barrera S.Com. (P00050)
+- **Resultado**: NDCG@5 = 0.339, Recall@5 = 0.200 (1 de 5)
 
 | # | Recomendacion | Fuentes que lo propusieron | ¿Acierto? |
 | ---: | --- | --- | :---: |
-| 1 | Leche - Jordán y asociados S.C.P (P00001) | popularidad/estacionalidad, historial + recompra, ALS | no |
-| 2 | Agua - Giménez y Torrents S.A.T. (P00241) | historial + recompra | no |
-| 3 | Yogur - Alimentación Villanueva & Asociados S.A. (P00014) | popularidad/estacionalidad, historial + recompra, ALS | SI |
-| 4 | Salsa de tomate - Jordán y asociados S.C.P (P00113) | popularidad/estacionalidad, historial + recompra, ALS, en promocion | SI |
-| 5 | Refrescos - Pancho Mayoral Goñi S.A.T. (P00255) | historial + recompra | no |
+| 1 | Leche - Marca Blanca Basico (P00006) | popularidad/estacionalidad, historial + recompra, ALS, en promocion | SI |
+| 2 | Pasta - Fábrica KNI S.Coop. (P00106) | popularidad/estacionalidad, historial + recompra | no |
+| 3 | Refrescos - Farmaceútica del Norte S.A. (P00254) | popularidad/estacionalidad, historial + recompra | no |
+| 4 | Cafe - Banco BID S.L. (P00157) | historial + recompra, ALS | no |
+| 5 | Gel de ducha - Pinilla y asociados S.L. (P00375) | historial + recompra | no |
 
 ---
 
 ### 4 · recurrente, con articulos
 
-_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 43.3% de las 8,345 cestas._
+_Caso mediano entre las cestas de este perfil que aciertan algo. En el conjunto del perfil acierta al menos un producto el 49.0% de las 8,345 cestas._
 
-- **Cesta**: `B0588915`, canal `store`, 2025-12-20
-- **Cliente**: `C019768` - gold, hogar de 4, Madrid
-- **Ya en el carrito** (4): Huevos - Marca Blanca Seleccion (P00031); Cafe - Transportes Bou S.L. (P00158); Champu - Sáenz y asociados S.Com. (P00360); Leche - Marca Blanca Basico (P00006)
-- **Falta por anadir** (5): Cerveza - Infraestructuras Carlos S.L.N.E (P00268); Pan - Marca Blanca Bio (P00040); Verdura - Gonzalez y Yáñez S.Com. (P00063); Gel de ducha - Pinilla y asociados S.L. (P00375); Conservas de pescado - Marca Blanca Bio (P00139)
-- **Resultado**: NDCG@5 = 0.360, Recall@5 = 0.400 (2 de 5)
+- **Cesta**: `B0560043`, canal `store`, 2025-11-23
+- **Cliente**: `C009788` - bronze, hogar de 3, Gijon
+- **Ya en el carrito** (1): Legumbres - Infraestructuras Carlos S.L.N.E (P00135)
+- **Falta por anadir** (2): Refrescos - Grupo Gómez S.A. (P00252); Palomitas de microondas - Cerdá y Serrano S.A. (P00197)
+- **Resultado**: NDCG@5 = 0.387, Recall@5 = 0.500 (1 de 2)
 
 | # | Recomendacion | Fuentes que lo propusieron | ¿Acierto? |
 | ---: | --- | --- | :---: |
-| 1 | Yogur - Alimentación Villanueva & Asociados S.A. (P00014) | popularidad/estacionalidad, historial + recompra | no |
-| 2 | Pan - Marca Blanca Bio (P00040) | popularidad/estacionalidad, historial + recompra | SI |
-| 3 | Refrescos - Farmaceútica del Norte S.A. (P00254) | popularidad/estacionalidad, historial + recompra | no |
-| 4 | Cerveza - Infraestructuras Carlos S.L.N.E (P00268) | historial + recompra | SI |
-| 5 | Zumos - Carmela Dalmau Landa S.Coop. (P00258) | historial + recompra | no |
+| 1 | Huevos - Construcción Inteligentes S.L.L. (P00026) | historial + recompra | no |
+| 2 | Refrescos - Grupo Gómez S.A. (P00252) | popularidad/estacionalidad, historial + recompra, ALS | SI |
+| 3 | Detergente - Marca Blanca Bio (P00293) | historial + recompra | no |
+| 4 | Arroz - Marca Blanca Seleccion (P00127) | historial + recompra, en promocion | no |
+| 5 | Cafe - Cerdá y Serrano S.A. (P00153) | historial + recompra | no |

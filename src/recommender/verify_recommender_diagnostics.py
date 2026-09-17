@@ -3,6 +3,7 @@
     python -m data_generation.export_oracle                           # una vez, ~3 min
     python -m src.recommender.verify_recommender_diagnostics
     python -m src.recommender.verify_recommender_diagnostics --freeze  # congelar snapshot
+    python -m src.recommender.verify_recommender_diagnostics --freeze --snapshot baseline_pre_a1.json
 
 Convierte en codigo las cifras de `docs/diagnostico-fase7.md` que salian de un script ad
 hoc. Mide, **sobre las mismas queries de test** que el LambdaRank
@@ -10,10 +11,14 @@ hoc. Mide, **sobre las mismas queries de test** que el LambdaRank
 
 1. el LambdaRank tal y como quedo en disco (`predictions/recommendations_test.parquet`),
    junto a sus cifras congeladas en `reports/recommender/baseline_pre_diagnostico.json`;
-2. la bateria de baselines independientes del pool (`evaluate.run_baselines`), ajustados
-   con el mismo historial que el sistema (todo lo anterior a `test_start`);
+2. la bateria de baselines independientes del pool (`evaluate.run_baselines`), con el
+   mismo historial que el sistema: popularidad y reglas congeladas en `test_start`, e
+   historial personal as-of el dia de cada cesta (punto A1);
 3. el oraculo bayesiano (`oracle.py`): el top-5 de categorias por probabilidad real,
-   con su valor realizado y su valor esperado por Monte Carlo.
+   con su valor realizado y su valor esperado por Monte Carlo;
+4. los huecos del top-5 que caen en categorias que el cliente acababa de comprar (punto
+   A1), para el LambdaRank actual y, si estan en `--reference` (por defecto
+   `predictions/pre_a1/`), para las predicciones congeladas antes del cambio.
 
 Escribe `reports/recommender/diagnostics.json` y la seccion de diagnostico de
 `reports/recommender/metrics.md`, y termina con codigo de salida 1 si falla alguna
@@ -37,12 +42,11 @@ import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-from src.etl.repurchase import repurchase_features
 from src.etl.schemas import read_processed
 from src.etl.session import get_spark
 from src.recommender import candidates as cand
 from src.recommender import evaluate as ev
-from src.recommender import features as feat
+from src.recommender import history as hs
 from src.recommender import oracle as orc
 from src.recommender import pipeline as pl
 from src.recommender import splits
@@ -51,6 +55,13 @@ from src.recommender.schema import PROFILE_LABELS
 
 SNAPSHOT_FILENAME = "baseline_pre_diagnostico.json"
 DIAGNOSTICS_FILENAME = "diagnostics.json"
+
+# Referencia del "antes" del punto A1: las predicciones del modelo con historial
+# congelado, copiadas a `predictions/pre_a1/`, y sus cifras en `baseline_pre_a1.json`
+# (cuyo sha256 de predicciones permite comprobar que la copia es la buena).
+PRE_A1_SNAPSHOT = "baseline_pre_a1.json"
+DEFAULT_REFERENCE_DIR = Path("predictions/pre_a1")
+REFERENCE = "lambdarank_pre_a1"
 
 # Artefactos de los que salen las cifras del LambdaRank. El snapshot guarda su sha256
 # para saber, mas adelante, si una cifra se calculo sobre estas predicciones o sobre otras.
@@ -83,6 +94,7 @@ SYSTEM_LABELS: dict[str, str] = {
     ORACLE_CAT: "Oraculo de categoria (techo)",
     ORACLE_SKU: "Oraculo de SKU (techo)",
     LAMBDARANK: "LambdaRank (predicciones en disco)",
+    REFERENCE: "LambdaRank antes de A1 (historial congelado)",
     **ev.BASELINE_LABELS,
 }
 
@@ -103,31 +115,38 @@ def _git_head() -> str | None:
 # --------------------------------------------------------------------------------------
 # 1. Snapshot congelado
 # --------------------------------------------------------------------------------------
-def freeze_snapshot(cfg: RecommenderConfig, *, force: bool = False) -> Path:
-    """Congela `metrics.json` y los hashes de las predicciones de las que sale.
+def freeze_snapshot(
+    cfg: RecommenderConfig, *, name: str = SNAPSHOT_FILENAME, force: bool = False
+) -> Path:
+    """Congela `metrics.json` (y `diagnostics.json`, si existe) con los hashes de las
+    predicciones de las que salen.
 
-    Es la referencia "antes" de las Sesiones 2 en adelante del plan de mejora, como
-    `baseline_fase3.json` lo fue para la Fase 7.
+    `baseline_pre_diagnostico.json` es la referencia "antes" de las Sesiones 2 en
+    adelante del plan de mejora, como `baseline_fase3.json` lo fue para la Fase 7;
+    `baseline_pre_a1.json`, la del punto A1.
     """
     reports = Path(cfg.reports_dir)
-    path = reports / SNAPSHOT_FILENAME
+    path = reports / name
     if path.exists() and not force:
         raise FileExistsError(f"{path} ya existe; usar --force para sobrescribirlo")
     metrics = json.loads((reports / "metrics.json").read_text(encoding="utf-8"))
+    diagnostics_path = reports / DIAGNOSTICS_FILENAME
     payload = {
         "descripcion": (
-            "Metricas del LambdaRank de la Fase 7c congeladas antes de aplicar los puntos "
-            "de docs/diagnostico-fase7.md. No regenerar: es la referencia del antes."
+            f"Metricas del LambdaRank congeladas como {name} antes de aplicar el siguiente "
+            "punto de docs/diagnostico-fase7.md. No regenerar: es la referencia del antes."
         ),
         "congelado": dt.date.today().isoformat(),
         "commit": _git_head(),
         "fuente": (reports / "metrics.json").as_posix(),
         "predicciones_sha256": {
-            name: _sha256(Path(cfg.predictions_dir) / name) for name in PREDICTION_FILES
+            file: _sha256(Path(cfg.predictions_dir) / file) for file in PREDICTION_FILES
         },
         "modelo_sha256": _sha256(Path(cfg.models_dir) / "recommender_ranker_lgbm.txt"),
         "metrics": metrics,
     }
+    if name != SNAPSHOT_FILENAME and diagnostics_path.is_file():
+        payload["diagnostics"] = json.loads(diagnostics_path.read_text(encoding="utf-8"))
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
 
@@ -159,8 +178,22 @@ def load_test_set(predictions_dir: Path) -> TestSet:
     )
 
 
-def fit_history(spark: SparkSession, cfg: RecommenderConfig) -> dict[str, pd.DataFrame]:
-    """Historial anterior a `test_start`, con las mismas funciones que `pipeline.fit_sources`."""
+def load_reference(reference_dir: Path) -> pd.DataFrame | None:
+    """Top-5 de referencia (antes de A1), si existe. `measure` comprueba que es el bueno."""
+    path = reference_dir / "recommendations_test.parquet"
+    if not path.is_file():
+        return None
+    return pd.read_parquet(path)[["basket_id", "product_id", "rank", "label"]]
+
+
+def fit_history(
+    spark: SparkSession, cfg: RecommenderConfig, queries: pd.DataFrame
+) -> dict[str, pd.DataFrame]:
+    """Historial de los baselines, con las mismas funciones que el pipeline.
+
+    Popularidad y reglas, con lo anterior a `test_start` (como `pipeline.fit_sources`);
+    historial personal, as-of el dia de cada query (como `pipeline.build_window`).
+    """
     tables = read_processed(
         spark, ("baskets", "basket_items", "products", "customers"), cfg.processed_dir
     )
@@ -186,22 +219,25 @@ def fit_history(spark: SparkSession, cfg: RecommenderConfig) -> dict[str, pd.Dat
         .agg(F.countDistinct("basket_id").cast("double").alias("n_baskets"))
     )
 
-    customer_products = cand.fit_customer_products(hist_b, hist_i).select(
-        "customer_id", "product_id", F.col("hist_n_baskets").alias("n_baskets")
+    spark_queries = spark.createDataFrame(
+        queries[["basket_id", "customer_id"]].assign(
+            basket_day=pd.to_datetime(queries["basket_day"]).dt.date
+        ),
+        schema="basket_id string, customer_id string, basket_day date",
     )
-    customer_categories = repurchase_features(
-        hist_i,
-        hist_b,
-        products,
-        tables["customers"],
-        reference_date=feat.default_reference_date(cfg.test_start),
-    ).select(
-        "customer_id",
+    asof = hs.asof_history(
+        spark_queries, tables["baskets"], tables["basket_items"], products, tables["customers"]
+    )
+    customer_products = asof.products.select(
+        "basket_id", "product_id", F.col("hist_n_baskets").alias("n_baskets")
+    )
+    customer_categories = asof.categories.select(
+        "basket_id",
         "category",
-        "n_purchase_days",
+        F.col("cat_n_purchase_days").alias("n_purchase_days"),
         # Como texto: una fecha viaja bien a pandas, pero asi no hay dudas de zona horaria.
-        F.date_format("last_purchase_date", "yyyy-MM-dd").alias("last_purchase_date"),
-        "expected_repurchase_days",
+        F.date_format("cat_last_day", "yyyy-MM-dd").alias("last_purchase_date"),
+        F.col("cat_expected_days").alias("expected_repurchase_days"),
     )
     rules = cand.fit_affinity_category(hist_i, products).select(
         "antecedent", "consequent", "confidence", "lift"
@@ -231,6 +267,9 @@ class Diagnostics:
     ess: dict[str, float]
     rules: dict[str, float]
     snapshot: dict | None
+    recency: dict[str, pd.DataFrame] = field(default_factory=dict)
+    recency_comparison: pd.DataFrame | None = None
+    pre_a1: dict | None = None
     checks: list[tuple[str, bool, str]] = field(default_factory=list)
 
 
@@ -279,6 +318,10 @@ def measure(
     n_samples: int,
     snapshot: dict | None,
     current_metrics: dict | None,
+    reference: pd.DataFrame | None = None,
+    pre_a1: dict | None = None,
+    reference_sha: str | None = None,
+    window_start: dt.date | None = None,
 ) -> Diagnostics:
     products = history["products"]
     queries = test.queries
@@ -347,9 +390,8 @@ def measure(
         customer_categories=history["customer_categories"],
         category_rules=history["category_rules"],
     )
-    for name, top_k in ev.run_baselines(
-        data, k=k, seed=seed, min_confidence=min_confidence
-    ).items():
+    baseline_lists = ev.run_baselines(data, k=k, seed=seed, min_confidence=min_confidence)
+    for name, top_k in baseline_lists.items():
         summaries[name] = summary(top_k)
 
     # --- Comprobaciones del techo ---
@@ -380,7 +422,7 @@ def measure(
     best_other = max(
         (float(s.iloc[0][f"cat_hit_rate@{k}"]), n)
         for n, s in summaries.items()
-        if n not in (ORACLE_CAT, ORACLE_SKU)
+        if n not in (ORACLE_CAT, ORACLE_SKU, REFERENCE)
     )
     checks.append(
         (
@@ -388,6 +430,45 @@ def measure(
             best_other[0] <= realised_hit,
             f"mejor sistema {best_other[1]} = {best_other[0]:.4f}",
         )
+    )
+
+    # --- Huecos en categorias recien compradas (punto A1) ---
+    # La ultima compra real de cada categoria antes del dia de la cesta: es lo que el
+    # modelo con historial congelado no veia.
+    last_day = history["customer_categories"].rename(columns={"last_purchase_date": "last_day"})
+
+    def slots(top_k: pd.DataFrame) -> pd.DataFrame:
+        return ev.recency_slots(top_k, queries, test.target, last_day, products)
+
+    recency_slots = {LAMBDARANK: slots(test.lambdarank)}
+    if reference is not None:
+        same_queries = set(reference["basket_id"]) == set(test.lambdarank["basket_id"])
+        detail = ""
+        if pre_a1 is not None:
+            frozen = pre_a1["predicciones_sha256"]["recommendations_test.parquet"]
+            same_file = frozen == reference_sha
+            detail = "sha256 = el de " + PRE_A1_SNAPSHOT if same_file else "sha256 distinto"
+            same_queries = same_queries and same_file
+        checks.append(
+            (
+                "Las predicciones de referencia (antes de A1) son las congeladas y cubren "
+                "las mismas queries",
+                same_queries,
+                detail,
+            )
+        )
+        recency_slots[REFERENCE] = slots(reference)
+        summaries[REFERENCE] = summary(reference)
+    recency_slots["personal_due"] = slots(baseline_lists["personal_due"])
+    start = window_start or pd.to_datetime(queries["basket_day"]).min()
+    recency = {
+        name: ev.recency_slot_metrics(frame, window_start=start)
+        for name, frame in recency_slots.items()
+    }
+    comparison = (
+        ev.recency_query_comparison(recency_slots, REFERENCE, k=k)
+        if REFERENCE in recency_slots
+        else None
     )
 
     rules = history["category_rules"]
@@ -412,6 +493,9 @@ def measure(
             "n_rules_used": float(len(kept)),
         },
         snapshot=snapshot,
+        recency=recency,
+        recency_comparison=comparison,
+        pre_a1=pre_a1,
         checks=checks,
     )
 
@@ -442,6 +526,7 @@ def headline(diag: Diagnostics) -> dict[str, object]:
     ceiling = float(total[ORACLE_CAT][col])
     sku_col = f"sku_hit_rate@{k}"
     sku_ceiling = float(total[ORACLE_SKU][sku_col])
+    systems = [LAMBDARANK, *ev.BASELINE_LABELS, *[n for n in (REFERENCE,) if n in total]]
     return {
         "best_baseline": best,
         "best_baseline_cat_hit_rate": baselines[best],
@@ -449,13 +534,9 @@ def headline(diag: Diagnostics) -> dict[str, object]:
         "gap_best_baseline_minus_lambdarank": baselines[best] - lr,
         "ceiling_cat_hit_rate": ceiling,
         "ceiling_sku_hit_rate": sku_ceiling,
-        "pct_of_ceiling": {
-            name: float(total[name][col]) / ceiling
-            for name in [LAMBDARANK, *ev.BASELINE_LABELS]
-        },
+        "pct_of_ceiling": {name: float(total[name][col]) / ceiling for name in systems},
         "pct_of_sku_ceiling": {
-            name: float(total[name][sku_col]) / sku_ceiling
-            for name in [LAMBDARANK, *ev.BASELINE_LABELS]
+            name: float(total[name][sku_col]) / sku_ceiling for name in systems
         },
     }
 
@@ -466,7 +547,8 @@ def _system_order(diag: Diagnostics) -> list[str]:
         ev.BASELINE_LABELS,
         key=lambda n: -float(diag.summaries[n].iloc[0][f"cat_hit_rate@{k}"]),
     )
-    return [ORACLE_CAT, ORACLE_SKU, LAMBDARANK, *rest]
+    before = [REFERENCE] if REFERENCE in diag.summaries else []
+    return [ORACLE_CAT, ORACLE_SKU, LAMBDARANK, *before, *rest]
 
 
 def _by_profile_table(diag: Diagnostics, column: str, ceiling: str) -> list[str]:
@@ -489,6 +571,69 @@ def _by_profile_table(diag: Diagnostics, column: str, ceiling: str) -> list[str]
         if name in (ORACLE_CAT, ORACLE_SKU, LAMBDARANK):
             label = f"**{label}**"
         lines.append(f"| {label} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _recency_markdown(diag: Diagnostics) -> list[str]:
+    """Seccion del punto A1: huecos en categorias que el cliente acababa de comprar."""
+    k = diag.k
+    names = [n for n in (REFERENCE, LAMBDARANK, "personal_due") if n in diag.recency]
+    groups = list(diag.recency[LAMBDARANK]["grupo"])
+    head = "| Huecos en categorias compradas... | " + " | ".join(
+        f"{SYSTEM_LABELS[n]}: % huecos | SKU prec. | cat. prec." for n in names
+    ) + " |"
+    lines = [
+        "### Huecos en categorias recien compradas (punto A1)",
+        "",
+        "Cada hueco del top-5 se clasifica por los dias desde que el cliente compro por "
+        "ultima vez su categoria, con **todo** su historial anterior al dia de la cesta "
+        "(lo viera o no el modelo). El generador castiga con fuerza reponer justo despues "
+        "de comprar, asi que los huecos de los primeros dias casi nunca aciertan. "
+        "\"En la ventana\" es desde el inicio del test. Precision = parte de esos huecos "
+        "que acierta el SKU o la categoria.",
+        "",
+        head,
+        "| --- |" + " ---: | ---: | ---: |" * len(names),
+    ]
+    tables = {n: diag.recency[n].set_index("grupo") for n in names}
+    for g in groups:
+        cells = []
+        for n in names:
+            row = tables[n].loc[g]
+            cells += [
+                _pct(row["proporcion_huecos"]),
+                _pct(row["sku_precision"]),
+                _pct(row["cat_precision"]),
+            ]
+        lines.append(f"| {g} | " + " | ".join(cells) + " |")
+    lines.append("")
+
+    comp = diag.recency_comparison
+    if comp is not None:
+        lines += [
+            f"**Queries donde el modelo de antes gastaba huecos en categorias recien "
+            f"compradas.** Para cada umbral, las queries cuya lista antes de A1 tenia al "
+            f"menos un hueco en una categoria comprada hace <= d dias, y como les va a cada "
+            f"sistema (lista entera de {k}).",
+            "",
+            f"| Umbral | Sistema | Queries | Huecos recientes | sku_precision@{k} "
+            f"| cat_precision@{k} | sku_hit_rate@{k} | cat_hit_rate@{k} |",
+            "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+        for row in comp.to_dict(orient="records"):
+            lines.append(
+                f"| <= {row['umbral_dias']} dias | {SYSTEM_LABELS[row['sistema']]} "
+                f"| {row['n_queries']:,} | {_pct(row[f'huecos_recientes@{k}'])} "
+                f"| {_num(row[f'sku_precision@{k}'])} | {_num(row[f'cat_precision@{k}'])} "
+                f"| {_num(row[f'sku_hit_rate@{k}'])} | {_num(row[f'cat_hit_rate@{k}'])} |"
+            )
+        lines.append("")
+    if diag.pre_a1 is not None:
+        lines += [
+            f"Las predicciones de antes son las congeladas en `{PRE_A1_SNAPSHOT}` "
+            f"({diag.pre_a1['congelado']}, commit `{(diag.pre_a1['commit'] or '?')[:7]}`).",
+            "",
+        ]
     return lines
 
 
@@ -617,6 +762,7 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         "",
         *_by_profile_table(diag, col("sku_hit_rate"), ORACLE_SKU),
         "",
+        *_recency_markdown(diag),
         "### Como se construye el techo",
         "",
         "El generador exporta, para cada cesta de test, el peso de cada categoria antes del "
@@ -672,6 +818,14 @@ def to_json(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: str) -> 
         "oracle_expected_by_profile": diag.oracle_expected_by_profile.to_dict(orient="records"),
         "monte_carlo": diag.ess,
         "association_rules": diag.rules,
+        "recency_slots": {
+            name: frame.to_dict(orient="records") for name, frame in diag.recency.items()
+        },
+        "recency_comparison": (
+            None
+            if diag.recency_comparison is None
+            else diag.recency_comparison.to_dict(orient="records")
+        ),
         "checks": [{"check": n, "ok": ok, "detail": d} for n, ok, d in diag.checks],
     }
 
@@ -695,6 +849,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Congelar metrics.json en {SNAPSHOT_FILENAME} y salir.",
     )
     parser.add_argument("--force", action="store_true", help="Con --freeze, sobrescribir.")
+    parser.add_argument(
+        "--snapshot",
+        default=SNAPSHOT_FILENAME,
+        help=f"Nombre del snapshot de --freeze (por defecto {SNAPSHOT_FILENAME}).",
+    )
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        default=DEFAULT_REFERENCE_DIR,
+        help="Predicciones de antes del punto A1, para comparar (se ignora si no existen).",
+    )
     return parser.parse_args(argv)
 
 
@@ -707,7 +872,8 @@ def main(argv: list[str] | None = None) -> int:
         models_dir=args.models,
     )
     if args.freeze:
-        print(f"Snapshot congelado en {freeze_snapshot(cfg, force=args.force)}")
+        path = freeze_snapshot(cfg, name=args.snapshot, force=args.force)
+        print(f"Snapshot congelado en {path}")
         return 0
 
     reports = Path(cfg.reports_dir)
@@ -720,14 +886,23 @@ def main(argv: list[str] | None = None) -> int:
         json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.is_file() else None
     )
 
+    pre_a1_path = reports / PRE_A1_SNAPSHOT
+    pre_a1 = (
+        json.loads(pre_a1_path.read_text(encoding="utf-8")) if pre_a1_path.is_file() else None
+    )
+
     start = time.perf_counter()
     test = load_test_set(Path(cfg.predictions_dir))
+    reference = load_reference(args.reference)
+    reference_sha = (
+        _sha256(args.reference / "recommendations_test.parquet") if reference is not None else None
+    )
     spark = get_spark("grocery-recommender-diagnostics", driver_memory="6g")
     try:
-        history = fit_history(spark, cfg)
+        history = fit_history(spark, cfg, test.queries)
     finally:
         spark.stop()
-    print(f"  Historial anterior a {cfg.test_start} ({time.perf_counter() - start:.0f}s)", flush=True)
+    print(f"  Historial de los baselines ({time.perf_counter() - start:.0f}s)", flush=True)
 
     diag = measure(
         test,
@@ -739,6 +914,10 @@ def main(argv: list[str] | None = None) -> int:
         n_samples=args.mc_samples,
         snapshot=snapshot,
         current_metrics=current,
+        reference=reference,
+        pre_a1=pre_a1,
+        reference_sha=reference_sha,
+        window_start=cfg.test_start,
     )
     predictions_sha = _sha256(Path(cfg.predictions_dir) / "recommendations_test.parquet")
     block = render_markdown(diag, cfg, predictions_sha)
@@ -762,6 +941,13 @@ def main(argv: list[str] | None = None) -> int:
         f"\nMejor baseline - LambdaRank: {h['gap_best_baseline_minus_lambdarank'] * 100:+.2f} pp "
         f"({SYSTEM_LABELS[h['best_baseline']]})"
     )
+    with pd.option_context("display.width", 160, "display.max_columns", 20):
+        for name, table in diag.recency.items():
+            print(f"\nHuecos por recencia de la categoria - {SYSTEM_LABELS[name]}:")
+            print(table.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+        if diag.recency_comparison is not None:
+            print("\nQueries con huecos recientes en la lista de antes:")
+            print(diag.recency_comparison.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
     failed = [name for name, ok, _ in diag.checks if not ok]
     for name, ok, detail in diag.checks:
         print(f"[{'OK' if ok else 'FALLA'}] {name} {detail}")

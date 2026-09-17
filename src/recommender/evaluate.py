@@ -337,6 +337,135 @@ def wasted_slot_metrics(
     return pd.DataFrame(rows)
 
 
+# --------------------------------------------------------------------------------------
+# Huecos segun la recencia de su categoria (punto A1 del diagnostico)
+# --------------------------------------------------------------------------------------
+# Umbrales de "categoria recien repuesta", en dias desde la ultima compra del cliente. El
+# generador castiga con fuerza volver a comprar justo despues de reponer
+# (`ratio^1.8`, minimo 0,03), asi que esos huecos casi nunca aciertan.
+RECENT_DAYS: tuple[int, ...] = (7, 14)
+
+
+def recency_slots(
+    top_k: pd.DataFrame,
+    queries: pd.DataFrame,
+    target: pd.DataFrame,
+    category_last_day: pd.DataFrame,
+    product_category: pd.DataFrame,
+) -> pd.DataFrame:
+    """Un hueco por fila, con si acierta (SKU y categoria) y cuanto hace que se compro.
+
+    `category_last_day` (`basket_id`, `category`, `last_day`) es la ultima compra real del
+    cliente de la query en cada categoria antes del dia de la cesta: lo que el cliente
+    sabe, lo viera o no el modelo. `days_since` queda nulo si nunca la habia comprado.
+    """
+    catalog = product_category[["product_id", "category"]]
+    target_cats = (
+        target.merge(catalog, on="product_id")[["basket_id", "category"]]
+        .drop_duplicates()
+        .assign(cat_hit=1.0)
+    )
+    slots = (
+        top_k[["basket_id", "product_id", "label"]]
+        .merge(catalog, on="product_id")
+        .merge(queries[["basket_id", "basket_day"]], on="basket_id")
+        .merge(target_cats, on=["basket_id", "category"], how="left")
+        .merge(
+            category_last_day[["basket_id", "category", "last_day"]],
+            on=["basket_id", "category"],
+            how="left",
+        )
+    )
+    slots["cat_hit"] = slots["cat_hit"].fillna(0.0)
+    slots["days_since"] = (
+        pd.to_datetime(slots["basket_day"]) - pd.to_datetime(slots["last_day"])
+    ).dt.days
+    return slots
+
+
+def _recency_groups(slots: pd.DataFrame, window_start) -> dict[str, np.ndarray]:
+    days = slots["days_since"]
+    in_window = (pd.to_datetime(slots["last_day"]) >= pd.Timestamp(window_start)).to_numpy()
+    short, long = RECENT_DAYS
+    return {
+        f"<= {short} dias": (days <= short).to_numpy(),
+        f"<= {long} dias": (days <= long).to_numpy(),
+        f"{short + 1}-{long} dias": ((days > short) & (days <= long)).to_numpy(),
+        "comprada en la ventana, antes de la cesta": in_window,
+        "sin compra en la ventana": ~in_window,
+        "total": np.ones(len(slots), dtype=bool),
+    }
+
+
+def recency_slot_metrics(slots: pd.DataFrame, *, window_start) -> pd.DataFrame:
+    """Que parte del top-k cae en categorias recien compradas, y cuanto acierta ahi.
+
+    Args:
+        slots: Salida de `recency_slots`.
+        window_start: Inicio de la ventana de test (para "comprada en la ventana").
+
+    Returns:
+        Una fila por grupo de recencia con la proporcion de huecos y la precision de SKU
+        y de categoria de esos huecos.
+    """
+    total = max(len(slots), 1)
+    rows = []
+    for name, mask in _recency_groups(slots, window_start).items():
+        sub = slots.loc[mask]
+        rows.append(
+            {
+                "grupo": name,
+                "huecos": int(len(sub)),
+                "proporcion_huecos": len(sub) / total,
+                "sku_precision": float(sub["label"].mean()) if len(sub) else float("nan"),
+                "cat_precision": float(sub["cat_hit"].mean()) if len(sub) else float("nan"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def recency_query_comparison(
+    systems: dict[str, pd.DataFrame], reference: str, *, k: int
+) -> pd.DataFrame:
+    """Sistemas comparados en las queries donde `reference` gastaba huecos recientes.
+
+    Para cada umbral de `RECENT_DAYS` se toman las queries en las que la lista de
+    `reference` tenia al menos un hueco en una categoria comprada hace `<= d` dias, y en
+    ellas se mide cada sistema: que parte de sus huecos sigue cayendo en esas categorias
+    y cuanto acierta la lista entera.
+
+    Args:
+        systems: Nombre -> salida de `recency_slots`, sobre las mismas queries.
+        reference: El sistema que define el subconjunto (el modelo de antes).
+        k: Longitud de la lista.
+    """
+    ref = systems[reference]
+    rows = []
+    for d in RECENT_DAYS:
+        chosen = pd.Index(ref.loc[ref["days_since"] <= d, "basket_id"].unique())
+        for name, slots in systems.items():
+            sub = slots.loc[slots["basket_id"].isin(chosen)]
+            per_query = (
+                sub.groupby("basket_id")
+                .agg(sku=("label", "sum"), cat=("cat_hit", "sum"))
+                .reindex(chosen, fill_value=0.0)
+            )
+            rows.append(
+                {
+                    "umbral_dias": d,
+                    "sistema": name,
+                    "n_queries": int(len(chosen)),
+                    f"huecos_recientes@{k}": float((sub["days_since"] <= d).sum())
+                    / max(len(chosen) * k, 1),
+                    f"sku_precision@{k}": float((per_query["sku"] / k).mean()),
+                    f"cat_precision@{k}": float((per_query["cat"] / k).mean()),
+                    f"sku_hit_rate@{k}": float((per_query["sku"] > 0).mean()),
+                    f"cat_hit_rate@{k}": float((per_query["cat"] > 0).mean()),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def popularity_baseline(scored: pd.DataFrame) -> pd.Series:
     """Baseline sin aprendizaje: ordenar por popularidad reciente x estacionalidad.
 
@@ -353,8 +482,9 @@ def popularity_baseline(scored: pd.DataFrame) -> pd.Series:
 # --------------------------------------------------------------------------------------
 # `popularity_baseline` reordena el mismo pool que el ranker, asi que solo aisla lo que
 # aporta el ranker frente a la primera etapa. Los baselines de abajo construyen su top-k
-# desde cero, con el mismo historial que ve el sistema (todo lo anterior a `test_start`)
-# y sobre las mismas queries. Contestan otra pregunta: si un sistema trivial, sin ningun
+# desde cero, con el mismo historial que ve el sistema y sobre las mismas queries: la
+# popularidad y las reglas, congeladas en `test_start` como las fuentes del ranker; el
+# historial personal, as-of el dia de cada cesta como las features (punto A1). Contestan otra pregunta: si un sistema trivial, sin ningun
 # aprendizaje, recomienda igual o mejor.
 #
 # Reglas comunes, para que las cifras sean comparables entre si:
@@ -393,10 +523,10 @@ class BaselineInputs:
         products: Catalogo con `product_id` y `category`.
         product_popularity: `product_id`, `n_baskets` en la ventana reciente.
         category_popularity: `category`, `n_baskets` en la ventana reciente.
-        customer_products: `customer_id`, `product_id`, `n_baskets` en el historial.
-        customer_categories: `customer_id`, `category`, `n_purchase_days`,
-            `last_purchase_date` y `expected_repurchase_days` (de
-            `src.etl.repurchase.repurchase_features`).
+        customer_products: `basket_id`, `product_id`, `n_baskets`: el historial del
+            cliente de cada query al dia de su cesta (`history.asof_history`).
+        customer_categories: `basket_id`, `category`, `n_purchase_days`,
+            `last_purchase_date` y `expected_repurchase_days`, tambien as-of.
         category_rules: `antecedent`, `consequent`, `confidence` y `lift` entre
             categorias (de `src.etl.affinity.cooccurrence_affinity`).
     """
@@ -455,14 +585,15 @@ class _Grid:
         )
         self.category_leader = leader.reindex(self.categories).to_numpy()
 
-    def customer_matrix(
+    def query_matrix(
         self, frame: pd.DataFrame, key: str, positions: pd.Series, value: str, fill: float = 0.0
     ) -> np.ndarray:
-        """Pasa una tabla `(customer_id, key, value)` a matriz query x `key`."""
+        """Pasa una tabla `(basket_id, key, value)` a matriz query x `key`."""
         out = np.full((len(self.basket_ids), len(positions)), fill, dtype=float)
-        known = self.data.queries[["basket_id", "customer_id"]].dropna()
-        joined = known.merge(frame[["customer_id", key, value]], on="customer_id")
-        joined = joined.loc[joined[key].isin(positions.index)]
+        joined = frame[["basket_id", key, value]]
+        joined = joined.loc[
+            joined["basket_id"].isin(self.row.index) & joined[key].isin(positions.index)
+        ]
         out[
             self.row.loc[joined["basket_id"]].to_numpy(),
             positions.loc[joined[key]].to_numpy(),
@@ -477,10 +608,10 @@ class _Grid:
         cp["prod_pos"] = self.prod_pos.loc[cp["product_id"]].to_numpy()
         cp["pop"] = self.product_pop[cp["prod_pos"].to_numpy()]
         fav = cp.sort_values(
-            ["customer_id", "category", "n_baskets", "pop", "product_id"],
+            ["basket_id", "category", "n_baskets", "pop", "product_id"],
             ascending=[True, True, False, False, True],
-        ).drop_duplicates(["customer_id", "category"])
-        pos = self.customer_matrix(fav, "category", self.cat_pos, "prod_pos", fill=-1.0)
+        ).drop_duplicates(["basket_id", "category"])
+        pos = self.query_matrix(fav, "category", self.cat_pos, "prod_pos", fill=-1.0)
         pos = pos.astype(int)
         leader_pos = self.prod_pos.loc[self.category_leader].to_numpy()
         return self.product_ids[np.where(pos >= 0, pos, leader_pos[None, :])]
@@ -558,7 +689,7 @@ def baseline_category_popularity(grid: _Grid, k: int) -> pd.DataFrame:
 
 
 def _personal_category_frequency(grid: _Grid) -> np.ndarray:
-    return grid.customer_matrix(
+    return grid.query_matrix(
         grid.data.customer_categories, "category", grid.cat_pos, "n_purchase_days"
     )
 
@@ -572,14 +703,14 @@ def baseline_personal_due(grid: _Grid, k: int, favorite: np.ndarray) -> pd.DataF
     """Frecuencia personal, duplicada en las categorias a las que ya les toca reponer.
 
     `due` se evalua el dia de la cesta (`dias desde la ultima compra / intervalo esperado
-    >= 1`), con la ultima compra conocida en `test_start`: el mismo desfase que tienen
-    las features del ranker (punto A1), para que la comparacion sea justa.
+    >= 1`), con el historial as-of de ese dia: el mismo que ven las features del ranker
+    (punto A1), para que la comparacion sea justa.
     """
     cc = grid.data.customer_categories.assign(
         last_day=lambda d: pd.to_datetime(d["last_purchase_date"]).astype("int64") // _NS_PER_DAY
     )
-    last = grid.customer_matrix(cc, "category", grid.cat_pos, "last_day", fill=np.nan)
-    expected = grid.customer_matrix(
+    last = grid.query_matrix(cc, "category", grid.cat_pos, "last_day", fill=np.nan)
+    expected = grid.query_matrix(
         cc, "category", grid.cat_pos, "expected_repurchase_days", fill=np.nan
     )
     day = pd.to_datetime(grid.data.queries["basket_day"]).astype("int64").to_numpy()
@@ -592,7 +723,7 @@ def baseline_personal_due(grid: _Grid, k: int, favorite: np.ndarray) -> pd.DataF
 
 def baseline_repeat_favorite(grid: _Grid, k: int) -> pd.DataFrame:
     """Los SKU que el cliente mas ha comprado; los mas vendidos si no le llegan."""
-    primary = grid.customer_matrix(
+    primary = grid.query_matrix(
         grid.data.customer_products, "product_id", grid.prod_pos, "n_baskets"
     )
     return _product_lists(grid, primary, grid.product_pop, k)

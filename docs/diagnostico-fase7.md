@@ -326,6 +326,24 @@ Esto obliga a replicar la lógica en `src/serving/recommend.py` (punto B2). Hay 
 volver a medir con los baselines de A3, que también deben ser as-of para que la
 comparación sea justa.
 
+**Estado (Sesión 3): hecho.** `src/recommender/history.py` agrega, para cada query,
+todas las cestas de su cliente con `basket_day` estrictamente anterior. Es un *as-of join*
+por `customer_id` con filtro de fecha. La réplica en pandas está en
+`serving.asof_history`. Resultado sobre las mismas 18.000 queries, con el modelo
+anterior congelado en `reports/recommender/baseline_pre_a1.json`:
+
+| | Antes | Después |
+| --- | ---: | ---: |
+| `cat_hit_rate@5` | 0,6168 | 0,6743 |
+| `sku_hit_rate@5` | 0,4947 | 0,5488 |
+| Huecos en categorías compradas hace ≤ 7 días (precisión SKU) | 15,6 % (4,7 %) | 2,4 % (16,7 %) |
+| Huecos en categorías compradas hace ≤ 14 días (precisión SKU) | 27,2 % (7,7 %) | 9,9 % (16,3 %) |
+| Mejor baseline (as-of) menos LambdaRank | +4,4 pp (congelado) | +0,5 pp |
+
+Las cifras de antes difieren un poco de las de arriba porque aquí el modelo de referencia
+ya incluye A2. Las recalculan `python -m src.recommender.pipeline` y
+`python -m src.recommender.verify_recommender_diagnostics`.
+
 ### A2 · El ranker no sabe qué categorías hay ya en el carrito, ni hay reglas post-ranking — **ALTA** (rápido)
 
 **Problema.** `in_cart` excluye el **mismo SKU**, pero no la misma categoría, y no existe
@@ -460,6 +478,29 @@ A4 cuesta el doble** y el test de paridad no corre en CI (punto B1). Alternativa
 - calcular las features con una sola implementación (pandas/polars o DuckDB, que a esta
   escala cabe en memoria);
 - o, como mínimo, extraer las fórmulas a funciones puras compartidas.
+
+**Estado (Sesión 3, junto con A1): se ha hecho lo segundo, no lo primero.** Las fórmulas
+de negocio (ciclo de reposición, `overdue_ratio`, `cat_due` y el orden de la fuente
+`hist`) viven una sola vez en `src/recommender/formulas.py`. Se escriben sobre un objeto
+de operaciones (`where`, `coalesce`, `greatest`) que tiene versión de pandas y de Spark
+(`formulas_spark.py`), y la aritmética funciona igual sobre una `Column` que sobre una
+`Series`. Las usan el ETL de la Tarea 2 (`src/etl/repurchase.py`), el historial as-of de
+Spark (`history.py`, `candidates.py`) y el serving. Lo que sigue duplicado son los joins y
+agregaciones que preparan las entradas; los atan `test_serving_parity.py` y
+`tests/test_asof_features.py`.
+
+Unificar el motor no compensa en esta sesión, por tres motivos:
+
+- `CLAUDE.md` fija PySpark para el feature engineering. Cambiarlo es una decisión de
+  stack que corresponde al dueño del proyecto, no un efecto secundario de A1.
+- El ALS es de Spark MLlib, así que el entrenamiento seguiría necesitando Spark.
+  Unificar solo las features obliga a reescribir unas 1.000 líneas (fuentes, matriz,
+  diagnóstico) y a volver a validarlas contra las cifras actuales.
+- Ni DuckDB ni polars son dependencias del proyecto.
+
+Si se retoma, la opción más natural es **DuckDB** con las features escritas una vez en SQL,
+ejecutado sobre parquet en el entrenamiento y sobre pandas en el serving. Así desaparece
+la réplica y el test de paridad deja de ser el único seguro.
 
 ### B3 · Documentación extensa, con restos desfasados — **BAJA**
 

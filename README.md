@@ -37,7 +37,7 @@ las del dataset de la Fase 7**; donde se comparan con las anteriores, se dice.
 un ETL en PySpark que las limpia y documenta cada corrección, un Data Trust Score que pasa
 de **91,42 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
 [notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL,
-un recomendador de cesta de dos etapas con **NDCG@5 = 0,1759**, una política de Next Best
+un recomendador de cesta de dos etapas con **NDCG@5 = 0,2028**, una política de Next Best
 Action que decide en euros, dos documentos que traducen todo eso a negocio — el
 [resumen de impacto](IMPACT.md) y el
 [informe de hallazgos](reports/insights/business_findings.md) — y una
@@ -110,6 +110,8 @@ grocery-retail-recommender/
 │   │   ├── config.py         #   ventanas temporales, tamaños de pool, hiperparámetros
 │   │   ├── splits.py         #   split por cesta, prefijo/target y los 4 perfiles
 │   │   ├── candidates.py     #   popularidad, co-compra (SKU y categoría), historial, ALS
+│   │   ├── history.py        #   historial del cliente al día de cada cesta (as-of, punto A1)
+│   │   ├── formulas.py       #   fórmulas de reposición compartidas por Spark y pandas (punto B2)
 │   │   ├── features.py       #   57 features del par (query, candidato)
 │   │   ├── ranker.py         #   LightGBM LambdaRank
 │   │   ├── evaluate.py       #   NDCG@5, Recall@5, Precision@5, F1@5, desglose SKU / categoría y baselines
@@ -474,13 +476,55 @@ compró" — y en test se desplomaría.
 | Popularidad × estacionalidad | Ventas de los últimos 90 días × índice estacional del mes | los cuatro (es el respaldo) |
 | Co-compra de SKU | `affinity_product` recalculada sobre la ventana | 2 y 4 |
 | Co-compra de categoría | `affinity_category` + los más vendidos de cada categoría | 2 y 4, y llega a la cola larga |
-| Historial + recompra | Lo que el cliente compra, priorizando lo que "toca" (Tarea 2) | 3 y 4 |
+| Historial + recompra | Lo que el cliente ha comprado hasta el día anterior a la cesta, priorizando lo que "toca" (Tarea 2) | 3 y 4 |
 | ALS implícito (Spark MLlib) | `customer_id × product_id` | 3 y 4 |
 
-Unidas dan **139 candidatos por cesta** de los 496 del catálogo, y el pool contiene ya el
-**76,9 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 169
+Unidas dan **140 candidatos por cesta** de los 496 del catálogo, y el pool contiene ya el
+**77,8 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 50
 árboles con 57 *features* ordena, y un re-ranking final (una referencia por categoría,
 nada de lo que ya hay en el carrito) devuelve el top-5.
+
+### El historial, al día de cada cesta
+
+Popularidad, co-compra y ALS se ajustan una vez por ventana, que es el patrón habitual de
+reentrenamiento periódico. El historial personal no: la fuente de historial, su
+`due_for_repurchase` y las *features* de cliente, cliente × producto y cliente × categoría
+se calculan **con todas las cestas del cliente anteriores al día de cada query**
+([`history.py`](src/recommender/history.py)), también las de dentro de la ventana.
+
+Hasta el punto A1 del [diagnóstico](docs/diagnostico-fase7.md) eran una foto del inicio de
+la ventana. Una cesta del 20 de diciembre no veía lo que el cliente había comprado el 5 o el
+18, y el modelo daba por vencida una categoría recién repuesta, justo donde el generador más
+penaliza volver a comprar. El 15,6 % de los huecos del top-5 caía en categorías compradas en
+los 7 días anteriores, con un 4,7 % de acierto de SKU. Tras el cambio son el 2,4 %, y
+aciertan el 16,7 %:
+
+| | Antes (historial congelado) | Después (as-of) |
+| --- | ---: | ---: |
+| `cat_hit_rate@5` | 61,7 % | **67,4 %** (+5,8 pp) |
+| `sku_hit_rate@5` | 49,5 % | **54,9 %** (+5,4 pp) |
+| NDCG@5 | 0,1759 | **0,2028** |
+| Huecos en categorías compradas hace ≤ 7 días (precisión SKU) | 15,6 % (4,7 %) | 2,4 % (16,7 %) |
+| Huecos en categorías compradas hace ≤ 14 días (precisión SKU) | 27,2 % (7,7 %) | 9,9 % (16,3 %) |
+
+En las 6.693 cestas donde el modelo de antes gastaba algún hueco en una categoría repuesta
+hace ≤ 7 días, la precisión de SKU del top-5 pasa del 11,4 % al 15,5 % y el acierto de
+categoría del 56,8 % al 69,6 %. Las cifras las recalculan `python -m
+src.recommender.pipeline` y `python -m src.recommender.verify_recommender_diagnostics`
+(sección "Huecos en categorías recién compradas" de
+[`metrics.md`](reports/recommender/metrics.md)). El modelo de antes está congelado en
+[`baseline_pre_a1.json`](reports/recommender/baseline_pre_a1.json).
+
+Los baselines del diagnóstico también usan el historial as-of, para que la comparación
+sea justa. Con él, "frecuencia personal × `due_for_repurchase`" sube del 65,9 % al
+**67,9 %** de acierto de categoría y pasa a ser el mejor baseline. Sigue **0,5 pp por
+delante** del LambdaRank; antes, el mejor baseline (frecuencia personal, 66,1 %) le sacaba
+4,4 pp. Alinear el objetivo del ranker con la categoría es el punto A4.
+
+La lógica existe en Spark (entrenamiento) y en pandas (demo). Las fórmulas del ciclo de
+reposición se escriben una sola vez ([`formulas.py`](src/recommender/formulas.py)) y las
+usan los dos motores y el ETL de la Tarea 2. Los joins siguen duplicados y los atan
+`tests/test_asof_features.py` y `tests/test_serving_parity.py`.
 
 ### La señal de sesión, que obligó a arreglar el generador
 
@@ -497,10 +541,10 @@ tiene sesión detrás:
 | Sistema | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: |
 | Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0881 | 0,0793 | 27,0 % |
-| LambdaRank sin señal de sesión | 0,1690 | 0,1630 | 48,7 % |
-| **LambdaRank completo** | **0,1759** | **0,1681** | **49,5 %** |
+| LambdaRank sin señal de sesión | 0,1947 | 0,1874 | 53,7 % |
+| **LambdaRank completo** | **0,2028** | **0,1944** | **54,9 %** |
 
-Las tres filas pasan por el mismo re-ranking final. La sesión suma un **+4,1 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
+Las tres filas pasan por el mismo re-ranking final. La sesión suma un **+4,2 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
 historial prediciendo bien la referencia, lo que el cliente mira en la web aporta menos
 información nueva.
 
@@ -511,17 +555,18 @@ cambia es qué fuentes tienen algo que decir.
 
 | Perfil | Cestas | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 521 | 0,1204 | 0,1068 | 37,2 % |
-| 2 · nuevo, con artículos | 421 | 0,0851 | 0,0957 | 21,1 % |
-| 3 · recurrente, carrito vacío | 8.713 | 0,1881 | 0,1591 | 57,4 % |
-| 4 · recurrente, con artículos | 8.345 | 0,1713 | 0,1851 | 43,4 % |
-| **Total** | **18.000** | **0,1759** | **0,1681** | **49,5 %** |
+| 1 · nuevo, carrito vacío | 521 | 0,1289 | 0,1208 | 39,5 % |
+| 2 · nuevo, con artículos | 421 | 0,1021 | 0,1111 | 24,0 % |
+| 3 · recurrente, carrito vacío | 8.713 | 0,2174 | 0,1841 | 62,9 % |
+| 4 · recurrente, con artículos | 8.345 | 0,1973 | 0,2140 | 49,0 % |
+| **Total** | **18.000** | **0,2028** | **0,1944** | **54,9 %** |
 
 El cold-start rinde peor, como se esperaba, pero no se desploma: **el perfil 2 es el peor**
-(NDCG@5 0,0851, un 50 % por debajo del 4). Tiene sentido — es el único que no puede tirar
-ni de historial ni de ALS, y encima su cesta ya va por la mitad, así que lo fácil de
-acertar ya está dentro. Y el perfil 3 es el mejor en `hit_rate` (57,4 %) porque evalúa la
-cesta entera: cinco huecos contra 5,0 productos por adivinar en vez de 2,9.
+(NDCG@5 0,1021, un 48 % por debajo del 4). Tiene sentido — no tiene historial anterior a
+la ventana ni ALS, como mucho las pocas compras que haya hecho desde entonces, y encima su
+cesta ya va por la mitad, así que lo fácil de acertar ya está dentro. Y el perfil 3 es el
+mejor en `hit_rate` (62,9 %) porque evalúa la cesta entera: cinco huecos contra 5,0
+productos por adivinar en vez de 2,9.
 
 ### Categoría frente a SKU
 
@@ -530,11 +575,11 @@ categoría que el cliente sí compró, aunque fuera otra referencia:
 
 | | Acierta la categoría | Acierta el SKU |
 | --- | ---: | ---: |
-| Al menos uno en el top-5 | **61,7 %** | **49,5 %** |
-| Precisión media del top-5 | 17,5 % | 12,9 % |
+| Al menos uno en el top-5 | **67,4 %** | **54,9 %** |
+| Precisión media del top-5 | 20,2 % | 14,8 % |
 
 La distancia entre las dos columnas es la parte del error que está en *elegir la
-referencia* y no en *saber qué categoría toca*. Hoy es pequeña: el 80 % de las cestas que
+referencia* y no en *saber qué categoría toca*. Hoy es pequeña: el 81 % de las cestas que
 aciertan la categoría aciertan también el SKU. **Antes de la Fase 7 era el 23 %**, y esa
 brecha es la historia de la [Fase 7](#fase-7--fidelidad-de-producto).
 
@@ -547,13 +592,13 @@ las listas repetía categoría y el 28,3 % de las listas con carrito tenía alg�
 regalado. Tres *features* de carrito (`cat_in_cart`, `dept_n_in_cart`,
 `dept_share_in_cart`) y un re-ranking final (`src/recommender/rerank.py`, el mismo en la
 evaluación y en la demo) lo dejan en **0 %** y suben el acierto de categoría **+1,5 pp**
-(60,2 % → 61,7 %) sin mover el de SKU. El desglose por variante está en
+(60,2 % → 61,7 %, antes del punto A1) sin mover el de SKU. El desglose por variante está en
 [`metrics.md`](reports/recommender/metrics.md#carrito-y-diversidad-punto-a2).
 
 ### F1@5 frente a Kaggle
 
 Para tener un orden de magnitud externo, el pipeline calcula también Precision@5
-(**0,1285**) y F1@5 (**0,1457**; **0,1370** promediando el F1 de cada cesta) y lo pone al
+(**0,1482**) y F1@5 (**0,1682**; **0,1583** promediando el F1 de cada cesta) y lo pone al
 lado del primer puesto de *Instacart Market Basket Analysis* (F1 ≈ 0,41).
 
 **No es una comparación equivalente**, y el
@@ -572,13 +617,15 @@ recomendación. La tabla que lo resume:
 
 | Perfil | Popularidad | Co-compra SKU | Co-compra categoría | Historial | ALS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 100 % | 0 % | 0 % | 0 % | 0 % |
-| 2 · nuevo, con artículos | 92 % | 20 % | 33 % | 0 % | 0 % |
-| 3 · recurrente, carrito vacío | 57 % | 0 % | 0 % | 99 % | 42 % |
-| 4 · recurrente, con artículos | 56 % | 15 % | 17 % | 98 % | 41 % |
+| 1 · nuevo, carrito vacío | 91 % | 0 % | 0 % | 21 % | 0 % |
+| 2 · nuevo, con artículos | 88 % | 14 % | 29 % | 19 % | 0 % |
+| 3 · recurrente, carrito vacío | 51 % | 0 % | 0 % | 99 % | 39 % |
+| 4 · recurrente, con artículos | 49 % | 12 % | 15 % | 99 % | 38 % |
 
 Con fidelidad de marca, el historial personal está detrás de casi todas las
-recomendaciones a clientes recurrentes (antes, del 42-49 %).
+recomendaciones a clientes recurrentes (antes, del 42-49 %). Desde el punto A1 también
+aparece en los perfiles 1 y 2: son clientes sin compras antes de la ventana, pero con
+alguna dentro de ella antes de la cesta.
 
 ---
 

@@ -22,6 +22,13 @@ MLlib. No hace falta: `candidates_als` solo lo usa para pedir el top-N por clien
 se precalcula ese top-N y se guarda como tabla. El resultado es identico mientras el
 conjunto de clientes no cambie, que es justo el caso de una demo sobre datos fijos.
 
+## Historial del cliente
+
+Desde el punto A1 del diagnostico, las features personales se calculan as-of el dia de
+cada cesta. Por eso no se vuelca un historial ya agregado, sino los eventos de **todas**
+las cestas identificadas (`customer_lines` y `customer_baskets`): la ruta de pandas los
+filtra por fecha en cada query, igual que `src/recommender/history.py`.
+
 ## Que ventana se exporta
 
 La de **test** (`cfg.test_start`), no la del ranker. Es la ventana con la que se midieron
@@ -39,10 +46,12 @@ from pathlib import Path
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from src.etl.repurchase import category_repurchase_days
 from src.etl.schemas import read_processed
 from src.etl.session import get_spark
 from src.recommender import candidates as cand
 from src.recommender import features as feat
+from src.recommender import splits
 from src.recommender.config import REQUIRED_TABLES, RecommenderConfig
 from src.recommender.pipeline import build_window_inputs, fit_sources
 
@@ -54,11 +63,24 @@ BUNDLE_TABLES = (
     "affinity_product",
     "affinity_category",
     "category_leaders",
-    "customer_products",
-    "customer_stats",
-    "repurchase",
     "known_customers",
 )
+
+
+def customer_events(tables: dict[str, DataFrame]) -> tuple[DataFrame, DataFrame]:
+    """Lineas y cabeceras de todas las cestas con cliente, sin corte de fecha.
+
+    El corte lo pone la ruta de serving en cada query (dia estrictamente anterior), asi
+    que aqui no se filtra nada: la demo puede servir cualquier dia del periodo.
+    """
+    baskets = tables["baskets"].filter(F.col("customer_id").isNotNull())
+    lines = tables["basket_items"].select("basket_id", "product_id", "quantity").join(
+        baskets.select("basket_id", "customer_id", "basket_day"), "basket_id"
+    )
+    return (
+        lines.select("customer_id", "basket_id", "basket_day", "product_id", "quantity"),
+        baskets.select("customer_id", "basket_id", "basket_day", "total_amount"),
+    )
 
 
 def _write(df: DataFrame, destination: Path) -> int:
@@ -140,10 +162,23 @@ def run(
     print(f"Ajustando las fuentes con todo el historial anterior a {cfg.test_start}...")
     bundle = fit_sources(tables, cfg.test_start, cfg)
 
+    lines, baskets = customer_events(tables)
+    history_baskets = splits.baskets_before(tables["baskets"], cfg.test_start)
+    extra = {
+        "customer_lines": lines,
+        "customer_baskets": baskets,
+        "category_repurchase_days": category_repurchase_days(tables["products"]),
+        # Ficha del cliente al inicio de la ventana: solo para la interfaz de la demo.
+        "customer_stats": feat.customer_profile(
+            history_baskets, splits.restrict_items(tables["basket_items"], history_baskets)
+        ),
+    }
+
     written: dict[str, int] = {}
-    for name in BUNDLE_TABLES:
-        written[name] = _write(getattr(bundle, name), serving_dir / f"{name}.parquet")
-        print(f"  {name:20} {written[name]:>9,} filas")
+    tables_out = {name: getattr(bundle, name) for name in BUNDLE_TABLES} | extra
+    for name, frame in tables_out.items():
+        written[name] = _write(frame, serving_dir / f"{name}.parquet")
+        print(f"  {name:24} {written[name]:>9,} filas")
 
     written["als_topn"] = _write(
         export_als_topn(bundle, cfg), serving_dir / "als_topn.parquet"

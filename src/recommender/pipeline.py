@@ -10,7 +10,9 @@ El flujo es el de `CHALLENGE.md`, Tarea 3a:
 2. **Ajuste de las fuentes de candidatos** sobre el historial de cada ventana. Se hace
    **dos veces**: una con el historial hasta `fit_end` (para las queries con las que se
    entrena el ranker) y otra con el historial hasta `test_start` (para las de test). Es lo
-   que impide que el ranker aprenda con features que ya contienen la respuesta.
+   que impide que el ranker aprenda con features que ya contienen la respuesta. El
+   historial personal (fuente `hist` y features de cliente) no se congela: se calcula
+   as-of el dia de cada cesta (`history.py`, punto A1).
 3. **Generacion de candidatos** y union del pool.
 4. **Features** del par `(query, candidato)`.
 5. **LambdaRank**, re-ranking final (`rerank.py`) y top-5.
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gc
 import json
 import time
 from dataclasses import dataclass
@@ -35,12 +38,12 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from src import tracking
-from src.etl.repurchase import repurchase_features
 from src.etl.schemas import read_processed
 from src.etl.session import get_spark
 from src.recommender import candidates as cand
 from src.recommender import evaluate as ev
 from src.recommender import features as feat
+from src.recommender import history as hs
 from src.recommender import ranker as rk
 from src.recommender import splits
 from src.recommender.config import REQUIRED_TABLES, RecommenderConfig, RerankConfig
@@ -59,6 +62,10 @@ BASELINE_FILENAME = "baseline_fase3.json"
 # Metricas del LambdaRank antes del punto A2 (sin features de carrito ni re-ranking),
 # congeladas por `verify_recommender_diagnostics --freeze` en la Sesion 1.
 PRE_A2_FILENAME = "baseline_pre_diagnostico.json"
+
+# Metricas del LambdaRank antes del punto A1 (historial congelado al inicio de la
+# ventana), congeladas por `verify_recommender_diagnostics --freeze --snapshot ...`.
+PRE_A1_FILENAME = "baseline_pre_a1.json"
 
 # La seccion de baselines y techo teorico de `metrics.md` la escribe
 # `verify_recommender_diagnostics.py`, no este orquestador. Va entre estas marcas para
@@ -105,13 +112,27 @@ class SourceBundle:
     affinity_product: DataFrame
     affinity_category: DataFrame
     category_leaders: DataFrame
+    # Foto cliente x producto de la ventana: solo la usa el ALS. Las features personales
+    # se calculan as-of en `build_window`.
     customer_products: DataFrame
-    customer_stats: DataFrame
-    repurchase: DataFrame
     known_customers: DataFrame
     als_model: object
     als_customer_index: DataFrame
     als_product_index: DataFrame
+
+    def unpersist(self) -> None:
+        """Suelta las caches de la ventana cuando ya no se van a usar."""
+        for frame in (
+            self.popularity,
+            self.affinity_product,
+            self.affinity_category,
+            self.category_leaders,
+            self.customer_products,
+            self.known_customers,
+            self.als_customer_index,
+            self.als_product_index,
+        ):
+            frame.unpersist()
 
 
 def fit_sources(
@@ -131,14 +152,6 @@ def fit_sources(
         popularity, tables["products"], cfg=cfg.candidates
     ).cache()
     customer_products = cand.fit_customer_products(history_baskets, history_items).cache()
-    customer_stats = feat.customer_profile(history_baskets, history_items).cache()
-    repurchase = repurchase_features(
-        history_items,
-        history_baskets,
-        tables["products"],
-        tables["customers"],
-        reference_date=feat.default_reference_date(window_start),
-    ).cache()
     known = splits.known_customers(history_baskets).cache()
 
     # Materializar aqui evita que cada fuente se recalcule en cada accion posterior.
@@ -148,8 +161,6 @@ def fit_sources(
         affinity_category,
         category_leaders,
         customer_products,
-        customer_stats,
-        repurchase,
         known,
     ):
         df.count()
@@ -163,8 +174,6 @@ def fit_sources(
         affinity_category=affinity_category,
         category_leaders=category_leaders,
         customer_products=customer_products,
-        customer_stats=customer_stats,
-        repurchase=repurchase,
         known_customers=known,
         als_model=als_model,
         als_customer_index=als_customers,
@@ -249,15 +258,26 @@ def build_window(
     """Construye las queries de una ventana, su matriz de features y su contexto.
 
     Returns:
-        `(queries, feature_matrix, context)`, donde `context` es una fila por producto de
-        cada cesta con `role` = `prefix` (lo que el cliente ya llevaba) o `target` (lo que
-        habia que adivinar). Es lo que hace legible la demo de los cuatro perfiles.
+        `(queries, feature_matrix, context, history)`, donde `context` es una fila por
+        producto de cada cesta con `role` = `prefix` (lo que el cliente ya llevaba) o
+        `target` (lo que habia que adivinar), y `history` el historial as-of cacheado, que
+        el llamador suelta (`history.unpersist()`) cuando ya ha recogido la matriz.
     """
     win = build_window_inputs(
         tables, bundle, start=start, end=end, n_queries=n_queries, salt=salt
     )
     queries, prefix, target = win.queries, win.prefix, win.target
     session_product, session_query, cart = win.session_product, win.session_query, win.cart
+
+    # Historial personal de cada query al dia de su cesta, con todas las cestas del
+    # cliente anteriores a ese dia, tambien las de dentro de la ventana (punto A1).
+    history = hs.asof_history(
+        queries,
+        tables["baskets"],
+        tables["basket_items"],
+        tables["products"],
+        tables["customers"],
+    ).cache()
 
     sources = {
         "pop": cand.candidates_popularity(queries, bundle.popularity, cfg=cfg.candidates),
@@ -272,11 +292,7 @@ def build_window(
             cfg=cfg.candidates,
         ),
         "hist": cand.candidates_personal(
-            queries,
-            bundle.customer_products,
-            bundle.repurchase,
-            tables["products"],
-            cfg=cfg.candidates,
+            queries, history, tables["products"], cfg=cfg.candidates
         ),
         "als": cand.candidates_als(
             queries,
@@ -293,9 +309,7 @@ def build_window(
         queries,
         products=products_indexed,
         popularity=bundle.popularity,
-        customer_products=bundle.customer_products,
-        customer_stats=bundle.customer_stats,
-        repurchase=bundle.repurchase,
+        history=history,
         customers=tables["customers"],
         promotions=tables["promotions"],
         session_product=session_product,
@@ -306,7 +320,7 @@ def build_window(
     context = prefix.select("basket_id", "product_id", F.lit("prefix").alias("role")).unionByName(
         target.select("basket_id", "product_id", F.lit("target").alias("role"))
     )
-    return queries, matrix, context
+    return queries, matrix, context, history
 
 
 def cart_rerank_variants(served: RerankConfig) -> list[tuple[str, str, str, RerankConfig]]:
@@ -409,7 +423,7 @@ def run(
     timer.step(f"Fuentes de candidatos ajustadas hasta {cfg.fit_end}")
 
     n_rank = cfg.n_train_queries + cfg.n_valid_queries
-    rank_queries, rank_matrix, _ = build_window(
+    rank_queries, rank_matrix, _, rank_history = build_window(
         tables,
         train_bundle,
         start=cfg.fit_end,
@@ -421,6 +435,7 @@ def run(
     )
     rank_pdf = rk.collect_for_ranking(rank_matrix)
     timer.step(f"Matriz del ranker: {len(rank_pdf):,} filas / {rank_queries.count():,} queries")
+    rank_history.unpersist()
 
     # Train y validacion se separan tambien por cesta: una cesta entera cae a un lado.
     baskets_sorted = sorted(rank_pdf["basket_id"].unique())
@@ -449,11 +464,19 @@ def run(
     )
     timer.step("Ablacion sin features de carrito")
 
+    # La ventana del ranker ya no se usa: soltar sus matrices y caches antes de construir
+    # la de test, que es la que marca el pico de memoria.
+    n_train_queries = int(train_pdf["basket_id"].nunique())
+    del train_pdf, valid_pdf
+    gc.collect()
+    rank_queries.unpersist()
+    train_bundle.unpersist()
+
     # --- Ventana de test: fuentes rehechas con todo lo anterior a `test_start` ---
     test_bundle = fit_sources(tables, cfg.test_start, cfg)
     timer.step(f"Fuentes de candidatos ajustadas hasta {cfg.test_start}")
 
-    test_queries, test_matrix, test_context = build_window(
+    test_queries, test_matrix, test_context, test_history = build_window(
         tables,
         test_bundle,
         start=cfg.test_start,
@@ -464,6 +487,7 @@ def run(
         products_indexed=products_indexed,
     )
     test_pdf = rk.collect_for_ranking(test_matrix)
+    test_history.unpersist()
     test_q = _queries_to_pandas(test_queries)
     timer.step(f"Matriz de test: {len(test_pdf):,} filas / {len(test_q):,} queries")
 
@@ -531,7 +555,7 @@ def run(
         "recommendations": recommendations,
         "valid_ndcg": float(evals["valid"][f"ndcg@{cfg.top_k}"][booster.best_iteration - 1]),
         "n_test_queries": int(len(test_q)),
-        "n_train_queries": int(train_pdf["basket_id"].nunique()),
+        "n_train_queries": n_train_queries,
         "test_queries": test_q,
     }
 
@@ -697,6 +721,54 @@ def _rerank_label(rules: RerankConfig) -> str:
     return ", ".join(parts) if parts else "sin re-ranking"
 
 
+def _asof_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
+    """Antes/despues del punto A1: historial personal as-of el dia de cada cesta."""
+    path = Path(cfg.reports_dir) / PRE_A1_FILENAME
+    if not path.is_file():
+        return ""
+    snap = json.loads(path.read_text(encoding="utf-8"))
+    old_sku = pd.DataFrame(snap["metrics"]["summary"]).set_index("grupo")
+    old_cat = pd.DataFrame(snap["metrics"]["by_category"]).set_index("grupo")
+    new_sku = result["summary"].set_index("grupo")  # type: ignore[union-attr]
+    new_cat = result["by_category"].set_index("grupo")  # type: ignore[union-attr]
+
+    lines = [
+        f"| Grupo | cat_hit_rate@{k} antes | despues | cambio | sku_hit_rate@{k} antes "
+        f"| despues | cambio | NDCG@{k} antes | despues |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for group in new_cat.index:
+        if group not in old_cat.index:
+            continue
+        c0, c1 = old_cat.loc[group, f"cat_hit_rate@{k}"], new_cat.loc[group, f"cat_hit_rate@{k}"]
+        s0, s1 = old_cat.loc[group, f"sku_hit_rate@{k}"], new_cat.loc[group, f"sku_hit_rate@{k}"]
+        n0, n1 = old_sku.loc[group, f"ndcg@{k}"], new_sku.loc[group, f"ndcg@{k}"]
+        lines.append(
+            f"| {group} | {c0:.4f} | {c1:.4f} | {(c1 - c0) * 100:+.2f} pp | {s0:.4f} "
+            f"| {s1:.4f} | {(s1 - s0) * 100:+.2f} pp | {n0:.4f} | {n1:.4f} |"
+        )
+    return "\n".join(
+        [
+            "## Historial al dia de la cesta (punto A1)",
+            "",
+            "Las features de cliente x producto, cliente x categoria y cliente, y la fuente "
+            "`hist` con su `due_for_repurchase`, se calculan con todas las cestas del "
+            "cliente anteriores al dia de cada query (`src/recommender/history.py`), "
+            "tambien las de dentro de la ventana. ALS, popularidad, afinidades y el perfil "
+            "siguen congelados al inicio de cada ventana.",
+            "",
+            f"\"Antes\" es el modelo con el historial congelado al inicio de la ventana "
+            f"(`{Path(cfg.reports_dir).as_posix()}/{PRE_A1_FILENAME}`, {snap['congelado']}, "
+            f"commit `{(snap['commit'] or '?')[:7]}`), sobre las mismas queries de test.",
+            "",
+            *lines,
+            "",
+            "El detalle de los huecos que caian en categorias recien repuestas esta en la "
+            "seccion de diagnostico (`verify_recommender_diagnostics`).",
+        ]
+    )
+
+
 def _cart_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
     """Antes/despues del punto A2: features de carrito y re-ranking final."""
     table: pd.DataFrame = result["cart_ablation"]  # type: ignore[assignment]
@@ -846,6 +918,8 @@ referencia concreta fuera otra.
 
 {_sku_category_paragraph(result['by_category'].iloc[0], k)}
 
+{_asof_section(cfg, result, k)}
+
 {_cart_section(cfg, result, k)}
 
 {_kaggle_section(summary, k)}
@@ -901,6 +975,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reports", type=Path, default=Path("reports/recommender"))
     parser.add_argument("--no-write", action="store_true", help="No guardar nada en disco.")
     parser.add_argument(
+        "--driver-memory",
+        default="6g",
+        help="Memoria del driver de Spark (ver el comentario de `main`).",
+    )
+    parser.add_argument(
         "--quick",
         action="store_true",
         help="Muestra reducida de queries: sirve para comprobar que el flujo corre.",
@@ -925,7 +1004,7 @@ def main(argv: list[str] | None = None) -> None:
     # auto-union del calculo de afinidad: la etapa pasa de 4 minutos a mas de 15. El pico
     # de memoria del driver de Python ya no compite, porque `collect_for_ranking` recoge en
     # float32 por Arrow en vez de dejar que pandas consolide en float64.
-    spark = get_spark("grocery-retail-recommender", driver_memory="6g")
+    spark = get_spark("grocery-retail-recommender", driver_memory=args.driver_memory)
     try:
         result = run(spark, cfg, write=not args.no_write)
         k = cfg.top_k

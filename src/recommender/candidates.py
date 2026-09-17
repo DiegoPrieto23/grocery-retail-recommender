@@ -12,15 +12,16 @@ ranker de la Fase 3b es quien decide como pesarlas:
 | `pop` | Popularidad reciente x indice estacional del mes | los cuatro (es el respaldo) |
 | `aff` | `affinity_product`: co-compra a nivel de SKU | 2 y 4 (hace falta carrito) |
 | `cataff` | `affinity_category` + los mas vendidos de la categoria | 2 y 4, y llega donde `aff` no llega |
-| `hist` | Historial del cliente + `due_for_repurchase` | 3 y 4 (hace falta historial) |
+| `hist` | Historial del cliente al dia de la cesta + `due_for_repurchase` | 3 y 4 (hace falta historial) |
 | `als` | ALS implicito de Spark MLlib sobre cliente x producto | 3 y 4 |
 
 Un cliente nuevo con el carrito vacio (perfil 1) solo activa `pop`; uno recurrente a media
 compra (perfil 4) activa las cinco. Es exactamente lo que dice `CHALLENGE.md`: **lo que
 cambia entre perfiles es que fuentes tienen senal, no el ranker**.
 
-Todas las fuentes se ajustan sobre el historial **anterior** a la ventana que se va a
-predecir (ver `config.py`), asi que ninguna ve la cesta que tiene que adivinar.
+Las fuentes se ajustan sobre el historial **anterior** a la ventana que se va a predecir
+(ver `config.py`), salvo `hist`, que usa el historial del cliente hasta el dia anterior a
+cada cesta (`history.py`, punto A1). Ninguna ve la cesta que tiene que adivinar.
 """
 
 from __future__ import annotations
@@ -31,7 +32,10 @@ from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 from src.etl.affinity import cooccurrence_affinity
+from src.recommender import formulas as fx
 from src.recommender.config import ALSConfig, CandidateConfig
+from src.recommender.formulas_spark import SPARK_OPS
+from src.recommender.history import AsOfHistory, with_repurchase_state
 # Definidos en `schema` para que la demo (pandas, sin Spark) use las mismas columnas.
 from src.recommender.schema import SOURCE_COLUMNS, SOURCE_NAMES
 
@@ -256,7 +260,11 @@ def candidates_affinity_category(
 # Fuente 4 - historial personal y recompra
 # --------------------------------------------------------------------------------------
 def fit_customer_products(history_baskets: DataFrame, history_items: DataFrame) -> DataFrame:
-    """Que ha comprado cada cliente, cuantas veces y cuando por ultima vez."""
+    """Que ha comprado cada cliente, cuantas veces y cuando por ultima vez.
+
+    Es la foto de la ventana: la usa el ALS, que se reentrena por ventana. Las features y
+    la fuente `hist` usan en cambio el historial as-of de cada cesta (`history.py`).
+    """
     return (
         history_items.select("basket_id", "product_id", "quantity")
         .join(
@@ -276,43 +284,35 @@ def fit_customer_products(history_baskets: DataFrame, history_items: DataFrame) 
 
 def candidates_personal(
     queries: DataFrame,
-    customer_products: DataFrame,
-    repurchase: DataFrame,
+    history: AsOfHistory,
     products: DataFrame,
     *,
     cfg: CandidateConfig,
 ) -> DataFrame:
     """Lo que el cliente ya compra, priorizando lo que ademas "toca" reponer.
 
-    El orden mezcla frecuencia y ciclo de reposicion (`due_for_repurchase` de la Tarea 2):
-    un producto que se compra mucho pero se acaba de comprar cede su sitio a otro que se
-    compra menos pero lleva dos ciclos sin caer. Es la fuente que da sentido al perfil 3
-    (cliente recurrente con el carrito vacio), donde no hay nada mas de lo que tirar.
+    El orden mezcla frecuencia y ciclo de reposicion (`due_for_repurchase` de la Tarea 2,
+    `formulas.personal_score`): un producto que se compra mucho pero se acaba de comprar
+    cede su sitio a otro que se compra menos pero lleva dos ciclos sin caer. Es la fuente
+    que da sentido al perfil 3 (cliente recurrente con el carrito vacio), donde no hay
+    nada mas de lo que tirar.
+
+    El historial y el estado del ciclo son los del dia de la cesta (`history.py`, punto
+    A1): lo que el cliente repuso la semana pasada ya no aparece como vencido.
     """
-    due = repurchase.select(
-        "customer_id",
-        "category",
-        F.col("due_for_repurchase").cast("double").alias("cat_due"),
-        F.col("overdue_ratio").alias("cat_overdue_ratio"),
+    scoped = (
+        queries.select("basket_id", "basket_day")
+        .join(history.products, "basket_id")
+        .join(F.broadcast(products.select("product_id", "category")), "product_id")
+        .join(history.categories, ["basket_id", "category"], "left")
     )
-
-    per_customer = (
-        customer_products.join(F.broadcast(products.select("product_id", "category")), "product_id")
-        .join(due, ["customer_id", "category"], "left")
-        .withColumn("cat_due", F.coalesce(F.col("cat_due"), F.lit(0.0)))
-    )
-
-    scoped = queries.select("basket_id", "customer_id", "basket_day").filter(
-        F.col("customer_id").isNotNull()
-    ).join(per_customer, "customer_id")
-
-    scored = scoped.withColumn(
+    scored = with_repurchase_state(scoped).withColumn(
         "hist_days_since", F.datediff(F.col("basket_day"), F.col("hist_last_day"))
     ).withColumn(
-        # Frecuencia como base, y un empujon a lo que ya cumplio su ciclo.
         "_score",
-        F.col("hist_n_baskets") * (F.lit(1.0) + F.col("cat_due"))
-        + F.coalesce(F.col("cat_overdue_ratio"), F.lit(0.0)),
+        fx.personal_score(
+            F.col("hist_n_baskets"), F.col("cat_due"), F.col("cat_overdue_ratio"), SPARK_OPS
+        ),
     )
     ranked = Window.partitionBy("basket_id").orderBy(
         F.col("_score").desc(), F.col("hist_days_since").asc(), F.col("product_id").asc()
