@@ -541,6 +541,81 @@ def _apply_promo_uplift(
     return pw, promo_of
 
 
+def _product_choice_weights(
+    pop: np.ndarray,
+    idxs: np.ndarray,
+    pref_i: int,
+    loyalty_j: float,
+    active: list[tuple[int, int]] | None,
+) -> tuple[np.ndarray, dict[int, int]]:
+    """Pesos de cada referencia de una categoria: fidelidad de marca y luego promocion.
+
+    Es el camino "lento" de la eleccion de producto de `_generate_baskets_and_items` (el
+    rapido, sin habito ni promocion, usa directamente la popularidad). Vive aparte para
+    que `OracleRecorder` calcule la probabilidad real de cada SKU con la misma cuenta
+    que usa el sorteo.
+    """
+    pw = pop[idxs].astype(np.float64)
+    if pref_i >= 0:
+        local = int(np.searchsorted(idxs, pref_i))
+        rest = pw.sum() - pw[local]
+        if rest > 0:
+            pw = pw / rest * (1.0 - loyalty_j)
+            pw[local] = loyalty_j
+    if active:
+        return _apply_promo_uplift(pw, idxs, active)
+    return pw, {}
+
+
+@dataclass
+class OracleRecorder:
+    """Registra, sin consumir aleatoriedad, la probabilidad real de cada cesta (punto A6).
+
+    Para cada cesta con `day >= from_day` guarda el vector de pesos de categoria **justo
+    antes del primer sorteo** (afinidad x estacionalidad x ciclo de reposicion, con los
+    gates ya aplicados) y, por categoria, la referencia mas probable y su probabilidad si
+    esa categoria sale. Es la informacion privilegiada del generador: con ella se calcula
+    el oraculo bayesiano, el techo teorico contra el que se mide el recomendador
+    (`src/recommender/oracle.py`).
+
+    No toca ningun generador aleatorio ni el estado del bucle, asi que el dataset sale
+    identico byte a byte con o sin registrador (lo fija un test). Nunca se escribe en
+    `data/raw`: lo vuelca `data_generation/export_oracle.py`.
+    """
+
+    from_day: int
+    basket_index: list[int] = field(default_factory=list)
+    weights: list[np.ndarray] = field(default_factory=list)
+    best_product: list[np.ndarray] = field(default_factory=list)
+    best_prob: list[np.ndarray] = field(default_factory=list)
+
+    def record(
+        self,
+        b: int,
+        w: np.ndarray,
+        ci: int,
+        preferred: np.ndarray,
+        loyalty: np.ndarray,
+        pop: np.ndarray,
+        cat_products: list[np.ndarray],
+        day_promos: dict[int, list[tuple[int, int]]],
+    ) -> None:
+        n_cat = w.size
+        best = np.full(n_cat, -1, dtype=np.int32)
+        prob = np.zeros(n_cat, dtype=np.float32)
+        for j in np.flatnonzero(w > 0):
+            idxs = cat_products[j]
+            pref_i = int(preferred[ci, j]) if ci >= 0 else -1
+            pw, _ = _product_choice_weights(pop, idxs, pref_i, loyalty[j], day_promos.get(j))
+            top = int(np.argmax(pw))
+            best[j] = idxs[top]
+            prob[j] = pw[top] / pw.sum()
+        self.basket_index.append(b)
+        self.weights.append(w.astype(np.float64))
+        self.best_product.append(best)
+        self.best_prob.append(prob)
+
+
 def _generate_baskets_and_items(
     cfg: GeneratorConfig,
     cal: Calendar,
@@ -549,6 +624,7 @@ def _generate_baskets_and_items(
     promotions: pd.DataFrame,
     rng_dates: np.random.Generator,
     rng_items: np.random.Generator,
+    oracle: OracleRecorder | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray]:
     """Construye `baskets` y `basket_items` aplicando todas las reglas de negocio.
 
@@ -573,6 +649,9 @@ def _generate_baskets_and_items(
 
     Las cestas se procesan en orden cronologico porque el punto 3 depende de la compra
     anterior del mismo cliente.
+
+    Con `oracle`, ademas, se registran los pesos de cada cesta a partir de
+    `oracle.from_day` (ver `OracleRecorder`); el dataset no cambia.
     """
     n_cat = len(cat.CATEGORIES)
     cust_idx, day, spend, last_active = _generate_basket_dates(cfg, cal, customers, rng_dates)
@@ -671,6 +750,8 @@ def _generate_baskets_and_items(
             w *= np.where(ld < 0, 1.0, mult)
 
         day_promos = promos_by_day[d]
+        if oracle is not None and d >= oracle.from_day:
+            oracle.record(b, w, ci, preferred, loyalty, pop, cat_products, day_promos)
         k = int(n_items[b])
         n_picked = 0
         for _ in range(k):
@@ -697,17 +778,7 @@ def _generate_baskets_and_items(
                 pcum = cat_cumw[j]
                 promo_of = {}
             else:
-                pw = pop[idxs].astype(np.float64)
-                if pref_i >= 0:
-                    local = int(np.searchsorted(idxs, pref_i))
-                    rest = pw.sum() - pw[local]
-                    if rest > 0:
-                        pw = pw / rest * (1.0 - loyalty[j])
-                        pw[local] = loyalty[j]
-                if active:
-                    pw, promo_of = _apply_promo_uplift(pw, idxs, active)
-                else:
-                    promo_of = {}
+                pw, promo_of = _product_choice_weights(pop, idxs, pref_i, loyalty[j], active)
                 pcum = np.cumsum(pw)
             pi = int(np.searchsorted(pcum, u_prod[slot] * pcum[-1]))
             prod_i = int(idxs[min(pi, idxs.size - 1)])
@@ -1338,8 +1409,15 @@ def _write_data_dictionary(
 # --------------------------------------------------------------------------------------
 # Orquestacion
 # --------------------------------------------------------------------------------------
-def generate(cfg: GeneratorConfig | None = None) -> dict[str, pd.DataFrame]:
+def generate(
+    cfg: GeneratorConfig | None = None, oracle: OracleRecorder | None = None
+) -> dict[str, pd.DataFrame]:
     """Genera el dataset completo y lo escribe en `cfg.out_dir`.
+
+    Args:
+        cfg: Volumenes y semilla.
+        oracle: Registrador opcional de las probabilidades reales de cada cesta (ver
+            `OracleRecorder`). No cambia ni un byte del dataset.
 
     Returns:
         Las 7 tablas ya con el orden de columnas de DATA_SPEC.md.
@@ -1353,7 +1431,14 @@ def generate(cfg: GeneratorConfig | None = None) -> dict[str, pd.DataFrame]:
     promotions = _generate_promotions(cfg, cal, products, rngs["promotions"])
 
     baskets, basket_items, _last_active = _generate_baskets_and_items(
-        cfg, cal, customers, products, promotions, rngs["basket_dates"], rngs["basket_items"]
+        cfg,
+        cal,
+        customers,
+        products,
+        promotions,
+        rngs["basket_dates"],
+        rngs["basket_items"],
+        oracle=oracle,
     )
     sessions, session_events = _generate_sessions(
         cfg, cal, customers, products, baskets, basket_items, rngs["sessions"]

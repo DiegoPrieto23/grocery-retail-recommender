@@ -59,13 +59,15 @@ python -m data_generation.verify_dataset              # comprueba los patrones i
 python -m src.etl.run_etl                             # ~4 min  → data/processed/ + reports/etl/
 python -m src.recommender.pipeline                    # ~23 min → models/ + predictions/ + reports/recommender/
 python -m src.recommender.demo_profiles               # los 4 perfiles, con un caso de cada uno
+python -m data_generation.export_oracle               # ~3 min  → data/oracle/ (probabilidades reales de las cestas de test)
+python -m src.recommender.verify_recommender_diagnostics  # ~3 min → baselines + techo teórico en reports/recommender/
 python -m src.nba.pipeline                            # ~6 min  → models/ + predictions/ + reports/nba/
 python -m src.impact.pipeline                         # ~5 s    → IMPACT.md + reports/impact/
 python -m src.eda.findings                            # ~1 min  → reports/insights/ (informe + 8 figuras)
 python -m src.serving.export_bundle                   # fuentes de candidatos para servir sin Spark → data/serving/
 python -m src.catalog.build_assets --offline          # mapeo producto → foto (las fotos ya están en assets/)
 streamlit run streamlit_app.py                        # la demo, en http://localhost:8501
-pytest                                                # 323 tests
+pytest                                                # 344 tests
 ```
 
 El dataset **no se versiona** (`data/` está en `.gitignore`): se regenera con la semilla
@@ -89,6 +91,7 @@ grocery-retail-recommender/
 ├── data_generation/          # FASE 1 — el dataset no se descarga, se genera
 │   ├── catalog.py            #   parametrización de dominio: 62 categorías, lealtad, afinidad, estacionalidad
 │   ├── generate_dataset.py   #   las 7 tablas + los defectos de calidad deliberados
+│   ├── export_oracle.py      #   probabilidades reales de las cestas de test, para el oráculo (fuera de data/raw)
 │   └── verify_dataset.py     #   recalcula desde los CSV cada patrón que dice haber inyectado
 ├── src/
 │   ├── etl/                  # FASE 2 — PySpark
@@ -109,8 +112,10 @@ grocery-retail-recommender/
 │   │   ├── candidates.py     #   popularidad, co-compra (SKU y categoría), historial, ALS
 │   │   ├── features.py       #   54 features del par (query, candidato)
 │   │   ├── ranker.py         #   LightGBM LambdaRank
-│   │   ├── evaluate.py       #   NDCG@5, Recall@5, Precision@5, F1@5 y el desglose SKU / categoría
+│   │   ├── evaluate.py       #   NDCG@5, Recall@5, Precision@5, F1@5, desglose SKU / categoría y baselines
+│   │   ├── oracle.py         #   oráculo bayesiano: el techo teórico con los pesos reales del generador
 │   │   ├── pipeline.py       #   orquestador
+│   │   ├── verify_recommender_diagnostics.py  # baselines + techo teórico, reproducibles (diagnóstico A3/A6/M8)
 │   │   └── demo_profiles.py  #   un caso legible de cada perfil
 │   ├── nba/                  # FASE 4 — propensión + política
 │   │   ├── config.py         #   cortes, catálogo de acciones y TODOS los supuestos
@@ -132,9 +137,9 @@ grocery-retail-recommender/
 ├── streamlit_app.py          # FASE 6b — la demo (solo dibuja; la lógica está en src/)
 ├── assets/                   # FASE 6a — 60 fotos + el mapeo producto → foto (versionados)
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 323 tests
+├── tests/                    # 344 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
-├── reports/recommender/      # métricas de la Fase 3, demo de los 4 perfiles y la referencia pre-Fase 7
+├── reports/recommender/      # métricas de la Fase 3, demo de los 4 perfiles, baselines/techo y las referencias congeladas
 ├── reports/nba/              # métricas de la Fase 4, barridos de sensibilidad y la referencia pre-Fase 7
 ├── reports/impact/           # el detalle numérico de IMPACT.md
 ├── reports/insights/         # informe de hallazgos de negocio + sus 8 figuras

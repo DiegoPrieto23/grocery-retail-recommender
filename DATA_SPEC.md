@@ -351,6 +351,34 @@ por producto, que es lo que consumirá el generador de candidatos de la Fase 3.
 El par se guarda en las dos direcciones: `support`, `lift` y `jaccard` son simétricos,
 `confidence` no.
 
+## Oráculo del recomendador (`data/oracle/`, fuera del dataset)
+
+No es una tabla del dataset: es información privilegiada que solo conoce el generador y
+que ningún sistema real tendría. La escribe `python -m data_generation.export_oracle` y la
+lee únicamente `src/recommender/oracle.py`, para calcular el techo teórico del
+recomendador (punto A6 de `docs/diagnostico-fase7.md`). Vive fuera de `data/raw` y fuera
+de git para que ninguna feature pueda leerla por error.
+
+El exportador vuelve a ejecutar el generador con un registrador que no consume
+aleatoriedad y comprueba que los sha256 de las 7 tablas coinciden con
+`data/raw/manifest.json` antes de escribir nada: el dataset sale idéntico byte a byte con
+o sin registrador.
+
+`category_weights.parquet` — una fila por cesta con fecha `>= 2025-11-01` (la ventana de
+test) y categoría con peso > 0:
+
+| Columna | Tipo | Notas |
+| --- | --- | --- |
+| `basket_id` | string | FK a `baskets` |
+| `category` | string | Nombre canónico del catálogo (el de `data/processed`) |
+| `weight` | double | Peso de la categoría antes del primer sorteo de la cesta: afinidad del cliente × estacionalidad × ciclo de reposición, con los gates de hogar. Sin normalizar |
+| `best_product_id` | string | Referencia más probable de la categoría en esa cesta (fidelidad de marca y promociones del día) |
+| `best_product_prob` | double | Probabilidad de esa referencia si la categoría sale |
+
+`manifest.json` guarda la semilla, la escala, la fecha de corte, el orden de las
+categorías, los pares de afinidad con el lift **aplicado** y los hashes contra los que se
+validó.
+
 ## Modelo dimensional para Power BI (Fase 5)
 
 Star schema exportado a `reports/powerbi/` (Parquet o CSV) para que el proyecto Power BI lo

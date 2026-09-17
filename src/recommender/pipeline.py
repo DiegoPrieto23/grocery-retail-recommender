@@ -55,6 +55,28 @@ INSTACART_TOP_F1 = 0.41
 # de la Fase 7c se recalcule en cada ejecucion en vez de copiarse a mano.
 BASELINE_FILENAME = "baseline_fase3.json"
 
+# La seccion de baselines y techo teorico de `metrics.md` la escribe
+# `verify_recommender_diagnostics.py`, no este orquestador. Va entre estas marcas para
+# que reentrenar no la borre (queda visible hasta que se vuelva a verificar).
+DIAGNOSTICS_START = "<!-- diagnostics:start -->"
+DIAGNOSTICS_END = "<!-- diagnostics:end -->"
+
+
+def extract_diagnostics(text: str) -> str:
+    """El bloque de diagnostico de un `metrics.md`, marcas incluidas; vacio si no hay."""
+    start, end = text.find(DIAGNOSTICS_START), text.find(DIAGNOSTICS_END)
+    if start < 0 or end < start:
+        return ""
+    return text[start : end + len(DIAGNOSTICS_END)]
+
+
+def with_diagnostics(text: str, block: str) -> str:
+    """Sustituye (o anade al final) el bloque de diagnostico de un `metrics.md`."""
+    current = extract_diagnostics(text)
+    if current:
+        return text.replace(current, block)
+    return text.rstrip("\n") + "\n\n" + block + "\n" if block else text
+
 
 class _Timer:
     """Cronometro de etapas, igual que en el ETL de la Fase 2."""
@@ -633,7 +655,9 @@ Importancia por ganancia, las {len(result['feature_importance'])} primeras.
 
 {_table(result['feature_importance'])}
 """
-    (reports / "metrics.md").write_text(text, encoding="utf-8")
+    metrics_md = reports / "metrics.md"
+    previous = metrics_md.read_text(encoding="utf-8") if metrics_md.is_file() else ""
+    metrics_md.write_text(with_diagnostics(text, extract_diagnostics(previous)), encoding="utf-8")
 
     payload = {
         "fit_end": str(cfg.fit_end),

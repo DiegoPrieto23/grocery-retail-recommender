@@ -22,10 +22,12 @@ import pytest
 
 from data_generation import catalog as cat
 from data_generation import verify_dataset as vd
+from data_generation.export_oracle import oracle_frame
 from data_generation.generate_dataset import (
     TABLE_COLUMNS,
     TABLE_ORDER,
     GeneratorConfig,
+    OracleRecorder,
     generate,
 )
 from tests.conftest import TEST_SCALE
@@ -233,6 +235,46 @@ def test_semillas_distintas_producen_datos_distintos(tmp_path: Path) -> None:
     a = generate(GeneratorConfig(out_dir=tmp_path / "a", scale=TEST_SCALE, seed=42))
     b = generate(GeneratorConfig(out_dir=tmp_path / "b", scale=TEST_SCALE, seed=7))
     assert not a["basket_items"].equals(b["basket_items"])
+
+
+def test_el_registrador_del_oraculo_no_cambia_el_dataset(
+    tmp_path: Path, dataset_dir: Path
+) -> None:
+    """El oraculo (A6) lee el estado del generador sin tocarlo: mismos bytes con y sin el.
+
+    Ademas, lo registrado tiene que ser coherente con lo que luego sale en el ticket:
+    solo cestas desde `from_day`, y ninguna linea en una categoria con peso 0.
+    """
+    from_date = "2025-11-01"
+    from_day = (pd.Timestamp(from_date) - pd.Timestamp(cat.PERIOD_START)).days
+    recorder = OracleRecorder(from_day=from_day)
+    tables = generate(GeneratorConfig(out_dir=tmp_path, scale=TEST_SCALE), oracle=recorder)
+    for name in TABLE_ORDER:
+        expected = (dataset_dir / f"{name}.csv").read_bytes()
+        assert (tmp_path / f"{name}.csv").read_bytes() == expected, name
+
+    frame = oracle_frame(
+        recorder,
+        tables["baskets"]["basket_id"].to_numpy(),
+        tables["products"]["product_id"].to_numpy(),
+    )
+    baskets = tables["baskets"]
+    test_ids = set(baskets.loc[baskets["basket_date"] >= from_date, "basket_id"])
+    assert set(frame["basket_id"]) == test_ids
+
+    names = {c.name for c in cat.CATEGORIES}
+    assert set(frame["category"]) <= names
+    assert frame["best_product_prob"].between(0, 1).all()
+
+    products = tables["products"].assign(category=lambda d: vd._clean_category(d["category"]))
+    bought = (
+        tables["basket_items"]
+        .loc[lambda d: d["basket_id"].isin(test_ids), ["basket_id", "product_id"]]
+        .merge(products[["product_id", "category"]], on="product_id")[["basket_id", "category"]]
+        .drop_duplicates()
+    )
+    covered = bought.merge(frame[["basket_id", "category"]], on=["basket_id", "category"])
+    assert len(covered) == len(bought)
 
 
 # --------------------------------------------------------------------------------------

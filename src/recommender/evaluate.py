@@ -35,9 +35,14 @@ Dos decisiones que cambian el numero y conviene tener escritas:
 
 Todo se desglosa por los cuatro perfiles de `CHALLENGE.md`, que es donde se ve si el
 sistema aguanta el cold-start o solo funciona con clientes conocidos.
+
+Al final del modulo esta la bateria de **baselines independientes del pool** (punto A3 de
+`docs/diagnostico-fase7.md`), que la lanza `verify_recommender_diagnostics.py`.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -255,3 +260,315 @@ def popularity_baseline(scored: pd.DataFrame) -> pd.Series:
     return (
         scored["prod_pop_recent"].fillna(0.0) * scored["prod_seasonal_index"].fillna(0.0)
     ).astype(float)
+
+
+# --------------------------------------------------------------------------------------
+# Baselines independientes del pool (punto A3 del diagnostico)
+# --------------------------------------------------------------------------------------
+# `popularity_baseline` reordena el mismo pool que el ranker, asi que solo aisla lo que
+# aporta el ranker frente a la primera etapa. Los baselines de abajo construyen su top-k
+# desde cero, con el mismo historial que ve el sistema (todo lo anterior a `test_start`)
+# y sobre las mismas queries. Contestan otra pregunta: si un sistema trivial, sin ningun
+# aprendizaje, recomienda igual o mejor.
+#
+# Reglas comunes, para que las cifras sean comparables entre si:
+#
+# - Ninguno recomienda una categoria que ya esta en el carrito. Por construccion del
+#   generador (una linea por categoria) esos huecos no pueden acertar. El LambdaRank no
+#   aplica esta regla (punto A2), y la tabla lo deja a la vista.
+# - Los baselines de categoria eligen 5 categorias distintas y una referencia en cada
+#   una; los de producto pueden repetir categoria.
+# - Cuando el criterio principal no da para cinco (cliente nuevo, pocas reglas...), se
+#   rellena con la popularidad de categoria (o de SKU en los de producto). Los empates se
+#   deshacen por esa popularidad y despues por identificador, asi que el resultado es
+#   determinista.
+
+BASELINE_LABELS: dict[str, str] = {
+    "random": "Aleatorio",
+    "global_popularity": "Popularidad global (SKU)",
+    "category_popularity": "Popularidad de categoria + referencia lider",
+    "personal_frequency": "Frecuencia personal por categoria + referencia favorita",
+    "personal_due": "Frecuencia personal x due_for_repurchase + referencia favorita",
+    "repeat_favorite": "Repetir las referencias favoritas del cliente",
+    "association_rules": "Reglas de asociacion de categoria + referencia lider",
+}
+
+_NS_PER_DAY = 86_400_000_000_000
+
+
+@dataclass(frozen=True)
+class BaselineInputs:
+    """Lo que necesitan los baselines, ya en pandas y recortado al pasado de la ventana.
+
+    Attributes:
+        queries: `basket_id`, `customer_id` (nulo si es anonimo) y `basket_day`.
+        prefix: `(basket_id, product_id)` de lo que ya lleva el carrito.
+        target: `(basket_id, product_id)` de lo que habia que adivinar.
+        products: Catalogo con `product_id` y `category`.
+        product_popularity: `product_id`, `n_baskets` en la ventana reciente.
+        category_popularity: `category`, `n_baskets` en la ventana reciente.
+        customer_products: `customer_id`, `product_id`, `n_baskets` en el historial.
+        customer_categories: `customer_id`, `category`, `n_purchase_days`,
+            `last_purchase_date` y `expected_repurchase_days` (de
+            `src.etl.repurchase.repurchase_features`).
+        category_rules: `antecedent`, `consequent`, `confidence` y `lift` entre
+            categorias (de `src.etl.affinity.cooccurrence_affinity`).
+    """
+
+    queries: pd.DataFrame
+    prefix: pd.DataFrame
+    target: pd.DataFrame
+    products: pd.DataFrame
+    product_popularity: pd.DataFrame
+    category_popularity: pd.DataFrame
+    customer_products: pd.DataFrame
+    customer_categories: pd.DataFrame
+    category_rules: pd.DataFrame
+
+
+class _Grid:
+    """Indices densos query x categoria y query x producto que comparten los baselines."""
+
+    def __init__(self, data: BaselineInputs) -> None:
+        self.data = data
+        self.basket_ids = data.queries["basket_id"].to_numpy()
+        self.row = pd.Series(np.arange(len(self.basket_ids)), index=self.basket_ids)
+
+        catalog = data.products[["product_id", "category"]].sort_values("product_id")
+        self.product_ids = catalog["product_id"].to_numpy()
+        self.categories = np.array(sorted(catalog["category"].unique()), dtype=object)
+        self.prod_pos = pd.Series(np.arange(len(self.product_ids)), index=self.product_ids)
+        self.cat_pos = pd.Series(np.arange(len(self.categories)), index=self.categories)
+        self.product_cat = self.cat_pos.loc[catalog["category"]].to_numpy()
+
+        self.prefix_cats = np.zeros((len(self.basket_ids), len(self.categories)), dtype=bool)
+        pref = data.prefix.merge(catalog, on="product_id")
+        self.prefix_cats[
+            self.row.loc[pref["basket_id"]].to_numpy(),
+            self.cat_pos.loc[pref["category"]].to_numpy(),
+        ] = True
+
+        self.product_pop = (
+            data.product_popularity.set_index("product_id")["n_baskets"]
+            .reindex(self.product_ids)
+            .fillna(0.0)
+            .to_numpy(dtype=float)
+        )
+        self.category_pop = (
+            data.category_popularity.set_index("category")["n_baskets"]
+            .reindex(self.categories)
+            .fillna(0.0)
+            .to_numpy(dtype=float)
+        )
+        # Referencia lider de cada categoria: la mas vendida en la ventana reciente.
+        leader = (
+            catalog.assign(pop=self.product_pop)
+            .sort_values(["category", "pop", "product_id"], ascending=[True, False, True])
+            .drop_duplicates("category")
+            .set_index("category")["product_id"]
+        )
+        self.category_leader = leader.reindex(self.categories).to_numpy()
+
+    def customer_matrix(
+        self, frame: pd.DataFrame, key: str, positions: pd.Series, value: str, fill: float = 0.0
+    ) -> np.ndarray:
+        """Pasa una tabla `(customer_id, key, value)` a matriz query x `key`."""
+        out = np.full((len(self.basket_ids), len(positions)), fill, dtype=float)
+        known = self.data.queries[["basket_id", "customer_id"]].dropna()
+        joined = known.merge(frame[["customer_id", key, value]], on="customer_id")
+        joined = joined.loc[joined[key].isin(positions.index)]
+        out[
+            self.row.loc[joined["basket_id"]].to_numpy(),
+            positions.loc[joined[key]].to_numpy(),
+        ] = joined[value].to_numpy(dtype=float)
+        return out
+
+    def favorite_reference(self) -> np.ndarray:
+        """Referencia favorita del cliente en cada categoria; la lider si no tiene."""
+        cp = self.data.customer_products.merge(
+            self.data.products[["product_id", "category"]], on="product_id"
+        )
+        cp["prod_pos"] = self.prod_pos.loc[cp["product_id"]].to_numpy()
+        cp["pop"] = self.product_pop[cp["prod_pos"].to_numpy()]
+        fav = cp.sort_values(
+            ["customer_id", "category", "n_baskets", "pop", "product_id"],
+            ascending=[True, True, False, False, True],
+        ).drop_duplicates(["customer_id", "category"])
+        pos = self.customer_matrix(fav, "category", self.cat_pos, "prod_pos", fill=-1.0)
+        pos = pos.astype(int)
+        leader_pos = self.prod_pos.loc[self.category_leader].to_numpy()
+        return self.product_ids[np.where(pos >= 0, pos, leader_pos[None, :])]
+
+    def to_top_k(self, item_ids: np.ndarray, k: int) -> pd.DataFrame:
+        """Matriz (Q, k) de `product_id` (None = hueco vacio) a un top-k con `label`."""
+        frame = pd.DataFrame(
+            {
+                "basket_id": np.repeat(self.basket_ids, k),
+                "product_id": item_ids.reshape(-1),
+                "rank": np.tile(np.arange(1, k + 1), len(self.basket_ids)),
+            }
+        ).dropna(subset=["product_id"])
+        truth = self.data.target[["basket_id", "product_id"]].drop_duplicates().assign(label=1)
+        frame = frame.merge(truth, on=["basket_id", "product_id"], how="left")
+        frame["label"] = frame["label"].fillna(0).astype(int)
+        return frame.sort_values(["basket_id", "rank"]).reset_index(drop=True)
+
+
+def _rank_rows(
+    primary: np.ndarray, secondary: np.ndarray, allowed: np.ndarray, k: int
+) -> np.ndarray:
+    """Las `k` mejores columnas por fila: `primary` desc, `secondary` desc, columna asc.
+
+    Las columnas no permitidas nunca entran; si una fila no tiene `k`, el hueco es -1.
+    """
+    shape = allowed.shape
+    keys = (
+        np.broadcast_to(np.arange(shape[1]), shape),
+        -np.broadcast_to(secondary, shape),
+        -np.broadcast_to(primary, shape),
+        ~allowed,
+    )
+    # `np.lexsort` ordena por la ultima clave primero.
+    order = np.lexsort(keys, axis=1)[:, :k]
+    return np.where(np.take_along_axis(allowed, order, axis=1), order, -1)
+
+
+def _category_lists(
+    grid: _Grid, primary: np.ndarray, reference: np.ndarray, k: int
+) -> pd.DataFrame:
+    """Top-k de categorias distintas fuera del carrito, concretadas en una referencia."""
+    lists = _rank_rows(primary, grid.category_pop, ~grid.prefix_cats, k)
+    ref = np.broadcast_to(reference, grid.prefix_cats.shape)
+    picked = np.take_along_axis(ref, np.maximum(lists, 0), axis=1).astype(object)
+    picked[lists < 0] = None
+    return grid.to_top_k(picked, k)
+
+
+def _product_lists(
+    grid: _Grid, primary: np.ndarray, secondary: np.ndarray, k: int
+) -> pd.DataFrame:
+    """Top-k de productos cuya categoria no esta ya en el carrito."""
+    allowed = ~grid.prefix_cats[:, grid.product_cat]
+    lists = _rank_rows(primary, secondary, allowed, k)
+    picked = grid.product_ids[np.maximum(lists, 0)].astype(object)
+    picked[lists < 0] = None
+    return grid.to_top_k(picked, k)
+
+
+def baseline_random(grid: _Grid, k: int, *, seed: int) -> pd.DataFrame:
+    """Cinco productos al azar (semilla fija) de categorias que no estan en el carrito."""
+    noise = np.random.default_rng(seed).random((len(grid.basket_ids), len(grid.product_ids)))
+    return _product_lists(grid, noise, np.zeros(len(grid.product_ids)), k)
+
+
+def baseline_global_popularity(grid: _Grid, k: int) -> pd.DataFrame:
+    """Los SKU mas vendidos en la ventana reciente: el `ORDER BY ventas DESC`."""
+    return _product_lists(grid, grid.product_pop, np.zeros(len(grid.product_ids)), k)
+
+
+def baseline_category_popularity(grid: _Grid, k: int) -> pd.DataFrame:
+    """Las categorias mas vendidas, cada una con su referencia lider."""
+    return _category_lists(grid, np.zeros(len(grid.categories)), grid.category_leader, k)
+
+
+def _personal_category_frequency(grid: _Grid) -> np.ndarray:
+    return grid.customer_matrix(
+        grid.data.customer_categories, "category", grid.cat_pos, "n_purchase_days"
+    )
+
+
+def baseline_personal_frequency(grid: _Grid, k: int, favorite: np.ndarray) -> pd.DataFrame:
+    """Las categorias que el cliente compra en mas dias distintos, con su referencia favorita."""
+    return _category_lists(grid, _personal_category_frequency(grid), favorite, k)
+
+
+def baseline_personal_due(grid: _Grid, k: int, favorite: np.ndarray) -> pd.DataFrame:
+    """Frecuencia personal, duplicada en las categorias a las que ya les toca reponer.
+
+    `due` se evalua el dia de la cesta (`dias desde la ultima compra / intervalo esperado
+    >= 1`), con la ultima compra conocida en `test_start`: el mismo desfase que tienen
+    las features del ranker (punto A1), para que la comparacion sea justa.
+    """
+    cc = grid.data.customer_categories.assign(
+        last_day=lambda d: pd.to_datetime(d["last_purchase_date"]).astype("int64") // _NS_PER_DAY
+    )
+    last = grid.customer_matrix(cc, "category", grid.cat_pos, "last_day", fill=np.nan)
+    expected = grid.customer_matrix(
+        cc, "category", grid.cat_pos, "expected_repurchase_days", fill=np.nan
+    )
+    day = pd.to_datetime(grid.data.queries["basket_day"]).astype("int64").to_numpy()
+    with np.errstate(invalid="ignore"):
+        ratio = (day[:, None] // _NS_PER_DAY - last) / expected
+    due = np.nan_to_num(ratio, nan=0.0) >= 1.0
+    primary = _personal_category_frequency(grid) * (1.0 + due)
+    return _category_lists(grid, primary, favorite, k)
+
+
+def baseline_repeat_favorite(grid: _Grid, k: int) -> pd.DataFrame:
+    """Los SKU que el cliente mas ha comprado; los mas vendidos si no le llegan."""
+    primary = grid.customer_matrix(
+        grid.data.customer_products, "product_id", grid.prod_pos, "n_baskets"
+    )
+    return _product_lists(grid, primary, grid.product_pop, k)
+
+
+def baseline_association_rules(
+    grid: _Grid, k: int, *, min_confidence: float, min_lift: float = 1.0
+) -> pd.DataFrame:
+    """Reglas categoria -> categoria disparadas por el carrito (tipo Apriori).
+
+    Cada categoria candidata puntua con la regla mas confiable cuyo antecedente esta en
+    el carrito, siempre que `confidence >= min_confidence` y `lift > min_lift`. Sin
+    carrito, o sin reglas que pasen el umbral, rellena la popularidad de categoria.
+    """
+    rules = grid.data.category_rules
+    rules = rules.loc[
+        (rules["confidence"] >= min_confidence)
+        & (rules["lift"] > min_lift)
+        & rules["antecedent"].isin(grid.cat_pos.index)
+        & rules["consequent"].isin(grid.cat_pos.index)
+    ]
+    n = len(grid.categories)
+    conf = np.zeros((n, n))
+    conf[
+        grid.cat_pos.loc[rules["antecedent"]].to_numpy(),
+        grid.cat_pos.loc[rules["consequent"]].to_numpy(),
+    ] = rules["confidence"].to_numpy()
+    # max_{a en carrito} conf(a -> c), por bloques para no materializar Q x C x C.
+    primary = np.zeros(grid.prefix_cats.shape)
+    step = 2_000
+    for lo in range(0, len(primary), step):
+        block = grid.prefix_cats[lo : lo + step, :, None] * conf[None, :, :]
+        primary[lo : lo + step] = block.max(axis=1)
+    return _category_lists(grid, primary, grid.category_leader, k)
+
+
+def run_baselines(
+    data: BaselineInputs, *, k: int, seed: int, min_confidence: float
+) -> dict[str, pd.DataFrame]:
+    """Top-k de cada baseline, con `label`, en el orden de `BASELINE_LABELS`."""
+    grid = _Grid(data)
+    favorite = grid.favorite_reference()
+    return {
+        "random": baseline_random(grid, k, seed=seed),
+        "global_popularity": baseline_global_popularity(grid, k),
+        "category_popularity": baseline_category_popularity(grid, k),
+        "personal_frequency": baseline_personal_frequency(grid, k, favorite),
+        "personal_due": baseline_personal_due(grid, k, favorite),
+        "repeat_favorite": baseline_repeat_favorite(grid, k),
+        "association_rules": baseline_association_rules(grid, k, min_confidence=min_confidence),
+    }
+
+
+def system_summary(
+    top_k: pd.DataFrame,
+    queries: pd.DataFrame,
+    target: pd.DataFrame,
+    product_category: pd.DataFrame,
+    *,
+    k: int,
+) -> pd.DataFrame:
+    """Metricas de SKU y de categoria de un top-k, en total y por perfil, en una tabla."""
+    sku = summarise(per_query_metrics(top_k, queries, k=k), k=k)
+    cat = category_metrics(top_k, target, product_category, queries, k=k)
+    return sku.merge(cat.drop(columns="n_queries"), on="grupo")

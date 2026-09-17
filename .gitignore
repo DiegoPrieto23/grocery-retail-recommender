@@ -33,3 +33,7 @@ env
 
 # Bundle de serving de la demo (Fase 6b): lo regenera `python -m src.serving.export_bundle`.
 data/serving/
+
+# Oraculo del recomendador (punto A6): probabilidades reales que solo conoce el generador.
+# Lo regenera `python -m data_generation.export_oracle`; nunca junto a data/raw.
+data/oracle/
