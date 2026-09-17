@@ -95,6 +95,7 @@ RECOMMENDER_RESULT = {
             {
                 "grupo": "total",
                 "n_queries": 100,
+                "ndcg_graded@5": 0.21,
                 "cat_hit_rate@5": 0.51,
                 "cat_precision@5": 0.18,
                 "sku_hit_rate@5": 0.12,
@@ -117,6 +118,8 @@ def test_los_params_del_recomendador_llevan_ventanas_e_hiperparametros():
     assert params["fit_end"] == str(RecommenderConfig().fit_end)
     assert params["test_start"] == str(RecommenderConfig().test_start)
     assert params["seed"] == RecommenderConfig().seed
+    assert params["relevance"] == "graded"
+    assert params["label_gain"] == [0.0, 1.0, 3.0]
 
 
 def test_las_metricas_del_recomendador_incluyen_las_dos_ablaciones():
@@ -128,6 +131,8 @@ def test_las_metricas_del_recomendador_incluyen_las_dos_ablaciones():
     # Sin las tres en el mismo run, la comparacion entre ellas habria que hacerla a mano.
     assert metrics["pool_recall"] == pytest.approx(0.31)
     assert metrics["cat_hit_rate@5"] == pytest.approx(0.51)
+    # La metrica principal desde el punto A4.
+    assert metrics["ndcg_graded@5"] == pytest.approx(0.21)
     # F1@5 (Fase 7c) viaja con sus dos variantes.
     assert metrics["precision@5"] == pytest.approx(0.0075)
     assert metrics["f1@5"] == pytest.approx(0.01)

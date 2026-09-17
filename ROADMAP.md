@@ -69,7 +69,8 @@ perfil.
       candidatos por cesta de media, `pool_recall` = 31,1 %
 - [x] Feature engineering para el ranker: señal de cada fuente de candidatos,
       recency/frequency, promoción, popularidad reciente, señal de sesión
-      · `src/recommender/features.py` · 57 features en 6 familias (la de carrito, del punto A2)
+      · `src/recommender/features.py` · 60 features en 6 familias (la de carrito, del punto A2,
+      y el ranking personal de categorías del punto A4 dentro de la de cliente × categoría)
       · desde el punto A1, el historial personal (fuente `hist`, `due_for_repurchase` y
       las features de cliente) se calcula **as-of el día de cada cesta**
       (`src/recommender/history.py`), con las fórmulas compartidas con la demo en
@@ -86,7 +87,11 @@ perfil.
       `tests/test_generate_dataset.py` · la señal se consume con un corte estricto en
       `cut_ts` y aporta **+13 % de NDCG@5** sobre la ablación que la excluye
 - [x] Ranking: LightGBM con objetivo `LambdaRank` sobre los candidatos
-      · `src/recommender/ranker.py` · 84 árboles, parada temprana sobre NDCG@5 de validación
+      · `src/recommender/ranker.py` · parada temprana sobre NDCG@5 de validación · desde el
+      punto A4, con **relevancia graduada** (2 SKU exacto, 1 misma categoría,
+      `label_gain = [0, 1, 3]`), que es la métrica principal fijada en `CHALLENGE.md` ·
+      verificado por `tests/test_ranker_objective.py` y la sección "Objetivo del ranker"
+      de `reports/recommender/metrics.md`, que reentrena la variante binaria como ablación
 - [x] Lógica de combinación para los 4 perfiles de cliente (Tarea 3a)
       · el ranker es **el mismo** para los cuatro; lo que cambia es qué fuentes tienen
       señal. Medido sobre el top-5: el perfil 1 se cubre 100 % con popularidad, el 4
@@ -125,6 +130,80 @@ cuando se mira la categoría. La fidelidad está en la categoría, no en la refe
       · **Subió**: la 7c reentrena sobre el dataset nuevo y el NDCG@5 pasa de 0,0343 a
       0,1752, con el hit_rate de SKU de 11,8 % a 49,5 %. La 7d rehace la Fase 4 sin cambios
       notables, y la 7e rehace la 6a y lleva el acierto de categoría a la demo. Cerrada.
+
+### Objetivo del ranker y arquitectura jerárquica (punto A4)
+
+El punto A4 de `docs/diagnostico-fase7.md` hizo dos cambios y dejó una tercera idea solo
+valorada, sin implementar. Todas las cifras salen de `python -m src.recommender.pipeline`
+y `python -m src.recommender.verify_recommender_diagnostics`, sobre las mismas 18.000
+cestas de test.
+
+- [x] Métrica principal decidida y documentada: **NDCG@5 graduada** (`CHALLENGE.md`,
+      README) · `evaluate.category_metrics` la calcula para todos los sistemas, oráculos y
+      baselines incluidos
+- [x] Ranker reentrenado con relevancia graduada · `cat_hit_rate@5` 0,6790 → **0,7173**
+      (+3,8 pp), `sku_hit_rate@5` 0,5491 → 0,5398 (−0,9 pp), NDCG@5 graduada 0,2086 →
+      **0,2138**, frente a la misma arquitectura entrenada con relevancia binaria. El
+      LambdaRank pasa a ir **3,8 pp por delante** del mejor baseline de categoría (antes
+      iba 0,5 pp por detrás)
+- [x] Ranking personal de categorías como features (`cat_freq_rank`, `cat_freq_share`,
+      `cat_due_rank`, en `schema.CUSTOMER_CATEGORY_RANK_FEATURES`), as-of y con réplica en
+      la demo · puestos 5, 8 y 10 de 60 por ganancia, **pero la ablación no mide mejora**
+      (`cat_hit_rate@5` −0,06 pp, `sku_hit_rate@5` −0,21 pp sin ellas): el árbol ya sacaba
+      esa señal de `cat_n_purchase_days`, `cat_due` y `hist_rank`, y las nuevas le sustituyen
+      splits sin añadir información. Se mantienen porque son baratas y legibles, pero
+      quitarlas es una opción legítima si se quiere simplificar
+- [ ] Arquitectura jerárquica (modelo de necesidad de categoría + modelo de referencia
+      dentro de la categoría) · **valorada, no implementada; hoy no está justificada**
+
+**Distancia al oráculo después de A4** (techo de la Sesión 1, punto A6):
+
+| | LambdaRank servido | Oráculo de categoría | Oráculo de SKU | % del mejor techo |
+| --- | ---: | ---: | ---: | ---: |
+| `cat_hit_rate@5` | 0,7173 | 0,7816 | 0,7309 | 91,8 % |
+| `cat_precision@5` | 0,2265 | 0,2660 | 0,2339 | 85,2 % |
+| `sku_hit_rate@5` | 0,5398 | 0,5542 | 0,5920 | 91,2 % |
+| NDCG@5 graduada | 0,2138 | 0,2308 | 0,2340 | 91,4 % |
+
+Por perfil, el hueco en `cat_hit_rate@5` es parecido en los cuatro (5,8 pp en el 1, 6,7
+en el 2, 6,3 en el 3 y 6,6 en el 4): no hay un perfil donde falle algo estructural.
+
+**Por qué no está justificada todavía.**
+
+1. **El margen es pequeño y no todo es recuperable.** Quedan 6,4 pp de `cat_hit_rate@5`
+   (y 0,020 de NDCG graduada). El oráculo conoce los pesos reales del generador para cada
+   cliente; cualquier modelo que solo vea el pasado los estima con ~30 cestas por cliente,
+   así que parte de esa distancia es error de estimación que ninguna arquitectura quita.
+2. **Lo que la jerarquía aportaría ya lo ha aportado el objetivo.** La idea es que el
+   modelo aprenda explícitamente *qué categoría toca*. La relevancia graduada ya le da esa
+   señal, y ha cerrado 3,8 de los 10,3 pp que había hasta el techo. Que el ranking personal
+   de categorías no sume nada apunta en la misma dirección: al ranker no le falta
+   información de necesidad de categoría que un modelo aparte fuera a darle.
+3. **La jerarquía no resuelve el compromiso SKU/categoría, lo hace explícito.** Incluso los
+   dos oráculos se reparten el terreno: el de categoría gana 5,1 pp de categoría y pierde
+   3,8 de SKU frente al de SKU. El LambdaRank graduado está a 1,4 pp del oráculo de
+   categoría en SKU y a 6,4 en categoría, y la palanca para moverse por esa frontera ya
+   existe (`label_gain`).
+4. **Cuesta mucho.** Dos modelos, dos matrices (query × categoría y query × referencia),
+   una regla para combinarlos, y todo por duplicado en Spark y en la demo (punto B2).
+
+**Qué haría cambiar la decisión.** Retomarla después de la Fase 8 del generador (A5:
+misiones de compra y complementariedad), si con el dato nuevo la distancia al oráculo de
+categoría vuelve a pasar de ~10 pp, o si `cat_precision@5` sigue por debajo del 90 % del
+techo después de reajustar los candidatos (M6), que es más barato. Antes conviene probar
+lo barato: barrer `label_gain` (p. ej. `[0, 1, 2]` o `[0, 2, 3]`) para situar el punto en
+la frontera SKU/categoría que se quiera comunicar.
+
+**Esbozo, por si se retoma.** (1) Modelo de necesidad: LightGBM binario (o LambdaRank con
+grupo = cesta) sobre filas query × categoría fuera del carrito, con las features de
+cliente × categoría as-of, estacionalidad, afinidad con el carrito y sesión agregada por
+categoría; etiqueta = la categoría está en el resto de la cesta. (2) Modelo de referencia:
+dentro de cada categoría, un ranker sobre sus 8 referencias con fidelidad
+(`hist_n_baskets`, `hist_days_since`), promoción, precio y popularidad; etiqueta = SKU
+comprado, condicionado a que la categoría se compró. (3) Combinación: top-5 de
+categorías por `P(categoría)`, cada una con su mejor referencia (la forma del oráculo de
+categoría), o por `P(categoría) × P(referencia)` si se quiere empujar el SKU (la del
+oráculo de SKU). Se evaluaría con la misma NDCG graduada y contra los mismos techos.
 
 ## Fase 4 — Next Best Action
 

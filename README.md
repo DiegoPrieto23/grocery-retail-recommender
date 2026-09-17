@@ -37,7 +37,8 @@ las del dataset de la Fase 7**; donde se comparan con las anteriores, se dice.
 un ETL en PySpark que las limpia y documenta cada corrección, un Data Trust Score que pasa
 de **91,42 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
 [notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL,
-un recomendador de cesta de dos etapas con **NDCG@5 = 0,2028**, una política de Next Best
+un recomendador de cesta de dos etapas que acierta la categoría en el **71,7 %** de las
+cestas y el SKU exacto en el **54,0 %** (NDCG@5 graduada = 0,2138), una política de Next Best
 Action que decide en euros, dos documentos que traducen todo eso a negocio — el
 [resumen de impacto](IMPACT.md) y el
 [informe de hallazgos](reports/insights/business_findings.md) — y una
@@ -57,17 +58,17 @@ pip install -r requirements.txt -c constraints.txt
 python -m data_generation.generate_dataset            # ~3 min  → data/raw/    (7 CSV)
 python -m data_generation.verify_dataset              # comprueba los patrones inyectados
 python -m src.etl.run_etl                             # ~4 min  → data/processed/ + reports/etl/
-python -m src.recommender.pipeline                    # ~23 min → models/ + predictions/ + reports/recommender/
+python -m src.recommender.pipeline                    # ~28 min → models/ + predictions/ + reports/recommender/
 python -m src.recommender.demo_profiles               # los 4 perfiles, con un caso de cada uno
 python -m data_generation.export_oracle               # ~3 min  → data/oracle/ (probabilidades reales de las cestas de test)
-python -m src.recommender.verify_recommender_diagnostics  # ~3 min → baselines + techo teórico en reports/recommender/
+python -m src.recommender.verify_recommender_diagnostics  # ~6 min → baselines + techo teórico en reports/recommender/
 python -m src.nba.pipeline                            # ~6 min  → models/ + predictions/ + reports/nba/
 python -m src.impact.pipeline                         # ~5 s    → IMPACT.md + reports/impact/
 python -m src.eda.findings                            # ~1 min  → reports/insights/ (informe + 8 figuras)
 python -m src.serving.export_bundle                   # fuentes de candidatos para servir sin Spark → data/serving/
 python -m src.catalog.build_assets --offline          # mapeo producto → foto (las fotos ya están en assets/)
 streamlit run streamlit_app.py                        # la demo, en http://localhost:8501
-pytest                                                # 344 tests
+pytest                                                # 377 tests
 ```
 
 El dataset **no se versiona** (`data/` está en `.gitignore`): se regenera con la semilla
@@ -112,9 +113,9 @@ grocery-retail-recommender/
 │   │   ├── candidates.py     #   popularidad, co-compra (SKU y categoría), historial, ALS
 │   │   ├── history.py        #   historial del cliente al día de cada cesta (as-of, punto A1)
 │   │   ├── formulas.py       #   fórmulas de reposición compartidas por Spark y pandas (punto B2)
-│   │   ├── features.py       #   57 features del par (query, candidato)
+│   │   ├── features.py       #   60 features del par (query, candidato) y relevancia graduada
 │   │   ├── ranker.py         #   LightGBM LambdaRank
-│   │   ├── evaluate.py       #   NDCG@5, Recall@5, Precision@5, F1@5, desglose SKU / categoría y baselines
+│   │   ├── evaluate.py       #   NDCG@5 graduada (principal), NDCG@5, Recall@5, F1@5, SKU / categoría y baselines
 │   │   ├── oracle.py         #   oráculo bayesiano: el techo teórico con los pesos reales del generador
 │   │   ├── pipeline.py       #   orquestador
 │   │   ├── verify_recommender_diagnostics.py  # baselines + techo teórico, reproducibles (diagnóstico A3/A6/M8)
@@ -139,7 +140,7 @@ grocery-retail-recommender/
 ├── streamlit_app.py          # FASE 6b — la demo (solo dibuja; la lógica está en src/)
 ├── assets/                   # FASE 6a — 60 fotos + el mapeo producto → foto (versionados)
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 344 tests
+├── tests/                    # 377 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
 ├── reports/recommender/      # métricas de la Fase 3, demo de los 4 perfiles, baselines/techo y las referencias congeladas
 ├── reports/nba/              # métricas de la Fase 4, barridos de sensibilidad y la referencia pre-Fase 7
@@ -480,9 +481,60 @@ compró" — y en test se desplomaría.
 | ALS implícito (Spark MLlib) | `customer_id × product_id` | 3 y 4 |
 
 Unidas dan **140 candidatos por cesta** de los 496 del catálogo, y el pool contiene ya el
-**77,8 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 50
-árboles con 57 *features* ordena, y un re-ranking final (una referencia por categoría,
-nada de lo que ya hay en el carrito) devuelve el top-5.
+**77,8 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 150
+árboles con 60 *features*, entrenado con relevancia graduada (SKU exacto y categoría),
+ordena, y un re-ranking final (una referencia por categoría, nada de lo que ya hay en el
+carrito) devuelve el top-5.
+
+### La métrica principal: NDCG@5 graduada
+
+El recomendador se juzga con una sola cifra, fijada en [`CHALLENGE.md`](CHALLENGE.md): la
+**NDCG@5 con relevancia graduada**. Cada hueco del top-5 vale 3 si es el SKU exacto de algo
+que el cliente acabó comprando, 1 si solo acierta la categoría y 0 si no acierta nada
+(`label_gain = [0, 1, 3]`). Siempre se publica junto a las dos cifras que se leen en
+negocio: `cat_hit_rate@5`, que es lo que enseña la demo, y `sku_hit_rate@5`.
+
+Hasta el punto A4 del [diagnóstico](docs/diagnostico-fase7.md) el LambdaRank optimizaba la
+NDCG@5 binaria de SKU exacto, mientras la demo presumía de acierto de categoría. Por eso,
+en categoría, empataba con un baseline trivial ("las categorías que más compra el
+cliente, dobladas si ya le toca reponer"). Reentrenado con la relevancia graduada, sobre
+las mismas cestas, el mismo pool y el mismo re-ranking:
+
+| | Relevancia binaria de SKU | **Relevancia graduada (servida)** | Mejor baseline | Techo (oráculo) |
+| --- | ---: | ---: | ---: | ---: |
+| NDCG@5 graduada | 0,2086 | **0,2138** | 0,1680 | 0,2340 |
+| `cat_hit_rate@5` | 67,9 % | **71,7 %** (+3,8 pp) | 67,9 % | 78,2 % |
+| `sku_hit_rate@5` | 54,9 % | **54,0 %** (−0,9 pp) | 42,1 % | 59,2 % |
+| NDCG@5 de SKU | 0,2045 | 0,1993 | 0,1374 | 0,2269 |
+
+El techo es el mejor de los dos oráculos del diagnóstico en cada fila. El cambio es un
+intercambio consciente: casi 4 puntos más de cestas con la categoría acertada a cambio de
+uno menos con el SKU exacto. El LambdaRank pasa de empatar con el mejor baseline de
+categoría a sacarle **3,8 pp**, y alcanza el **91,8 %** del techo teórico de categoría y el
+**91,2 %** del de SKU. La categoría mejora en los cuatro perfiles (de +0,7 a +4,1 pp), más
+en los recurrentes.
+
+Dos matices:
+
+- **El re-ranking pasa a ser imprescindible.** La relevancia graduada premia cualquier
+  referencia de una categoría que toca, así que sin la regla de una referencia por
+  categoría el 65 % de las listas repetiría categoría.
+- **El ranking personal de categorías no aporta.** Se añadieron tres *features* que
+  comparan la categoría del candidato con el resto de categorías del cliente
+  (`cat_freq_rank`, `cat_freq_share` y `cat_due_rank`, la última con el mismo criterio
+  que el mejor baseline). Quedan en los puestos 5, 8 y 10 de 60 por ganancia, pero la
+  ablación sin ellas da lo mismo (−0,06 pp de categoría): el árbol ya sacaba esa señal de
+  las *features* de reposición y de `hist_rank`.
+
+La idea más ambiciosa del punto A4, un modelo jerárquico (primero qué categoría toca,
+después qué referencia), está valorada en el
+[`ROADMAP.md`](ROADMAP.md#objetivo-del-ranker-y-arquitectura-jerárquica-punto-a4) y **no
+se implementa**: con el 92 % del techo alcanzado y la señal de categoría ya en el
+objetivo, el margen no compensa hoy dos modelos más, duplicados en Spark y en la demo.
+Todo se recalcula con `python -m src.recommender.pipeline` (sección "Objetivo del ranker"
+de [`metrics.md`](reports/recommender/metrics.md)) y `python -m
+src.recommender.verify_recommender_diagnostics` (baselines y techo). El modelo de antes
+está congelado en [`baseline_pre_a4.json`](reports/recommender/baseline_pre_a4.json).
 
 ### El historial, al día de cada cesta
 
@@ -499,7 +551,7 @@ penaliza volver a comprar. El 15,6 % de los huecos del top-5 caía en categoría
 los 7 días anteriores, con un 4,7 % de acierto de SKU. Tras el cambio son el 2,4 %, y
 aciertan el 16,7 %:
 
-| | Antes (historial congelado) | Después (as-of) |
+| | Antes (historial congelado) | Después (as-of, antes del punto A4) |
 | --- | ---: | ---: |
 | `cat_hit_rate@5` | 61,7 % | **67,4 %** (+5,8 pp) |
 | `sku_hit_rate@5` | 49,5 % | **54,9 %** (+5,4 pp) |
@@ -519,7 +571,7 @@ Los baselines del diagnóstico también usan el historial as-of, para que la com
 sea justa. Con él, "frecuencia personal × `due_for_repurchase`" sube del 65,9 % al
 **67,9 %** de acierto de categoría y pasa a ser el mejor baseline. Sigue **0,5 pp por
 delante** del LambdaRank; antes, el mejor baseline (frecuencia personal, 66,1 %) le sacaba
-4,4 pp. Alinear el objetivo del ranker con la categoría es el punto A4.
+4,4 pp. Alinear el objetivo del ranker con la categoría (punto A4, arriba) le da la vuelta.
 
 La lógica existe en Spark (entrenamiento) y en pandas (demo). Las fórmulas del ciclo de
 reposición se escriben una sola vez ([`formulas.py`](src/recommender/formulas.py)) y las
@@ -541,10 +593,10 @@ tiene sesión detrás:
 | Sistema | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: |
 | Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0881 | 0,0793 | 27,0 % |
-| LambdaRank sin señal de sesión | 0,1947 | 0,1874 | 53,7 % |
-| **LambdaRank completo** | **0,2028** | **0,1944** | **54,9 %** |
+| LambdaRank sin señal de sesión | 0,1932 | 0,1856 | 53,5 % |
+| **LambdaRank completo** | **0,1993** | **0,1902** | **54,0 %** |
 
-Las tres filas pasan por el mismo re-ranking final. La sesión suma un **+4,2 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
+Las tres filas pasan por el mismo re-ranking final y son métricas de SKU exacto. La sesión suma un **+3,2 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
 historial prediciendo bien la referencia, lo que el cliente mira en la web aporta menos
 información nueva.
 
@@ -553,16 +605,16 @@ información nueva.
 Sobre 18.000 cestas de test. El ranker es **el mismo** para los cuatro perfiles: lo que
 cambia es qué fuentes tienen algo que decir.
 
-| Perfil | Cestas | NDCG@5 | Recall@5 | hit_rate@5 |
-| --- | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 521 | 0,1289 | 0,1208 | 39,5 % |
-| 2 · nuevo, con artículos | 421 | 0,1021 | 0,1111 | 24,0 % |
-| 3 · recurrente, carrito vacío | 8.713 | 0,2174 | 0,1841 | 62,9 % |
-| 4 · recurrente, con artículos | 8.345 | 0,1973 | 0,2140 | 49,0 % |
-| **Total** | **18.000** | **0,2028** | **0,1944** | **54,9 %** |
+| Perfil | Cestas | NDCG@5 graduada | Acierta categoría | Acierta SKU | NDCG@5 SKU | Recall@5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 · nuevo, carrito vacío | 521 | 0,1532 | 59,7 % | 39,7 % | 0,1309 | 0,1151 |
+| 2 · nuevo, con artículos | 421 | 0,1121 | 46,3 % | 23,8 % | 0,1003 | 0,1091 |
+| 3 · recurrente, carrito vacío | 8.713 | 0,2384 | 79,0 % | 61,9 % | 0,2128 | 0,1799 |
+| 4 · recurrente, con artículos | 8.345 | 0,1971 | 66,2 % | 48,1 % | 0,1945 | 0,2097 |
+| **Total** | **18.000** | **0,2138** | **71,7 %** | **54,0 %** | **0,1993** | **0,1902** |
 
 El cold-start rinde peor, como se esperaba, pero no se desploma: **el perfil 2 es el peor**
-(NDCG@5 0,1021, un 48 % por debajo del 4). Tiene sentido — no tiene historial anterior a
+(NDCG@5 graduada 0,1121, un 43 % por debajo del 4). Tiene sentido — no tiene historial anterior a
 la ventana ni ALS, como mucho las pocas compras que haya hecho desde entonces, y encima su
 cesta ya va por la mitad, así que lo fácil de acertar ya está dentro. Y el perfil 3 es el
 mejor en `hit_rate` (62,9 %) porque evalúa la cesta entera: cinco huecos contra 5,0
@@ -575,12 +627,13 @@ categoría que el cliente sí compró, aunque fuera otra referencia:
 
 | | Acierta la categoría | Acierta el SKU |
 | --- | ---: | ---: |
-| Al menos uno en el top-5 | **67,4 %** | **54,9 %** |
-| Precisión media del top-5 | 20,2 % | 14,8 % |
+| Al menos uno en el top-5 | **71,7 %** | **54,0 %** |
+| Precisión media del top-5 | 22,7 % | 14,5 % |
 
 La distancia entre las dos columnas es la parte del error que está en *elegir la
-referencia* y no en *saber qué categoría toca*. Hoy es pequeña: el 81 % de las cestas que
-aciertan la categoría aciertan también el SKU. **Antes de la Fase 7 era el 23 %**, y esa
+referencia* y no en *saber qué categoría toca*. Hoy es pequeña: el 75 % de las cestas que
+aciertan la categoría aciertan también el SKU (el 81 % antes del punto A4, que cambió algo
+de SKU por bastante más categoría). **Antes de la Fase 7 era el 23 %**, y esa
 brecha es la historia de la [Fase 7](#fase-7--fidelidad-de-producto).
 
 ### Carrito y diversidad
@@ -598,14 +651,14 @@ evaluación y en la demo) lo dejan en **0 %** y suben el acierto de categoría *
 ### F1@5 frente a Kaggle
 
 Para tener un orden de magnitud externo, el pipeline calcula también Precision@5
-(**0,1482**) y F1@5 (**0,1682**; **0,1583** promediando el F1 de cada cesta) y lo pone al
+(**0,1445**) y F1@5 (**0,1642**; **0,1546** promediando el F1 de cada cesta) y lo pone al
 lado del primer puesto de *Instacart Market Basket Analysis* (F1 ≈ 0,41).
 
 **No es una comparación equivalente**, y el
 [informe](reports/recommender/metrics.md#f15-frente-a-kaggle-instacart-market-basket-analysis)
 lo dice al lado de la tabla: Instacart predice solo recompras, con un conjunto de tamaño
 variable elegido para maximizar el F1 de cada pedido; aquí el top-5 es fijo, mezcla
-recompra con descubrimiento, el ranker optimiza NDCG y se predice a mitad de cesta. Con
+recompra con descubrimiento, el ranker optimiza NDCG graduada y se predice a mitad de cesta. Con
 3,9 productos por adivinar de media, un top-5 fijo pone techo a la vez a la precisión y al
 recall.
 
@@ -617,10 +670,10 @@ recomendación. La tabla que lo resume:
 
 | Perfil | Popularidad | Co-compra SKU | Co-compra categoría | Historial | ALS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 91 % | 0 % | 0 % | 21 % | 0 % |
-| 2 · nuevo, con artículos | 88 % | 14 % | 29 % | 19 % | 0 % |
-| 3 · recurrente, carrito vacío | 51 % | 0 % | 0 % | 99 % | 39 % |
-| 4 · recurrente, con artículos | 49 % | 12 % | 15 % | 99 % | 38 % |
+| 1 · nuevo, carrito vacío | 93 % | 0 % | 0 % | 22 % | 0 % |
+| 2 · nuevo, con artículos | 85 % | 20 % | 22 % | 20 % | 0 % |
+| 3 · recurrente, carrito vacío | 59 % | 0 % | 0 % | 99 % | 46 % |
+| 4 · recurrente, con artículos | 57 % | 12 % | 17 % | 98 % | 43 % |
 
 Con fidelidad de marca, el historial personal está detrás de casi todas las
 recomendaciones a clientes recurrentes (antes, del 42-49 %). Desde el punto A1 también
@@ -1038,7 +1091,7 @@ Quedan tres deudas anotadas, ninguna bloqueante:
 | **0 · Setup** | Estructura del repo, entorno con `constraints.txt` y CI en GitHub Actions | El workflow instala y ejecuta la suite | ✅ |
 | **1 · Generador** | `data_generation/generate_dataset.py`: 7 tablas, 3,1 M de líneas de ticket, con ciclos de reposición, fidelidad de marca, afinidad de cesta, estacionalidad, uplift de promoción, churn progresivo, embudo online y defectos de calidad inyectados a propósito | 36 tests; dos ejecuciones dan `sha256` idénticos | ✅ |
 | **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta y las 9 preguntas de negocio como funciones | 149 tests; informes regenerables en `reports/etl/` | Data Trust **91,42 (C) → 100,00 (A)** |
-| **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank`. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | 17 tests centrados en fuga de datos; `reports/recommender/` | **NDCG@5 = 0,1752** · Recall@5 = 0,1678 · F1@5 = 0,1454 (baseline 0,0868) |
+| **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank` con relevancia graduada. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | Tests de fuga de datos, historial as-of, paridad con la demo y objetivo; `reports/recommender/` y `verify_recommender_diagnostics` | **NDCG@5 graduada = 0,2138** · categoría 71,7 % · SKU 54,0 % · 91,8 % del techo teórico de categoría |
 | **4 · Next Best Action** | Dos modelos de propensión (churn a 4 semanas, compra en categoría a 7 días) sobre cortes temporales, y política de valor esperado con catálogo de acciones y economía por departamento | 25 tests, incluida la aritmética del valor esperado a mano; `reports/nba/` | **AUC 0,8527 / 0,7630** · política **+3.938 €** vs. no actuar |
 | **5 · Empaquetado** | Resumen de impacto en euros con su barrido de supuestos, informe de 8 hallazgos de negocio con figuras, y registro opcional de experimentos en MLflow | 37 tests; `IMPACT.md` y `reports/insights/` se regeneran con un comando | **289.430 €/año** por cada 100.000 clientes y 100.000 cestas online/mes |
 | **6 · Demo** | Catálogo con 60 fotos reales de Pexels, inferencia sin Spark y app en Streamlit con cesta en vivo, top-5 explicado, NBA y cestas reales de test | 59 tests, incluida la paridad con el pipeline; arranque real verificado | ✅ acierto de categoría y exacto, lado a lado |

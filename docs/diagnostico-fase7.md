@@ -398,6 +398,27 @@ cualquier mejora en una puede empeorar la otra sin que nadie lo vea.
 3. Recuperar la frecuencia personal agregada por categoría como feature
    (`cat_n_purchase_days` ya existe, pero no hay un ranking personal de categorías).
 
+**Estado (Sesión 4).** Hechos el 1 y el 3; el 2, valorado y descartado por ahora.
+Cifras sobre las mismas 18.000 cestas de test, frente a la misma arquitectura reentrenada
+con relevancia binaria:
+
+- **Métrica principal:** NDCG@5 graduada, escrita en `CHALLENGE.md` y en el README.
+  `evaluate.category_metrics` la calcula para todos los sistemas.
+- **Relevancia graduada:** `cat_hit_rate@5` 0,6790 → 0,7173 (+3,8 pp),
+  `sku_hit_rate@5` 0,5491 → 0,5398 (−0,9 pp), NDCG@5 graduada 0,2086 → 0,2138. El
+  LambdaRank queda 3,8 pp por delante del mejor baseline de categoría, con el 91,8 % del
+  techo de categoría y el 91,2 % del de SKU.
+- **Ranking personal de categorías** (`cat_freq_rank`, `cat_freq_share`,
+  `cat_due_rank`): puestos 5, 8 y 10 de 60 por ganancia, pero sin mejora medible en la
+  ablación (−0,06 pp de categoría). La señal ya estaba en las features de reposición.
+- **Arquitectura jerárquica:** no se implementa. Queda a 6,4 pp del techo, y parte de esa
+  distancia es error de estimación irreducible. La valoración y un esbozo del diseño
+  están en `ROADMAP.md`, "Objetivo del ranker y arquitectura jerárquica".
+
+Referencia del antes: `reports/recommender/baseline_pre_a4.json`. Lo recalculan
+`python -m src.recommender.pipeline` y `verify_recommender_diagnostics`; los tests están
+en `tests/test_ranker_objective.py`.
+
 ### M6 · Topes de candidatos sin reajustar, y un pool pobre en cold-start — **MEDIA-BAJA**
 
 Deuda ya anotada en el README. El perfil 1 tiene un pool de **60 productos**, solo la

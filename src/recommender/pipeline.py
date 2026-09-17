@@ -15,10 +15,12 @@ El flujo es el de `CHALLENGE.md`, Tarea 3a:
    as-of el dia de cada cesta (`history.py`, punto A1).
 3. **Generacion de candidatos** y union del pool.
 4. **Features** del par `(query, candidato)`.
-5. **LambdaRank**, re-ranking final (`rerank.py`) y top-5.
-6. **NDCG@5 / Recall@5**, en total y por perfil, mas dos ablaciones (sin senal de sesion,
-   sin features de carrito), un baseline de popularidad y el antes/despues del punto A2
-   (features de carrito y re-ranking).
+5. **LambdaRank** con relevancia graduada (punto A4), re-ranking final (`rerank.py`) y
+   top-5.
+6. **NDCG@5 graduada** (metrica principal), NDCG@5 / Recall@5 de SKU y acierto de
+   categoria, en total y por perfil, mas cuatro ablaciones (sin senal de sesion, sin
+   features de carrito, relevancia binaria de SKU y sin ranking personal de categorias),
+   un baseline de popularidad y los antes/despues de los puntos A1, A2 y A4.
 
 Cualquier cifra que aparezca en el README sale de aqui (`CLAUDE.md`, "Splits y evaluacion").
 """
@@ -26,6 +28,7 @@ Cualquier cifra que aparezca en el README sale de aqui (`CLAUDE.md`, "Splits y e
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import gc
 import json
@@ -46,7 +49,12 @@ from src.recommender import features as feat
 from src.recommender import history as hs
 from src.recommender import ranker as rk
 from src.recommender import splits
-from src.recommender.config import REQUIRED_TABLES, RecommenderConfig, RerankConfig
+from src.recommender.config import (
+    RELEVANCE_BINARY_SKU,
+    REQUIRED_TABLES,
+    RecommenderConfig,
+    RerankConfig,
+)
 
 
 # F1 del primer puesto de "Instacart Market Basket Analysis" (Kaggle, 2017), redondeado.
@@ -66,6 +74,15 @@ PRE_A2_FILENAME = "baseline_pre_diagnostico.json"
 # Metricas del LambdaRank antes del punto A1 (historial congelado al inicio de la
 # ventana), congeladas por `verify_recommender_diagnostics --freeze --snapshot ...`.
 PRE_A1_FILENAME = "baseline_pre_a1.json"
+
+# Metricas del LambdaRank antes del punto A4 (relevancia binaria de SKU, sin ranking
+# personal de categorias), congeladas por `verify_recommender_diagnostics --freeze
+# --snapshot baseline_pre_a4.json`.
+PRE_A4_FILENAME = "baseline_pre_a4.json"
+
+# Top-5 de la ablacion con relevancia binaria de SKU, para que el verificador de
+# diagnostico la compare con los baselines de categoria sobre las mismas queries.
+SKU_PREDICTIONS_FILENAME = "recommendations_test_sku.parquet"
 
 # La seccion de baselines y techo teorico de `metrics.md` la escribe
 # `verify_recommender_diagnostics.py`, no este orquestador. Va entre estas marcas para
@@ -398,6 +415,48 @@ def cart_rerank_ablation(
     return pd.DataFrame(rows)
 
 
+# Variantes del antes/despues del punto A4: (clave, descripcion, columna de score).
+OBJECTIVE_VARIANTS: tuple[tuple[str, str, str], ...] = (
+    ("sku", "Relevancia binaria de SKU (objetivo anterior)", "score_sku"),
+    ("graduada_sin_ranking", "Relevancia graduada, sin ranking personal", "score_no_rank"),
+    ("graduada", "Relevancia graduada + ranking personal (servido)", "score"),
+)
+
+
+def objective_ablation(
+    scored: pd.DataFrame,
+    queries: pd.DataFrame,
+    target: pd.DataFrame,
+    product_category: pd.DataFrame,
+    *,
+    k: int,
+    rerank: RerankConfig,
+) -> pd.DataFrame:
+    """Antes/despues del punto A4: una fila por variante y grupo (total y perfiles).
+
+    Todas con el mismo pool y el mismo re-ranking servido: solo cambia el modelo.
+    """
+    frames = []
+    for key, label, score_col in OBJECTIVE_VARIANTS:
+        top = ev.top_k_predictions(scored, k=k, score_col=score_col, rerank=rerank)
+        sku = ev.summarise(ev.per_query_metrics(top, queries, k=k), k=k)
+        cat = ev.category_metrics(top, target, product_category, queries, k=k)
+        merged = cat.merge(sku[["grupo", f"ndcg@{k}", f"recall@{k}"]], on="grupo")
+        frames.append(merged.assign(variante=key, descripcion=label))
+    return pd.concat(frames, ignore_index=True)
+
+
+def rank_feature_importance(importance: pd.DataFrame) -> pd.DataFrame:
+    """Ganancia y puesto (sobre todas las features) del ranking personal de categorias."""
+    ranked = importance.sort_values("gain", ascending=False).reset_index(drop=True)
+    ranked["puesto"] = ranked.index + 1
+    ranked["gain_share"] = ranked["gain"] / ranked["gain"].sum()
+    return ranked.loc[
+        ranked["feature"].isin(feat.CUSTOMER_CATEGORY_RANK_FEATURES),
+        ["feature", "puesto", "gain", "gain_share", "split"],
+    ].reset_index(drop=True)
+
+
 def _queries_to_pandas(queries: DataFrame) -> pd.DataFrame:
     return queries.select(
         "basket_id", "customer_id", "profile", "n_target", "prefix_size", "basket_day", "channel"
@@ -441,12 +500,40 @@ def run(
     baskets_sorted = sorted(rank_pdf["basket_id"].unique())
     valid_ids = set(baskets_sorted[: cfg.n_valid_queries])
     is_valid = rank_pdf["basket_id"].isin(valid_ids)
-    train_pdf = rk.drop_groups_without_positives(rank_pdf.loc[~is_valid].reset_index(drop=True))
-    valid_pdf = rk.drop_groups_without_positives(rank_pdf.loc[is_valid].reset_index(drop=True))
+    # Con la relevancia graduada se quedan las cestas con al menos un candidato de una
+    # categoria del target, no solo las que tienen el SKU exacto en el pool.
+    positive = cfg.ranker.label_column
+    train_pdf = rk.drop_groups_without_positives(
+        rank_pdf.loc[~is_valid].reset_index(drop=True), positive
+    )
+    valid_pdf = rk.drop_groups_without_positives(
+        rank_pdf.loc[is_valid].reset_index(drop=True), positive
+    )
     del rank_pdf, is_valid  # la matriz completa ya no hace falta y ocupa varios cientos de MB
 
     booster, evals = rk.train_ranker(train_pdf, valid_pdf, cfg=cfg.ranker)
     timer.step(f"LambdaRank entrenado ({booster.best_iteration} arboles)")
+
+    # Ablacion del punto A4: el objetivo de antes, relevancia binaria de SKU exacto, con
+    # las mismas features. Descarta las cestas sin el SKU en el pool, como antes.
+    sku_ranker = dataclasses.replace(cfg.ranker, relevance=RELEVANCE_BINARY_SKU)
+    train_sku = rk.drop_groups_without_positives(train_pdf, "label")
+    valid_sku = rk.drop_groups_without_positives(valid_pdf, "label")
+    n_train_queries_sku = int(train_sku["basket_id"].nunique())
+    booster_sku, _ = rk.train_ranker(train_sku, valid_sku, cfg=sku_ranker, verbose_eval=0)
+    del train_sku, valid_sku
+    gc.collect()
+    timer.step(f"Ablacion con relevancia binaria de SKU ({booster_sku.best_iteration} arboles)")
+
+    # Y el objetivo nuevo sin el ranking personal de categorias: aisla lo que aporta cada
+    # una de las dos piezas del punto A4.
+    no_rank = tuple(
+        c for c in feat.FEATURE_COLUMNS if c not in feat.CUSTOMER_CATEGORY_RANK_FEATURES
+    )
+    booster_nr, _ = rk.train_ranker(
+        train_pdf, valid_pdf, cfg=cfg.ranker, feature_columns=no_rank, verbose_eval=0
+    )
+    timer.step("Ablacion sin ranking personal de categorias")
 
     # Ablacion: el mismo modelo sin ninguna feature de sesion, para poder decir cuanto
     # aporta realmente la senal que obligo a arreglar el generador.
@@ -506,6 +593,8 @@ def run(
     scored["score"] = rk.score(booster, test_pdf)
     scored["score_no_session"] = rk.score(booster_ns, test_pdf, feature_columns=no_session)
     scored["score_no_cart"] = rk.score(booster_nc, test_pdf, feature_columns=no_cart)
+    scored["score_sku"] = rk.score(booster_sku, test_pdf)
+    scored["score_no_rank"] = rk.score(booster_nr, test_pdf, feature_columns=no_rank)
     scored["score_popularity"] = ev.popularity_baseline(test_pdf)
     del test_pdf
 
@@ -520,6 +609,7 @@ def run(
     )
     pool = ev.candidate_recall(scored, test_q)
     importance = rk.feature_importance(booster)
+    all_importance = rk.feature_importance(booster, top=len(feat.FEATURE_COLUMNS))
 
     # Se guardan tambien las banderas de fuente: sin ellas no se puede explicar *por que*
     # se recomendo cada producto, que es justo lo que ensena la demo de los perfiles.
@@ -534,6 +624,10 @@ def run(
     cart_ablation = cart_rerank_ablation(
         scored, test_q, target_pdf, prefix_pdf, product_category, k=cfg.top_k, served=rerank
     )
+    objective = objective_ablation(
+        scored, test_q, target_pdf, product_category, k=cfg.top_k, rerank=rerank
+    )
+    top_k_sku = ev.top_k_predictions(scored, k=cfg.top_k, score_col="score_sku", rerank=rerank)
     timer.step("Evaluacion")
     recommendations = top_k[
         ["basket_id", "product_id", "rank", "score", "label", "profile", *explain]
@@ -549,6 +643,8 @@ def run(
         "by_category": by_category,
         "wasted_slots": wasted,
         "cart_ablation": cart_ablation,
+        "objective_ablation": objective,
+        "rank_feature_importance": rank_feature_importance(all_importance),
         "rerank": rerank,
         "feature_importance": importance,
         "per_query": per_query,
@@ -556,6 +652,7 @@ def run(
         "valid_ndcg": float(evals["valid"][f"ndcg@{cfg.top_k}"][booster.best_iteration - 1]),
         "n_test_queries": int(len(test_q)),
         "n_train_queries": n_train_queries,
+        "n_train_queries_sku": n_train_queries_sku,
         "test_queries": test_q,
     }
 
@@ -567,6 +664,9 @@ def run(
         )
         per_query.to_parquet(
             Path(cfg.predictions_dir) / "recommender_per_query.parquet", index=False
+        )
+        top_k_sku[["basket_id", "product_id", "rank", "score_sku", "label", "profile"]].to_parquet(
+            Path(cfg.predictions_dir) / SKU_PREDICTIONS_FILENAME, index=False
         )
         test_q.to_parquet(
             Path(cfg.predictions_dir) / "recommender_test_queries.parquet", index=False
@@ -650,7 +750,8 @@ Se ponen juntas solo como orden de magnitud, con estas diferencias de planteamie
   incluida la opcion de predecir "ninguno". Aqui la lista es **siempre de {k}**: con
   {total['n_target_medio']:.1f} productos por adivinar de media, la Precision@{k} y el
   Recall@{k} estan acotados por el propio formato, acierte lo que acierte el modelo.
-- **Que se optimiza.** El ranker se entrena con LambdaRank para NDCG@{k}, no para F1.
+- **Que se optimiza.** El ranker se entrena con LambdaRank para NDCG@{k} graduada (SKU y
+  categoria), no para F1.
 - **Contexto.** Aqui se predice a mitad de cesta: lo que ya esta en el carrito queda fuera
   del target. Instacart predice el pedido entero.
 - **Agregacion.** Instacart promediaba el F1 de cada pedido; la variante mas cercana es la
@@ -769,6 +870,146 @@ def _asof_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> 
     )
 
 
+def _objective_summary(result: dict[str, object], variant: str, k: int) -> pd.DataFrame:
+    """Fila total de una variante de `objective_ablation`, con los nombres de `summarise`."""
+    table: pd.DataFrame = result["objective_ablation"]  # type: ignore[assignment]
+    row = table.loc[(table["variante"] == variant) & (table["grupo"] == "total")].iloc[0]
+    precision, recall = row[f"sku_precision@{k}"], row[f"recall@{k}"]
+    return pd.DataFrame(
+        [
+            {
+                f"ndcg@{k}": row[f"ndcg@{k}"],
+                f"recall@{k}": recall,
+                f"precision@{k}": precision,
+                f"f1@{k}": ev.harmonic_f1(precision, recall),
+                f"hit_rate@{k}": row[f"sku_hit_rate@{k}"],
+            }
+        ]
+    )
+
+
+def _objective_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
+    """Antes/despues del punto A4: relevancia graduada y ranking personal de categorias."""
+    table: pd.DataFrame = result["objective_ablation"]  # type: ignore[assignment]
+    metrics = [
+        f"ndcg_graded@{k}",
+        f"cat_hit_rate@{k}",
+        f"sku_hit_rate@{k}",
+        f"ndcg@{k}",
+        f"cat_precision@{k}",
+        f"sku_precision@{k}",
+    ]
+    lines = [
+        f"| Variante | NDCG@{k} graduada | cat_hit_rate@{k} | sku_hit_rate@{k} | NDCG@{k} SKU "
+        f"| cat_precision@{k} | sku_precision@{k} |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    path = Path(cfg.reports_dir) / PRE_A4_FILENAME
+    snap = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    if snap is not None:
+        cat = snap["metrics"]["by_category"][0]
+        sku = snap["metrics"]["summary"][0]
+        frozen = {**cat, f"ndcg@{k}": sku[f"ndcg@{k}"]}
+        cells = [frozen.get(m) for m in metrics]
+        lines.append(
+            "| Modelo en disco antes de A4 (congelado) | "
+            + " | ".join("—" if v is None else f"{v:.4f}" for v in cells)
+            + " |"
+        )
+    total = table.loc[table["grupo"] == "total"]
+    for row in total.to_dict(orient="records"):
+        cells = [row["descripcion"], *(f"{row[m]:.4f}" for m in metrics)]
+        if row["variante"] == "graduada":
+            cells = [f"**{c}**" for c in cells]
+        lines.append("| " + " | ".join(cells) + " |")
+
+    by = table.set_index(["variante", "grupo"])
+    profile_lines = [
+        f"| Grupo | cat_hit_rate@{k} SKU | graduada | cambio | sku_hit_rate@{k} SKU "
+        f"| graduada | cambio | NDCG@{k} graduada SKU | graduada |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for group in table.loc[table["variante"] == "graduada", "grupo"]:
+        before, after = by.loc[("sku", group)], by.loc[("graduada", group)]
+        c0, c1 = before[f"cat_hit_rate@{k}"], after[f"cat_hit_rate@{k}"]
+        s0, s1 = before[f"sku_hit_rate@{k}"], after[f"sku_hit_rate@{k}"]
+        g0, g1 = before[f"ndcg_graded@{k}"], after[f"ndcg_graded@{k}"]
+        profile_lines.append(
+            f"| {group} | {c0:.4f} | {c1:.4f} | {(c1 - c0) * 100:+.2f} pp | {s0:.4f} "
+            f"| {s1:.4f} | {(s1 - s0) * 100:+.2f} pp | {g0:.4f} | {g1:.4f} |"
+        )
+
+    def delta(a: str, b: str, metric: str) -> float:
+        return (by.loc[(b, "total"), metric] - by.loc[(a, "total"), metric]) * 100
+
+    cat_m, sku_m = f"cat_hit_rate@{k}", f"sku_hit_rate@{k}"
+    reading = (
+        f"Cambiar solo el objetivo (fila de relevancia binaria a graduada sin ranking) "
+        f"mueve cat_hit_rate@{k} **{delta('sku', 'graduada_sin_ranking', cat_m):+.2f} pp** "
+        f"y sku_hit_rate@{k} **{delta('sku', 'graduada_sin_ranking', sku_m):+.2f} pp**. "
+        f"Anadir el ranking personal mueve cat_hit_rate@{k} "
+        f"**{delta('graduada_sin_ranking', 'graduada', cat_m):+.2f} pp** y sku_hit_rate@{k} "
+        f"**{delta('graduada_sin_ranking', 'graduada', sku_m):+.2f} pp**. En conjunto, "
+        f"frente al objetivo anterior: cat_hit_rate@{k} "
+        f"**{delta('sku', 'graduada', cat_m):+.2f} pp**, sku_hit_rate@{k} "
+        f"**{delta('sku', 'graduada', sku_m):+.2f} pp**."
+    )
+
+    ranks: pd.DataFrame = result["rank_feature_importance"]  # type: ignore[assignment]
+    n_features = len(feat.FEATURE_COLUMNS)
+    rank_lines = [
+        "| Feature | Puesto por ganancia | Ganancia | % de la ganancia total | Splits |",
+        "| --- | ---: | ---: | ---: | ---: |",
+        *(
+            f"| `{r['feature']}` | {int(r['puesto'])} de {n_features} | {r['gain']:.0f} "
+            f"| {r['gain_share']:.1%} | {int(r['split'])} |"
+            for r in ranks.to_dict(orient="records")
+        ),
+    ]
+
+    frozen_note = ""
+    if snap is not None:
+        frozen_note = (
+            f"La fila congelada es el modelo que habia en disco antes de este cambio "
+            f"(`{Path(cfg.reports_dir).as_posix()}/{PRE_A4_FILENAME}`, {snap['congelado']}, "
+            f"commit `{(snap['commit'] or '?')[:7]}`), que no media la NDCG graduada. La fila "
+            '"relevancia binaria" lo reentrena con el codigo actual, que ya incluye el '
+            "ranking personal entre sus features, asi que puede diferir un poco."
+        )
+
+    return "\n".join(
+        [
+            "## Objetivo del ranker (punto A4)",
+            "",
+            "Hasta el punto A4 el LambdaRank optimizaba la NDCG@5 con relevancia binaria de "
+            "SKU exacto. Ahora optimiza la graduada (`RankerConfig.relevance`) y tiene tres "
+            "features nuevas de ranking personal de categorias "
+            "(`CUSTOMER_CATEGORY_RANK_FEATURES`: `cat_freq_rank`, `cat_freq_share`, "
+            "`cat_due_rank`). Las variantes se entrenan con las mismas queries y se "
+            "evaluan sobre el mismo pool, con el mismo re-ranking servido.",
+            "",
+            *lines,
+            "",
+            reading,
+            "",
+            frozen_note,
+            "",
+            "### Por perfil: relevancia binaria de SKU frente a la graduada servida",
+            "",
+            *profile_lines,
+            "",
+            "### Importancia del ranking personal de categorias",
+            "",
+            "Puesto entre todas las features del modelo servido (ganancia).",
+            "",
+            *rank_lines,
+            "",
+            "La comparacion con los baselines de categoria y con el techo teorico esta en "
+            "la seccion de diagnostico, al final (`verify_recommender_diagnostics`).",
+        ]
+    )
+
+
 def _cart_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
     """Antes/despues del punto A2: features de carrito y re-ranking final."""
     table: pd.DataFrame = result["cart_ablation"]  # type: ignore[assignment]
@@ -880,16 +1121,30 @@ mano: se recalcula ejecutando ese comando.
 | | |
 | --- | --- |
 | Fuentes de candidatos (ranker) | cestas anteriores a {cfg.fit_end} |
-| Queries de entrenamiento | {cfg.fit_end} a {cfg.test_start} ({result['n_train_queries']:,} cestas con acierto en el pool) |
+| Queries de entrenamiento | {cfg.fit_end} a {cfg.test_start} ({result['n_train_queries']:,} cestas con algun candidato relevante en el pool; {result['n_train_queries_sku']:,} con el SKU exacto) |
 | Fuentes de candidatos (test) | cestas anteriores a {cfg.test_start} |
 | Queries de test | desde {cfg.test_start} ({result['n_test_queries']:,} cestas) |
 | Ranker | LightGBM `lambdarank`, {result['booster'].num_trees()} arboles |
-| NDCG@{k} de validacion | {result['valid_ndcg']:.4f} |
+| Objetivo | NDCG@{k} con relevancia graduada: 2 SKU exacto, 1 misma categoria (`label_gain` = {list(cfg.ranker.label_gain)}) |
+| NDCG@{k} graduada de validacion | {result['valid_ndcg']:.4f} |
 
 El split es temporal **y por cesta**: ninguna cesta se reparte entre train y test, y las
 fuentes de candidatos se reajustan para cada ventana con solo el pasado de esa ventana.
 
-## Resultado
+## Metrica principal
+
+La metrica principal del recomendador es la **NDCG@{k} con relevancia graduada**
+(`CHALLENGE.md`, punto A4 de `docs/diagnostico-fase7.md`): 3 puntos por hueco si es el SKU
+exacto, 1 si solo acierta la categoria. Es la que optimiza el LambdaRank. Se lee siempre
+junto a `cat_hit_rate@{k}` (lo que ensena la demo) y `sku_hit_rate@{k}`.
+
+{_table(result['by_category'][['grupo', 'n_queries', f'ndcg_graded@{k}', f'cat_hit_rate@{k}', f'sku_hit_rate@{k}']])}
+
+{_objective_section(cfg, result, k)}
+
+## Resultado a nivel de SKU
+
+Las metricas de SKU exacto de siempre (NDCG@{k} binaria, recall, precision, F1).
 
 {_table(summary)}
 
@@ -902,6 +1157,7 @@ ranker de la de la primera etapa.
 | --- | ---: | ---: | ---: | ---: | ---: |
 {_system_row("Popularidad reciente x estacionalidad (sin aprendizaje)", result["summary_popularity"], k)}
 {_system_row("LambdaRank sin senal de sesion", result["summary_no_session"], k)}
+{_system_row("LambdaRank con relevancia binaria de SKU (objetivo anterior)", _objective_summary(result, "sku", k), k)}
 {_system_row("**LambdaRank completo**", summary, k, bold=True)}
 
 ### Por perfil, sin senal de sesion
@@ -961,6 +1217,13 @@ Importancia por ganancia, las {len(result['feature_importance'])} primeras.
         },
         "wasted_slots": result["wasted_slots"].to_dict(orient="records"),  # type: ignore[union-attr]
         "cart_ablation": result["cart_ablation"].to_dict(orient="records"),  # type: ignore[union-attr]
+        "ranker": {
+            "relevance": cfg.ranker.relevance,
+            "label_gain": list(cfg.ranker.label_gain),
+            "n_train_queries_sku": result["n_train_queries_sku"],
+        },
+        "objective_ablation": result["objective_ablation"].to_dict(orient="records"),  # type: ignore[union-attr]
+        "rank_feature_importance": result["rank_feature_importance"].to_dict(orient="records"),  # type: ignore[union-attr]
     }
     (reports / "metrics.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"

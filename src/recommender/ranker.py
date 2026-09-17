@@ -12,9 +12,16 @@ El **grupo** es la query, es decir la cesta. Todas las filas de una cesta van ju
 orden contiguo: LightGBM lee los tamanos de grupo, no los identificadores, asi que el
 DataFrame se ordena por `basket_id` antes de construir el `Dataset`.
 
+## Relevancia graduada (punto A4)
+
+Hasta el punto A4 la relevancia era binaria (SKU exacto si o no). Ahora es graduada: 2
+para el SKU exacto, 1 para otro producto de una categoria del target y 0 para el resto,
+con ganancias 0, 1 y 3 (`RankerConfig`). Asi el ranker aprende tambien *que categoria
+toca*, que es lo que la demo ensena, sin dejar de preferir la referencia exacta.
+
 ## Grupos sin ningun acierto
 
-Si ninguna de las fuentes propuso un solo producto del target, la query no tiene gradiente
+Si ninguna de las fuentes propuso un solo producto relevante, la query no tiene gradiente
 que aportar y solo aporta ruido al entrenamiento; se descarta **del train**. En test se
 mantiene: su NDCG@5 es 0 y forma parte honesta de la metrica, porque es un fallo real de la
 primera etapa.
@@ -65,6 +72,7 @@ def collect_for_ranking(df: DataFrame, *, with_label: bool = True) -> pd.DataFra
     selected += [F.col(c).cast("float").alias(c) for c in FEATURE_COLUMNS]
     if with_label:
         selected.append(F.col("label").cast("byte").alias("label"))
+        selected.append(F.col("relevance").cast("byte").alias("relevance"))
 
     # Cacheada: sin cache, cada trozo recalcularia la matriz entera.
     projected = df.select(*selected).cache()
@@ -118,10 +126,18 @@ def group_sizes(pdf: pd.DataFrame) -> np.ndarray:
     return pdf.groupby("basket_id", sort=False).size().to_numpy()
 
 
-def drop_groups_without_positives(pdf: pd.DataFrame) -> pd.DataFrame:
-    """Quita del entrenamiento las cestas en las que ningun candidato es un acierto."""
-    positives = pdf.groupby("basket_id")["label"].transform("max")
-    return pdf.loc[positives > 0].reset_index(drop=True)
+def groups_with_positives(pdf: pd.DataFrame, column: str = "label") -> pd.Series:
+    """Mascara de filas cuyas cestas tienen al menos un candidato con `column` > 0."""
+    return pdf.groupby("basket_id", sort=False)[column].transform("max") > 0
+
+
+def drop_groups_without_positives(pdf: pd.DataFrame, column: str = "label") -> pd.DataFrame:
+    """Quita del entrenamiento las cestas en las que ningun candidato es un acierto.
+
+    Con la relevancia graduada (`column="relevance"`) basta con acertar la categoria: una
+    cesta cuyo SKU no llego al pool sigue ensenando al ranker que categorias tocaban.
+    """
+    return pdf.loc[groups_with_positives(pdf, column)].reset_index(drop=True)
 
 
 def train_ranker(
@@ -133,6 +149,9 @@ def train_ranker(
     verbose_eval: int = 50,
 ):
     """Entrena el LambdaRank con parada temprana sobre la NDCG@5 de validacion.
+
+    La etiqueta y sus ganancias las fija `cfg.relevance`, y la NDCG de validacion se mide
+    con esas mismas ganancias: con la relevancia graduada no es comparable con la binaria.
 
     Args:
         train: Matriz de entrenamiento, ya ordenada por `basket_id`.
@@ -153,7 +172,7 @@ def train_ranker(
     def make(pdf: pd.DataFrame, reference=None):
         return lgb.Dataset(
             pdf[columns],
-            label=pdf["label"],
+            label=pdf[cfg.label_column],
             group=group_sizes(pdf),
             categorical_feature=categorical,
             # LightGBM se queda con su copia binarizada; la matriz original
@@ -169,8 +188,8 @@ def train_ranker(
         "objective": cfg.objective,
         "metric": cfg.metric,
         "ndcg_eval_at": list(cfg.eval_at),
-        # Relevancia binaria: el producto entra en la cesta o no entra.
-        "label_gain": [0, 1],
+        # Ganancia de cada nivel de relevancia (`RankerConfig.relevance`, punto A4).
+        "label_gain": cfg.gains,
         "learning_rate": cfg.learning_rate,
         "num_leaves": cfg.num_leaves,
         "min_data_in_leaf": cfg.min_data_in_leaf,

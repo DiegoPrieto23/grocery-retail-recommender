@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 from src.etl.repurchase import category_repurchase_days
@@ -55,7 +55,8 @@ class AsOfHistory:
         products: `basket_id`, `product_id`, `hist_n_baskets`, `hist_units`,
             `hist_last_day`.
         categories: `basket_id`, `category`, `cat_n_purchase_days`, `cat_last_day`,
-            `cat_expected_days`.
+            `cat_expected_days` y el ranking personal (`cat_freq_rank`,
+            `cat_freq_share`, `cat_due_rank`).
         customer: `basket_id`, `cust_frequency`, `cust_avg_ticket`, `cust_last_day`,
             `cust_n_products`.
     """
@@ -165,7 +166,45 @@ def asof_history(
         expected.cast("double").alias("cat_expected_days"),
     )
 
+    # --- Ranking personal de categorias (punto A4) ---
+    customer_days = purchase_days.groupBy("basket_id").agg(
+        F.countDistinct("_past_day").alias("_customer_days")
+    )
+    per_category = with_category_ranks(
+        per_category.join(q.select("basket_id", "_query_day"), "basket_id").join(
+            customer_days, "basket_id"
+        )
+    ).drop("_query_day", "_customer_days")
+
     return AsOfHistory(products=per_product, categories=per_category, customer=customer)
+
+
+def with_category_ranks(df: DataFrame) -> DataFrame:
+    """`cat_freq_rank`, `cat_freq_share` y `cat_due_rank` de cada categoria de la query.
+
+    `df` es la tabla cliente x categoria de una query (`basket_id`, `category`,
+    `cat_n_purchase_days`, `cat_last_day`, `cat_expected_days`) con `_query_day` y
+    `_customer_days` (dias de compra distintos del cliente). El `cat_due` se evalua el dia
+    de la query con las mismas formulas que `with_repurchase_state`. Los puestos son
+    `dense_rank`: dos categorias con la misma cifra comparten puesto, asi que el
+    resultado no depende de ningun desempate.
+    """
+    n = F.col("cat_n_purchase_days")
+    ratio = fx.overdue_ratio(
+        F.datediff("_query_day", "cat_last_day").cast("double"), F.col("cat_expected_days")
+    )
+    need = fx.category_need_score(n, fx.is_due(ratio, SPARK_OPS))
+    by_query = Window.partitionBy("basket_id")
+    return (
+        df.withColumn("cat_freq_share", n / F.col("_customer_days").cast("double"))
+        .withColumn("_need", need)
+        .withColumn("cat_freq_rank", F.dense_rank().over(by_query.orderBy(n.desc())).cast("double"))
+        .withColumn(
+            "cat_due_rank",
+            F.dense_rank().over(by_query.orderBy(F.col("_need").desc())).cast("double"),
+        )
+        .drop("_need")
+    )
 
 
 def with_repurchase_state(df: DataFrame) -> DataFrame:

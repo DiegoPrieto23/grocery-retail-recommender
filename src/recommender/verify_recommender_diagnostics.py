@@ -18,7 +18,12 @@ hoc. Mide, **sobre las mismas queries de test** que el LambdaRank
    con su valor realizado y su valor esperado por Monte Carlo;
 4. los huecos del top-5 que caen en categorias que el cliente acababa de comprar (punto
    A1), para el LambdaRank actual y, si estan en `--reference` (por defecto
-   `predictions/pre_a1/`), para las predicciones congeladas antes del cambio.
+   `predictions/pre_a1/`), para las predicciones congeladas antes del cambio;
+5. el objetivo del ranker (punto A4): la ablacion con relevancia binaria de SKU que deja
+   el pipeline (`predictions/recommendations_test_sku.parquet`) y, si estan en
+   `--reference-a4` (por defecto `predictions/pre_a4/`), las predicciones del modelo
+   congelado en `baseline_pre_a4.json`. Todos los sistemas llevan la NDCG@5 graduada, la
+   metrica principal.
 
 Escribe `reports/recommender/diagnostics.json` y la seccion de diagnostico de
 `reports/recommender/metrics.md`, y termina con codigo de salida 1 si falla alguna
@@ -63,6 +68,13 @@ PRE_A1_SNAPSHOT = "baseline_pre_a1.json"
 DEFAULT_REFERENCE_DIR = Path("predictions/pre_a1")
 REFERENCE = "lambdarank_pre_a1"
 
+# Lo mismo para el punto A4: el modelo con relevancia binaria que habia en disco antes del
+# cambio, y la ablacion con relevancia binaria que reentrena el pipeline actual.
+PRE_A4_SNAPSHOT = pl.PRE_A4_FILENAME
+DEFAULT_REFERENCE_A4_DIR = Path("predictions/pre_a4")
+REFERENCE_A4 = "lambdarank_pre_a4"
+LAMBDARANK_SKU = "lambdarank_sku"
+
 # Artefactos de los que salen las cifras del LambdaRank. El snapshot guarda su sha256
 # para saber, mas adelante, si una cifra se calculo sobre estas predicciones o sobre otras.
 PREDICTION_FILES = (
@@ -93,7 +105,9 @@ ORACLE_SKU = "oracle_sku"
 SYSTEM_LABELS: dict[str, str] = {
     ORACLE_CAT: "Oraculo de categoria (techo)",
     ORACLE_SKU: "Oraculo de SKU (techo)",
-    LAMBDARANK: "LambdaRank (predicciones en disco)",
+    LAMBDARANK: "LambdaRank servido: relevancia graduada (predicciones en disco)",
+    LAMBDARANK_SKU: "LambdaRank con relevancia binaria de SKU (ablacion A4)",
+    REFERENCE_A4: "LambdaRank antes de A4 (relevancia binaria, congelado)",
     REFERENCE: "LambdaRank antes de A1 (historial congelado)",
     **ev.BASELINE_LABELS,
 }
@@ -178,9 +192,11 @@ def load_test_set(predictions_dir: Path) -> TestSet:
     )
 
 
-def load_reference(reference_dir: Path) -> pd.DataFrame | None:
-    """Top-5 de referencia (antes de A1), si existe. `measure` comprueba que es el bueno."""
-    path = reference_dir / "recommendations_test.parquet"
+def load_reference(
+    reference_dir: Path, filename: str = "recommendations_test.parquet"
+) -> pd.DataFrame | None:
+    """Top-5 de referencia, si existe. `measure` comprueba que es el bueno."""
+    path = reference_dir / filename
     if not path.is_file():
         return None
     return pd.read_parquet(path)[["basket_id", "product_id", "rank", "label"]]
@@ -322,7 +338,14 @@ def measure(
     pre_a1: dict | None = None,
     reference_sha: str | None = None,
     window_start: dt.date | None = None,
+    extra_systems: dict[str, pd.DataFrame] | None = None,
+    extra_checks: list[tuple[str, bool, str]] | None = None,
 ) -> Diagnostics:
+    """Mide todos los sistemas sobre las mismas queries.
+
+    `extra_systems` son top-k adicionales (por nombre de `SYSTEM_LABELS`) que solo se
+    resumen, sin analisis de recencia: la ablacion y el modelo congelado del punto A4.
+    """
     products = history["products"]
     queries = test.queries
 
@@ -330,7 +353,7 @@ def measure(
         return ev.system_summary(top_k, queries, test.target, products, k=k, prefix=test.prefix)
 
     summaries: dict[str, pd.DataFrame] = {}
-    checks: list[tuple[str, bool, str]] = []
+    checks: list[tuple[str, bool, str]] = list(extra_checks or [])
 
     # --- Oraculo ---
     inputs = orc.load_inputs(oracle_dir, queries, test.context, products)
@@ -392,6 +415,8 @@ def measure(
     )
     baseline_lists = ev.run_baselines(data, k=k, seed=seed, min_confidence=min_confidence)
     for name, top_k in baseline_lists.items():
+        summaries[name] = summary(top_k)
+    for name, top_k in (extra_systems or {}).items():
         summaries[name] = summary(top_k)
 
     # --- Comprobaciones del techo ---
@@ -526,7 +551,8 @@ def headline(diag: Diagnostics) -> dict[str, object]:
     ceiling = float(total[ORACLE_CAT][col])
     sku_col = f"sku_hit_rate@{k}"
     sku_ceiling = float(total[ORACLE_SKU][sku_col])
-    systems = [LAMBDARANK, *ev.BASELINE_LABELS, *[n for n in (REFERENCE,) if n in total]]
+    optional = (LAMBDARANK_SKU, REFERENCE_A4, REFERENCE)
+    systems = [LAMBDARANK, *ev.BASELINE_LABELS, *[n for n in optional if n in total]]
     return {
         "best_baseline": best,
         "best_baseline_cat_hit_rate": baselines[best],
@@ -547,7 +573,7 @@ def _system_order(diag: Diagnostics) -> list[str]:
         ev.BASELINE_LABELS,
         key=lambda n: -float(diag.summaries[n].iloc[0][f"cat_hit_rate@{k}"]),
     )
-    before = [REFERENCE] if REFERENCE in diag.summaries else []
+    before = [n for n in (LAMBDARANK_SKU, REFERENCE_A4, REFERENCE) if n in diag.summaries]
     return [ORACLE_CAT, ORACLE_SKU, LAMBDARANK, *before, *rest]
 
 
@@ -637,6 +663,23 @@ def _recency_markdown(diag: Diagnostics) -> list[str]:
     return lines
 
 
+def _objective_bullets(diag: Diagnostics, h: dict[str, object]) -> list[str]:
+    """Lectura del punto A4: que cambia al pasar de relevancia binaria a graduada."""
+    if LAMBDARANK_SKU not in diag.summaries:
+        return []
+    k = diag.k
+    now, sku = diag.summaries[LAMBDARANK].iloc[0], diag.summaries[LAMBDARANK_SKU].iloc[0]
+    cat, skuc, graded = f"cat_hit_rate@{k}", f"sku_hit_rate@{k}", f"ndcg_graded@{k}"
+    best = h["best_baseline_cat_hit_rate"]
+    return [
+        f"- **Objetivo del ranker (A4):** con relevancia binaria de SKU, cat_hit_rate@{k} "
+        f"{_num(sku[cat])} ({_pp(sku[cat] - best)} frente al mejor baseline); con la "
+        f"graduada servida, {_num(now[cat])} ({_pp(now[cat] - best)}). sku_hit_rate@{k} "
+        f"pasa de {_num(sku[skuc])} a {_num(now[skuc])} y la NDCG@{k} graduada de "
+        f"{_num(sku[graded])} a {_num(now[graded])}.",
+    ]
+
+
 def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: str) -> str:
     k = diag.k
     h = headline(diag)
@@ -646,9 +689,10 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
     sku_ceiling = h["ceiling_sku_hit_rate"]
 
     main = [
-        f"| Sistema | cat_hit_rate@{k} | % techo | cat_precision@{k} | sku_hit_rate@{k} "
-        f"| % techo SKU | sku_precision@{k} | NDCG@{k} | Huecos regalados |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"| Sistema | NDCG@{k} graduada | cat_hit_rate@{k} | % techo | cat_precision@{k} "
+        f"| sku_hit_rate@{k} | % techo SKU | sku_precision@{k} | NDCG@{k} SKU "
+        "| Huecos regalados |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name in _system_order(diag):
         row = total[name]
@@ -661,6 +705,7 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
             + " | ".join(
                 [
                     label,
+                    _num(row[col("ndcg_graded")]),
                     _num(row[col("cat_hit_rate")]),
                     "—" if is_oracle else _pct(row[col("cat_hit_rate")] / cat_ceiling),
                     _num(row[col("cat_precision")]),
@@ -729,8 +774,9 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         f"queries de test de las predicciones en disco (sha256 de "
         f"`recommendations_test.parquet`: `{predictions_sha[:12]}`). El oraculo necesita "
         "antes `python -m data_generation.export_oracle`. Esta seccion no la reescribe el "
-        "pipeline: si se reentrena, hay que volver a lanzar el verificador. Puntos A3, A6 "
-        "y M8 de `docs/diagnostico-fase7.md`.",
+        "pipeline: si se reentrena, hay que volver a lanzar el verificador. Puntos A3, A4, "
+        "A6 y M8 de `docs/diagnostico-fase7.md`. La metrica principal es la NDCG@"
+        f"{k} graduada (3 por SKU exacto, 1 por categoria; `evaluate.category_metrics`).",
         "",
         "### Lectura rapida",
         "",
@@ -742,6 +788,7 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         f"alcanza el {_pct(pct[LAMBDARANK])} y el mejor baseline el {_pct(pct[best])}.",
         f"- **Techo de sku_hit_rate@{k}:** {_num(sku_ceiling)}. El LambdaRank alcanza el "
         f"{_pct(h['pct_of_sku_ceiling'][LAMBDARANK])}.",
+        *_objective_bullets(diag, h),
         "",
         "### Todos los sistemas, total",
         "",
@@ -860,7 +907,52 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_REFERENCE_DIR,
         help="Predicciones de antes del punto A1, para comparar (se ignora si no existen).",
     )
+    parser.add_argument(
+        "--reference-a4",
+        type=Path,
+        default=DEFAULT_REFERENCE_A4_DIR,
+        help="Predicciones de antes del punto A4, para comparar (se ignora si no existen).",
+    )
     return parser.parse_args(argv)
+
+
+def _objective_systems(
+    cfg: RecommenderConfig, reference_a4: Path, lambdarank: pd.DataFrame
+) -> tuple[dict[str, pd.DataFrame], list[tuple[str, bool, str]]]:
+    """Los dos sistemas del punto A4 que haya en disco, con su comprobacion de origen."""
+    systems: dict[str, pd.DataFrame] = {}
+    checks: list[tuple[str, bool, str]] = []
+    queries = set(lambdarank["basket_id"])
+
+    sku = load_reference(Path(cfg.predictions_dir), pl.SKU_PREDICTIONS_FILENAME)
+    if sku is not None:
+        systems[LAMBDARANK_SKU] = sku
+        same = set(sku["basket_id"]) == queries
+        checks.append(
+            (
+                "La ablacion con relevancia binaria cubre las mismas queries que el LambdaRank",
+                same,
+                "",
+            )
+        )
+
+    frozen = load_reference(reference_a4)
+    snapshot_path = Path(cfg.reports_dir) / PRE_A4_SNAPSHOT
+    if frozen is not None and snapshot_path.is_file():
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        sha = _sha256(reference_a4 / "recommendations_test.parquet")
+        same_file = sha == snapshot["predicciones_sha256"]["recommendations_test.parquet"]
+        same = same_file and set(frozen["basket_id"]) == queries
+        checks.append(
+            (
+                "Las predicciones de referencia (antes de A4) son las congeladas y cubren "
+                "las mismas queries",
+                same,
+                "sha256 = el de " + PRE_A4_SNAPSHOT if same_file else "sha256 distinto",
+            )
+        )
+        systems[REFERENCE_A4] = frozen
+    return systems, checks
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -897,6 +989,7 @@ def main(argv: list[str] | None = None) -> int:
     reference_sha = (
         _sha256(args.reference / "recommendations_test.parquet") if reference is not None else None
     )
+    extras, extra_checks = _objective_systems(cfg, args.reference_a4, test.lambdarank)
     spark = get_spark("grocery-recommender-diagnostics", driver_memory="6g")
     try:
         history = fit_history(spark, cfg, test.queries)
@@ -918,6 +1011,8 @@ def main(argv: list[str] | None = None) -> int:
         pre_a1=pre_a1,
         reference_sha=reference_sha,
         window_start=cfg.test_start,
+        extra_systems=extras,
+        extra_checks=extra_checks,
     )
     predictions_sha = _sha256(Path(cfg.predictions_dir) / "recommendations_test.parquet")
     block = render_markdown(diag, cfg, predictions_sha)

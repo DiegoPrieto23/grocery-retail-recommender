@@ -36,6 +36,8 @@ import datetime as dt
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.recommender.schema import RELEVANCE_GAIN
+
 SEED = 42
 
 # Bordes de las tres ventanas (inclusivo por la izquierda, exclusivo por la derecha).
@@ -105,13 +107,32 @@ class ALSConfig:
     seed: int = SEED
 
 
+# Las dos funciones objetivo del ranker (punto A4 del diagnostico).
+RELEVANCE_GRADED = "graded"
+RELEVANCE_BINARY_SKU = "sku"
+
+
 @dataclass(frozen=True)
 class RankerConfig:
-    """Hiperparametros del LightGBM con objetivo `lambdarank`."""
+    """Hiperparametros del LightGBM con objetivo `lambdarank`.
+
+    `relevance` elige la etiqueta que optimiza la NDCG del LambdaRank:
+
+    - `"graded"` (la servida desde el punto A4): columna `relevance` con 2 para el SKU
+      exacto y 1 para la misma categoria, y ganancias `label_gain` = 0, 1, 3. Es la
+      metrica principal del proyecto (`CHALLENGE.md`).
+    - `"sku"`: la relevancia binaria de SKU exacto (columna `label`) con ganancias 0, 1,
+      que es lo que se optimizaba hasta el punto A4. Se sigue entrenando como ablacion.
+
+    Tambien decide que queries se descartan del entrenamiento por no tener gradiente:
+    las que no tienen ningun candidato con relevancia positiva.
+    """
 
     objective: str = "lambdarank"
     metric: str = "ndcg"
     eval_at: tuple[int, ...] = (5,)
+    relevance: str = RELEVANCE_GRADED
+    label_gain: tuple[float, ...] = RELEVANCE_GAIN
     learning_rate: float = 0.05
     num_leaves: int = 63
     min_data_in_leaf: int = 100
@@ -122,6 +143,20 @@ class RankerConfig:
     num_boost_round: int = 800
     early_stopping_rounds: int = 50
     seed: int = SEED
+
+    def __post_init__(self) -> None:
+        if self.relevance not in (RELEVANCE_GRADED, RELEVANCE_BINARY_SKU):
+            raise ValueError(f"relevance desconocida: {self.relevance!r}")
+
+    @property
+    def label_column(self) -> str:
+        """Columna de la matriz que hace de etiqueta."""
+        return "relevance" if self.relevance == RELEVANCE_GRADED else "label"
+
+    @property
+    def gains(self) -> list[float]:
+        """`label_gain` de LightGBM para la etiqueta elegida."""
+        return list(self.label_gain) if self.relevance == RELEVANCE_GRADED else [0.0, 1.0]
 
 
 @dataclass(frozen=True)

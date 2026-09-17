@@ -133,6 +133,16 @@ def is_due(ratio: Any, ops: Ops) -> Any:
     return ops.coalesce(ops.where(ratio >= 1.0, 1.0, 0.0), 0.0)
 
 
+def category_need_score(n_purchase_days: Any, cat_due: Any) -> Any:
+    """Cuanto necesita el cliente una categoria: su frecuencia, doblada si ya le toca.
+
+    Es el criterio del baseline `personal_due` (`evaluate.baseline_personal_due`) y el de
+    la feature `cat_due_rank`. `cat_due` tiene que llegar ya sin nulos (`is_due`). Solo
+    usa aritmetica, asi que vale igual para numpy, pandas y una `Column` de Spark.
+    """
+    return n_purchase_days * (1.0 + cat_due)
+
+
 # --------------------------------------------------------------------------------------
 # Fuente `hist`
 # --------------------------------------------------------------------------------------

@@ -5,7 +5,7 @@ con el mismo booster LightGBM que entreno la Fase 3. No entrena nada.
 
 ## Que garantiza que esto da lo mismo que Spark
 
-Nada, salvo un test. Este modulo es una reimplementacion, y una reimplementacion de 57
+Nada, salvo un test. Este modulo es una reimplementacion, y una reimplementacion de 60
 features es justo el sitio donde se cuela una diferencia silenciosa: un `left join` que
 descarta filas, un nulo que se rellena con 0 en un lado y se queda NaN en el otro, un
 desempate distinto al ordenar. Por eso existe `tests/test_serving_parity.py`, que pasa
@@ -55,6 +55,7 @@ from src.recommender.schema import (
     CART_FEATURES,
     CATEGORICAL_FEATURES,
     CHANNELS,
+    CUSTOMER_CATEGORY_RANK_FEATURES,
     FEATURE_COLUMNS,
     LOYALTY,
     SOURCE_COLUMNS,
@@ -70,6 +71,16 @@ ALL_SOURCE_COLUMNS: tuple[str, ...] = tuple(
     column for columns in SOURCE_COLUMNS.values() for column in columns
 )
 
+# Columnas de `AsOfHistory.categories`, en el orden de `history.asof_history`.
+CATEGORY_HISTORY_COLUMNS: tuple[str, ...] = (
+    "basket_id",
+    "category",
+    "cat_n_purchase_days",
+    "cat_last_day",
+    "cat_expected_days",
+    *CUSTOMER_CATEGORY_RANK_FEATURES,
+)
+
 # Mismos rellenos que `build_feature_matrix`: aqui un 0 significa algo ("nunca lo ha
 # comprado", "no estaba de oferta"), no un dato que falte.
 ZERO_FILLED: dict[str, float] = {
@@ -78,6 +89,7 @@ ZERO_FILLED: dict[str, float] = {
     "hist_ever_bought": 0.0,
     "cat_n_purchase_days": 0.0,
     "cat_due": 0.0,
+    "cat_freq_share": 0.0,
     "is_on_promo": 0.0,
     "promo_discount": 0.0,
     "sess_viewed": 0.0,
@@ -374,9 +386,9 @@ def asof_history(queries: pd.DataFrame, bundle: ServingBundle) -> AsOfHistory:
     days = lines[["basket_id", "customer_id", "category", "_past_day"]].drop_duplicates()
     if days.empty:
         # Nadie con historial (clientes anonimos o nuevos): tablas vacias con su esquema.
-        empty_categories = _empty(
-            ["basket_id", "category", "cat_n_purchase_days", "cat_last_day", "cat_expected_days"]
-        ).astype({"cat_last_day": "datetime64[ns]", "cat_expected_days": float})
+        empty_categories = _empty(CATEGORY_HISTORY_COLUMNS).astype(
+            {"cat_last_day": "datetime64[ns]", "cat_expected_days": float}
+        )
         return AsOfHistory(products=products, categories=empty_categories, customer=customer)
     categories = (
         days.groupby(["basket_id", "customer_id", "category"], as_index=False)
@@ -402,10 +414,27 @@ def asof_history(queries: pd.DataFrame, bundle: ServingBundle) -> AsOfHistory:
         fx.household_factor(categories["household_size_est"], PANDAS_OPS),
         PANDAS_OPS,
     )
-    categories = categories[
-        ["basket_id", "category", "cat_n_purchase_days", "cat_last_day", "cat_expected_days"]
-    ]
+
+    # --- Ranking personal de categorias (punto A4) ---
+    customer_days = days.groupby("basket_id")["_past_day"].nunique().rename("_customer_days")
+    categories = categories.merge(q[["basket_id", "_query_day"]], on="basket_id").merge(
+        customer_days, left_on="basket_id", right_index=True
+    )
+    categories = _with_category_ranks(categories)[list(CATEGORY_HISTORY_COLUMNS)]
     return AsOfHistory(products=products, categories=categories, customer=customer)
+
+
+def _with_category_ranks(df: pd.DataFrame) -> pd.DataFrame:
+    """Espejo de `history.with_category_ranks` (mismo `dense_rank`, mismas formulas)."""
+    n = df["cat_n_purchase_days"]
+    days_since = (df["_query_day"] - pd.to_datetime(df["cat_last_day"])).dt.days.astype(float)
+    ratio = fx.overdue_ratio(days_since, df["cat_expected_days"])
+    need = fx.category_need_score(n, fx.is_due(ratio, PANDAS_OPS))
+    df["cat_freq_share"] = n / df["_customer_days"].astype(float)
+    by_query = df.assign(_need=need).groupby("basket_id")
+    df["cat_freq_rank"] = by_query["cat_n_purchase_days"].rank(method="dense", ascending=False)
+    df["cat_due_rank"] = by_query["_need"].rank(method="dense", ascending=False)
+    return df
 
 
 def _with_repurchase_state(df: pd.DataFrame) -> pd.DataFrame:

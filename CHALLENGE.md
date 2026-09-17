@@ -104,6 +104,26 @@ para los cuatro:
 **Métrica:** NDCG@5 y Recall@5 sobre cestas reales ocultadas en el split de test (holdout
 por `basket_id`, nunca visto en entrenamiento).
 
+**Métrica principal (decidida en el punto A4 de `docs/diagnostico-fase7.md`): NDCG@5 con
+relevancia graduada.** Cada hueco del top-5 vale 3 si es el SKU exacto de un producto que
+el cliente acabó comprando, 1 si no lo es pero su categoría sí la compró, y 0 si no
+(relevancia 2 / 1 / 0, `label_gain = [0, 1, 3]`). Es la función objetivo del LambdaRank y
+la cifra con la que se decide entre dos versiones del sistema. Motivo: la demo y el
+relato de negocio hablan de *acertar la categoría* ("X de 5 acertaron la categoría"),
+mientras que el ranker optimizaba solo el SKU exacto; con una NDCG binaria de SKU, una
+mejora en categoría podía empeorar sin que nadie lo viera. La graduada premia los dos
+niveles y mantiene el SKU por delante.
+
+Siempre se reporta junto a dos métricas legibles, que son las que se comunican:
+
+- `cat_hit_rate@5`: cestas en las que al menos una recomendación es de una categoría que
+  el cliente compró (lo que enseña la demo);
+- `sku_hit_rate@5`: cestas en las que al menos una es el SKU exacto.
+
+Un cambio que suba la principal a costa de bajar cualquiera de las dos se discute
+explícitamente, no se acepta en silencio. La NDCG@5 binaria de SKU, Recall@5 y F1@5 se
+siguen publicando como métricas secundarias (y para comparar con fases anteriores).
+
 ### Tarea 3b — Next Best Action
 
 Un modelo de **propensión** (LightGBM o logística) estima, por cliente, la probabilidad de:

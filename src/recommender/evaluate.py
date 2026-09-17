@@ -33,6 +33,23 @@ Dos decisiones que cambian el numero y conviene tener escritas:
   Por eso se reporta tambien `hit_rate@5` -- la fraccion de queries con al menos un acierto
   --, que no tiene ese techo y se lee mejor en negocio: "en cuantas cestas acertamos algo".
 
+## La metrica principal: NDCG@5 graduada (punto A4)
+
+`ndcg_graded@5` (en `category_metrics`) es la metrica principal del proyecto
+(`CHALLENGE.md`) y la que optimiza el ranker. Cada hueco gana segun su relevancia:
+
+    ganancia_i = 3 si es el SKU exacto de un producto del target
+                 1 si no lo es, pero su categoria esta en el target
+                 0 en otro caso
+    IDCG@k     = 3 x suma_{i=1..m} 1 / log2(i + 1) + suma_{i=m+1..k} 1 / log2(i + 1),
+                 con m = min(k, T)
+
+El ideal es el de la lista que la relevancia premia: los `T` SKU exactos arriba y el
+resto de huecos con otras referencias de esas categorias (hay 8 por categoria). Asi la
+NDCG graduada nunca pasa de 1. Con el re-ranking servido (una referencia por categoria)
+los huecos de cola no se pueden llenar cuando `T < k`, igual que el Recall@5 no llega a 1
+cuando `T > k`: la cifra sirve para comparar sistemas, no como porcentaje de perfeccion.
+
 Todo se desglosa por los cuatro perfiles de `CHALLENGE.md`, que es donde se ve si el
 sistema aguanta el cold-start o solo funciona con clientes conocidos.
 
@@ -47,8 +64,10 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from src.recommender import formulas as fx
 from src.recommender import rerank as rr
 from src.recommender.config import RerankConfig
+from src.recommender.schema import RELEVANCE_CATEGORY, RELEVANCE_GAIN, RELEVANCE_SKU
 from src.recommender.splits import PROFILE_LABELS
 
 # Descuento posicional 1 / log2(i+1), precalculado para los primeros puestos.
@@ -59,6 +78,16 @@ def _idcg(n_target: np.ndarray, k: int) -> np.ndarray:
     """DCG del orden perfecto: aciertos en los `min(k, T)` primeros huecos."""
     ideal = np.cumsum(_DISCOUNT[:k])
     return ideal[np.clip(n_target, 1, k) - 1]
+
+
+def _graded_idcg(n_target: np.ndarray, k: int) -> np.ndarray:
+    """IDCG@k de la NDCG graduada: `min(k, T)` huecos de SKU exacto y el resto de categoria."""
+    sku_gain = RELEVANCE_GAIN[RELEVANCE_SKU]
+    cat_gain = RELEVANCE_GAIN[RELEVANCE_CATEGORY]
+    discount = _DISCOUNT[:k]
+    m = np.clip(n_target, 1, k)
+    head = np.cumsum(discount)[m - 1]
+    return sku_gain * head + cat_gain * (discount.sum() - head)
 
 
 def top_k_predictions(
@@ -219,14 +248,15 @@ def category_metrics(
     dos limita al sistema.
 
     Args:
-        top_k: Salida de `top_k_predictions`.
+        top_k: Salida de `top_k_predictions`, con `label` y `rank`.
         target: Pares `(basket_id, product_id)` que habia que adivinar.
         product_category: Catalogo con `product_id` y `category`.
-        queries: Una fila por query, con `basket_id` y `profile`.
+        queries: Una fila por query, con `basket_id`, `profile` y `n_target`.
         k: Longitud de la lista.
 
     Returns:
-        Resumen por perfil con `hit_rate` y `precision` de categoria y de SKU.
+        Resumen por perfil con la NDCG graduada (la metrica principal, ver la cabecera
+        del modulo) y `hit_rate` y `precision` de categoria y de SKU.
     """
     catalog = product_category[["product_id", "category"]]
     target_cats = (
@@ -240,17 +270,28 @@ def category_metrics(
         for basket, cat in zip(recs["basket_id"], recs["category"])
     ]
 
-    per_query = recs.groupby("basket_id").agg(
-        cat_hits=("cat_ok", "sum"), sku_hits=("label", "sum")
+    relevance = np.where(
+        recs["label"] == 1,
+        RELEVANCE_SKU,
+        np.where(recs["cat_ok"], RELEVANCE_CATEGORY, 0),
     )
-    out = queries[["basket_id", "profile"]].copy()
+    recs["gain"] = np.asarray(RELEVANCE_GAIN)[relevance] * _DISCOUNT[recs["rank"].to_numpy() - 1]
+
+    per_query = recs.groupby("basket_id").agg(
+        cat_hits=("cat_ok", "sum"), sku_hits=("label", "sum"), dcg=("gain", "sum")
+    )
+    out = queries[["basket_id", "profile", "n_target"]].copy()
     out["cat_hits"] = out["basket_id"].map(per_query["cat_hits"]).fillna(0)
     out["sku_hits"] = out["basket_id"].map(per_query["sku_hits"]).fillna(0)
+    out["ndcg_graded"] = out["basket_id"].map(per_query["dcg"]).fillna(0.0) / _graded_idcg(
+        out["n_target"].to_numpy(), k
+    )
 
     def block(frame: pd.DataFrame, name: str) -> dict:
         return {
             "grupo": name,
             "n_queries": int(len(frame)),
+            f"ndcg_graded@{k}": float(frame["ndcg_graded"].mean()),
             f"cat_hit_rate@{k}": float((frame["cat_hits"] > 0).mean()),
             f"cat_precision@{k}": float((frame["cat_hits"] / k).mean()),
             f"sku_hit_rate@{k}": float((frame["sku_hits"] > 0).mean()),
@@ -716,8 +757,8 @@ def baseline_personal_due(grid: _Grid, k: int, favorite: np.ndarray) -> pd.DataF
     day = pd.to_datetime(grid.data.queries["basket_day"]).astype("int64").to_numpy()
     with np.errstate(invalid="ignore"):
         ratio = (day[:, None] // _NS_PER_DAY - last) / expected
-    due = np.nan_to_num(ratio, nan=0.0) >= 1.0
-    primary = _personal_category_frequency(grid) * (1.0 + due)
+    due = (np.nan_to_num(ratio, nan=0.0) >= 1.0).astype(float)
+    primary = fx.category_need_score(_personal_category_frequency(grid), due)
     return _category_lists(grid, primary, favorite, k)
 
 

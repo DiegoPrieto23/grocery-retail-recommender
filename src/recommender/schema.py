@@ -57,6 +57,23 @@ CUSTOMER_CATEGORY_FEATURES: tuple[str, ...] = (
     "cat_due",
 )
 
+# Ranking personal de categorias (punto A4 del diagnostico). Las columnas de arriba
+# describen la categoria del candidato aislada; estas la comparan con el resto de
+# categorias del mismo cliente, que es lo que hace el mejor baseline de categoria
+# ("frecuencia personal x due_for_repurchase") y un arbol no puede reconstruir fila a
+# fila. Todas as-of el dia de la cesta (`history.asof_history`).
+#
+# - `cat_freq_rank`: puesto de la categoria entre las del cliente por dias de compra
+#   (1 = la que mas compra; empates con el mismo puesto). Nulo si nunca la compro.
+# - `cat_freq_share`: parte de los dias de compra del cliente en que compro la categoria.
+# - `cat_due_rank`: puesto por `formulas.category_need_score` (frecuencia, doblada si ya
+#   le toca reponer), el mismo criterio que el baseline `personal_due`.
+CUSTOMER_CATEGORY_RANK_FEATURES: tuple[str, ...] = (
+    "cat_freq_rank",
+    "cat_freq_share",
+    "cat_due_rank",
+)
+
 PRODUCT_FEATURES: tuple[str, ...] = (
     "prod_pop_all",
     "prod_pop_recent",
@@ -108,11 +125,22 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     SOURCE_FEATURES
     + CUSTOMER_PRODUCT_FEATURES
     + CUSTOMER_CATEGORY_FEATURES
+    + CUSTOMER_CATEGORY_RANK_FEATURES
     + PRODUCT_FEATURES
     + CONTEXT_FEATURES
     + SESSION_FEATURES
     + CART_FEATURES
 )
+
+# Relevancia de cada candidato para el ranker (punto A4 del diagnostico). La metrica
+# principal del recomendador es la NDCG@5 con esta relevancia graduada (`CHALLENGE.md`):
+# acertar el SKU exacto vale mas que acertar solo la categoria, y acertar la categoria
+# vale mas que nada. La ganancia de cada nivel es `2**relevancia - 1`, la convencion
+# habitual de la NDCG, y es el `label_gain` de LightGBM.
+RELEVANCE_NONE = 0
+RELEVANCE_CATEGORY = 1  # su categoria esta en el target, pero no es el SKU exacto
+RELEVANCE_SKU = 2  # el SKU exacto esta en el target
+RELEVANCE_GAIN: tuple[float, ...] = (0.0, 1.0, 3.0)
 
 # Las que LightGBM debe tratar como categoricas y no como numeros ordenados.
 CATEGORICAL_FEATURES: tuple[str, ...] = (

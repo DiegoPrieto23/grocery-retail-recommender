@@ -6,9 +6,10 @@ Cada fila es un par `(query, candidato)` y todas sus columnas se calculan con in
 1. **Senal de cada fuente de candidatos** (`candidates.SOURCE_COLUMNS`): score y puesto de
    quien lo propuso, y cuantas fuentes coincidieron.
 2. **Cliente x producto y cliente x categoria**: cuantas veces lo ha comprado, cuando fue
-   la ultima, y el estado del ciclo de reposicion de su categoria (Tarea 2). Desde el
-   punto A1 del diagnostico se calculan **as-of el dia de la cesta** (`history.py`), no
-   con la foto del inicio de la ventana.
+   la ultima, el estado del ciclo de reposicion de su categoria (Tarea 2) y el puesto de
+   esa categoria en el ranking personal del cliente (punto A4). Desde el punto A1 del
+   diagnostico se calculan **as-of el dia de la cesta** (`history.py`), no con la foto
+   del inicio de la ventana.
 3. **Producto**: popularidad global y reciente, indice estacional del mes de la cesta,
    precio, marca blanca, perecedero.
 4. **Contexto y promocion**: canal, mes, dia de la semana, tamano del carrito, RFM del
@@ -43,10 +44,14 @@ from src.recommender.schema import (
     CHANNELS,
     CONTEXT_FEATURES,
     CUSTOMER_CATEGORY_FEATURES,
+    CUSTOMER_CATEGORY_RANK_FEATURES,
     CUSTOMER_PRODUCT_FEATURES,
     FEATURE_COLUMNS,
     LOYALTY,
     PRODUCT_FEATURES,
+    RELEVANCE_CATEGORY,
+    RELEVANCE_NONE,
+    RELEVANCE_SKU,
     SESSION_FEATURES,
     SOURCE_FEATURES,
 )
@@ -226,6 +231,42 @@ def customer_profile(history_baskets: DataFrame, history_items: DataFrame) -> Da
 
 
 # --------------------------------------------------------------------------------------
+# Etiquetas
+# --------------------------------------------------------------------------------------
+def with_relevance(df: DataFrame, target: DataFrame, products: DataFrame) -> DataFrame:
+    """Anade las dos etiquetas de cada candidato.
+
+    - `label`: 1 si el SKU exacto esta en el target. Es la que usan las metricas de SKU
+      (NDCG@5 binaria, recall, hit rate).
+    - `relevance`: la graduada que optimiza el ranker (punto A4): `RELEVANCE_SKU` si es el
+      SKU exacto, `RELEVANCE_CATEGORY` si no lo es pero su categoria esta en el target, y
+      `RELEVANCE_NONE` en otro caso.
+
+    `df` necesita `basket_id`, `product_id` y `category`.
+    """
+    sku = target.select("basket_id", "product_id").distinct().withColumn("label", F.lit(1))
+    categories = (
+        target.select("basket_id", "product_id")
+        .join(F.broadcast(products.select("product_id", "category")), "product_id")
+        .select("basket_id", "category")
+        .distinct()
+        .withColumn("_target_category", F.lit(True))
+    )
+    return (
+        df.join(sku, ["basket_id", "product_id"], "left")
+        .withColumn("label", F.coalesce(F.col("label"), F.lit(0)))
+        .join(categories, ["basket_id", "category"], "left")
+        .withColumn(
+            "relevance",
+            F.when(F.col("label") == 1, F.lit(RELEVANCE_SKU))
+            .when(F.col("_target_category"), F.lit(RELEVANCE_CATEGORY))
+            .otherwise(F.lit(RELEVANCE_NONE)),
+        )
+        .drop("_target_category")
+    )
+
+
+# --------------------------------------------------------------------------------------
 # Ensamblado
 # --------------------------------------------------------------------------------------
 def build_feature_matrix(
@@ -255,12 +296,12 @@ def build_feature_matrix(
         session_product: Vistas por producto antes del corte.
         session_query: Tamano de la sesion antes del corte.
         cart: Lo que hay en el carrito en el corte (`candidates.in_cart`).
-        target: Pares `(basket_id, product_id)` que hay que adivinar. Si se pasa, se anade
-            la columna `label`; si no, la matriz es de inferencia.
+        target: Pares `(basket_id, product_id)` que hay que adivinar. Si se pasa, se anaden
+            `label` y `relevance` (`with_relevance`); si no, la matriz es de inferencia.
 
     Returns:
         Un DataFrame con `basket_id`, `product_id`, `profile`, `FEATURE_COLUMNS` y, si
-        procede, `label`.
+        procede, `label` y `relevance`.
     """
     q = queries.select(
         "basket_id",
@@ -361,11 +402,7 @@ def build_feature_matrix(
     )
 
     if target is not None:
-        df = df.join(
-            target.select("basket_id", "product_id").distinct().withColumn("label", F.lit(1)),
-            ["basket_id", "product_id"],
-            "left",
-        ).withColumn("label", F.coalesce(F.col("label"), F.lit(0)))
+        df = with_relevance(df, target, products)
 
     # Los ceros son informativos aqui: "no lo ha comprado nunca", "no estaba de oferta",
     # "no lo habia visto". Dejarlos nulos obligaria a LightGBM a inventarse una direccion.
@@ -375,6 +412,7 @@ def build_feature_matrix(
         "hist_ever_bought": 0.0,
         "cat_n_purchase_days": 0.0,
         "cat_due": 0.0,
+        "cat_freq_share": 0.0,
         "is_on_promo": 0.0,
         "promo_discount": 0.0,
         "sess_viewed": 0.0,
@@ -390,5 +428,5 @@ def build_feature_matrix(
 
     keep = ["basket_id", "product_id", "profile", *FEATURE_COLUMNS]
     if target is not None:
-        keep.append("label")
+        keep += ["label", "relevance"]
     return df.select(*[F.col(c).alias(c) for c in keep])
