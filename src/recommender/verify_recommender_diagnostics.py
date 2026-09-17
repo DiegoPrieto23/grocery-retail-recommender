@@ -23,7 +23,9 @@ hoc. Mide, **sobre las mismas queries de test** que el LambdaRank
    el pipeline (`predictions/recommendations_test_sku.parquet`) y, si estan en
    `--reference-a4` (por defecto `predictions/pre_a4/`), las predicciones del modelo
    congelado en `baseline_pre_a4.json`. Todos los sistemas llevan la NDCG@5 graduada, la
-   metrica principal.
+   metrica principal;
+6. el LambdaRank frente a cada baseline con **bootstrap pareado por cesta** (punto M4):
+   diferencia, intervalo de confianza al 95 % y p-valor (`evaluate.paired_bootstrap`).
 
 Escribe `reports/recommender/diagnostics.json` y la seccion de diagnostico de
 `reports/recommender/metrics.md`, y termina con codigo de salida 1 si falla alguna
@@ -33,6 +35,7 @@ comprobacion de coherencia. No entrena ni modifica ningun modelo.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -55,7 +58,7 @@ from src.recommender import history as hs
 from src.recommender import oracle as orc
 from src.recommender import pipeline as pl
 from src.recommender import splits
-from src.recommender.config import SEED, RecommenderConfig
+from src.recommender.config import SEED, BootstrapConfig, RecommenderConfig
 from src.recommender.schema import PROFILE_LABELS
 
 SNAPSHOT_FILENAME = "baseline_pre_diagnostico.json"
@@ -100,6 +103,9 @@ DEFAULT_MC_SAMPLES = 1_000
 MAX_Z_ORACLE = 3.5
 
 LAMBDARANK = "lambdarank"
+
+# Metricas del contraste pareado entre sistemas (columnas de `evaluate.system_per_query`).
+COMPARED_METRICS = ("ndcg_graded", "cat_hit", "sku_hit")
 ORACLE_CAT = "oracle_category"
 ORACLE_SKU = "oracle_sku"
 SYSTEM_LABELS: dict[str, str] = {
@@ -287,6 +293,8 @@ class Diagnostics:
     recency_comparison: pd.DataFrame | None = None
     pre_a1: dict | None = None
     checks: list[tuple[str, bool, str]] = field(default_factory=list)
+    comparisons: pd.DataFrame | None = None
+    bootstrap: BootstrapConfig | None = None
 
 
 def realised_oracle_metrics(
@@ -340,16 +348,22 @@ def measure(
     window_start: dt.date | None = None,
     extra_systems: dict[str, pd.DataFrame] | None = None,
     extra_checks: list[tuple[str, bool, str]] | None = None,
+    bootstrap: BootstrapConfig | None = None,
 ) -> Diagnostics:
     """Mide todos los sistemas sobre las mismas queries.
 
     `extra_systems` son top-k adicionales (por nombre de `SYSTEM_LABELS`) que solo se
     resumen, sin analisis de recencia: la ablacion y el modelo congelado del punto A4.
+    Con `bootstrap`, el LambdaRank se contrasta con cada baseline y con esos sistemas
+    adicionales (bootstrap pareado por cesta).
     """
     products = history["products"]
     queries = test.queries
+    per_query: dict[str, pd.DataFrame] = {}
 
-    def summary(top_k: pd.DataFrame) -> pd.DataFrame:
+    def summary(top_k: pd.DataFrame, name: str | None = None) -> pd.DataFrame:
+        if name is not None and bootstrap is not None:
+            per_query[name] = ev.system_per_query(top_k, queries, test.target, products, k=k)
         return ev.system_summary(top_k, queries, test.target, products, k=k, prefix=test.prefix)
 
     summaries: dict[str, pd.DataFrame] = {}
@@ -375,7 +389,7 @@ def measure(
     summaries[ORACLE_CAT] = summary(orc.lists_to_top_k(inputs, mc.cat_lists, test.target))
     summaries[ORACLE_SKU] = summary(orc.lists_to_top_k(inputs, mc.sku_lists, test.target))
 
-    per_query = pd.DataFrame(
+    oracle_per_query = pd.DataFrame(
         {
             "profile": queries["profile"].to_numpy(),
             f"cat_hit_rate@{k}": mc.cat_hit,
@@ -384,11 +398,13 @@ def measure(
             f"sku_precision@{k}": mc.sku_precision,
         }
     )
-    expected_by_profile = _profile_table(per_query, [c for c in per_query.columns if "@" in c])
+    expected_by_profile = _profile_table(
+        oracle_per_query, [c for c in oracle_per_query.columns if "@" in c]
+    )
     expected = expected_by_profile.iloc[0].drop("grupo").astype(float).to_dict()
 
     # --- LambdaRank ---
-    summaries[LAMBDARANK] = summary(test.lambdarank)
+    summaries[LAMBDARANK] = summary(test.lambdarank, LAMBDARANK)
     if current_metrics is not None:
         on_disk = current_metrics["by_category"][0][f"cat_hit_rate@{k}"]
         now = float(summaries[LAMBDARANK].iloc[0][f"cat_hit_rate@{k}"])
@@ -415,9 +431,9 @@ def measure(
     )
     baseline_lists = ev.run_baselines(data, k=k, seed=seed, min_confidence=min_confidence)
     for name, top_k in baseline_lists.items():
-        summaries[name] = summary(top_k)
+        summaries[name] = summary(top_k, name)
     for name, top_k in (extra_systems or {}).items():
-        summaries[name] = summary(top_k)
+        summaries[name] = summary(top_k, name)
 
     # --- Comprobaciones del techo ---
     # Si el oraculo reproduce el generador, lo realizado en cada query es una muestra de
@@ -483,7 +499,7 @@ def measure(
             )
         )
         recency_slots[REFERENCE] = slots(reference)
-        summaries[REFERENCE] = summary(reference)
+        summaries[REFERENCE] = summary(reference, REFERENCE if same_queries else None)
     recency_slots["personal_due"] = slots(baseline_lists["personal_due"])
     start = window_start or pd.to_datetime(queries["basket_day"]).min()
     recency = {
@@ -495,6 +511,23 @@ def measure(
         if REFERENCE in recency_slots
         else None
     )
+
+    # --- Incertidumbre (punto M4): LambdaRank frente a cada sistema, mismas cestas ---
+    comparisons = None
+    if bootstrap is not None:
+        names = ev.system_metrics(k)
+        keys = set(queries["basket_id"])
+        comparable = {
+            name: table
+            for name, table in per_query.items()
+            if len(table) == len(keys) and set(table["basket_id"]) == keys
+        }
+        comparisons = ev.paired_bootstrap(
+            comparable,
+            LAMBDARANK,
+            {c: names[c] for c in COMPARED_METRICS},
+            bootstrap,
+        )
 
     rules = history["category_rules"]
     kept = rules.loc[(rules["confidence"] >= min_confidence) & (rules["lift"] > 1.0)]
@@ -522,6 +555,8 @@ def measure(
         recency_comparison=comparison,
         pre_a1=pre_a1,
         checks=checks,
+        comparisons=comparisons,
+        bootstrap=bootstrap,
     )
 
 
@@ -663,6 +698,53 @@ def _recency_markdown(diag: Diagnostics) -> list[str]:
     return lines
 
 
+def _comparison_row(diag: Diagnostics, system: str, metric: str, group: str = "total") -> dict | None:
+    if diag.comparisons is None:
+        return None
+    table = diag.comparisons
+    match = table.loc[
+        (table["sistema"] == system) & (table["metrica"] == metric) & (table["grupo"] == group)
+    ]
+    return None if match.empty else match.iloc[0].to_dict()
+
+
+def _gap_detail(diag: Diagnostics, system: str) -> str:
+    """`, IC 95 % [a, b] pp, p = ...` de la diferencia en cat_hit_rate, si se calculo."""
+    row = _comparison_row(diag, system, f"cat_hit_rate@{diag.k}")
+    if row is None:
+        return ""
+    return (
+        f" (LambdaRank - baseline: {pl._diff_cell(row)}, p {pl._p_cell(row['p_value'])})"
+    )
+
+
+def _comparison_markdown(diag: Diagnostics) -> list[str]:
+    """LambdaRank frente a cada sistema, con IC y p-valor (bootstrap pareado)."""
+    if diag.comparisons is None or diag.comparisons.empty:
+        return []
+    order = [n for n in _system_order(diag) if n in set(diag.comparisons["sistema"])]
+    table = diag.comparisons.copy()
+    table["_order"] = table["sistema"].map({n: i for i, n in enumerate(order)})
+    table = table.sort_values("_order", kind="stable").drop(columns="_order")
+    lines = pl._comparison_table(
+        table.assign(sistema=table["sistema"].map(SYSTEM_LABELS)), "total"
+    )
+    boot = diag.bootstrap
+    return [
+        "### LambdaRank frente a cada sistema (bootstrap pareado, punto M4)",
+        "",
+        "Diferencia = LambdaRank servido - el otro sistema, sobre las mismas queries. Cada "
+        f"remuestreo sortea las mismas cestas para los dos ({boot.n_resamples:,} "
+        f"remuestreos, intervalo percentil al {boot.confidence:.0%}; "
+        "`evaluate.paired_bootstrap`). El p-valor es bilateral y no esta corregido por "
+        "comparaciones multiples. Las tasas van en puntos porcentuales. El desglose por "
+        "perfil esta en `diagnostics.json` (`comparisons`).",
+        "",
+        *lines,
+        "",
+    ]
+
+
 def _objective_bullets(diag: Diagnostics, h: dict[str, object]) -> list[str]:
     """Lectura del punto A4: que cambia al pasar de relevancia binaria a graduada."""
     if LAMBDARANK_SKU not in diag.summaries:
@@ -783,7 +865,9 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         f"- **Mejor baseline en cat_hit_rate@{k}:** {SYSTEM_LABELS[best]}, "
         f"{_num(h['best_baseline_cat_hit_rate'])} frente a {_num(h['lambdarank_cat_hit_rate'])} "
         f"del LambdaRank: {_pp(gap)}"
-        + (" a favor del baseline." if gap > 0 else " (el LambdaRank va por delante)."),
+        + (" a favor del baseline" if gap > 0 else ", el LambdaRank va por delante")
+        + _gap_detail(diag, best)
+        + ".",
         f"- **Techo teorico de cat_hit_rate@{k}:** {_num(cat_ceiling)}. El LambdaRank "
         f"alcanza el {_pct(pct[LAMBDARANK])} y el mejor baseline el {_pct(pct[best])}.",
         f"- **Techo de sku_hit_rate@{k}:** {_num(sku_ceiling)}. El LambdaRank alcanza el "
@@ -801,6 +885,7 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         *main,
         "",
         *snap_lines,
+        *_comparison_markdown(diag),
         f"### cat_hit_rate@{k} por perfil (entre parentesis, % del techo del perfil)",
         "",
         *_by_profile_table(diag, col("cat_hit_rate"), ORACLE_CAT),
@@ -874,6 +959,10 @@ def to_json(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: str) -> 
             else diag.recency_comparison.to_dict(orient="records")
         ),
         "checks": [{"check": n, "ok": ok, "detail": d} for n, ok, d in diag.checks],
+        "bootstrap": None if diag.bootstrap is None else dataclasses.asdict(diag.bootstrap),
+        "comparisons": (
+            None if diag.comparisons is None else diag.comparisons.to_dict(orient="records")
+        ),
     }
 
 
@@ -889,6 +978,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--oracle", type=Path, default=Path("data/oracle"))
     parser.add_argument("--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE)
     parser.add_argument("--mc-samples", type=int, default=DEFAULT_MC_SAMPLES)
+    parser.add_argument(
+        "--bootstrap",
+        type=int,
+        default=BootstrapConfig.n_resamples,
+        help="Remuestreos del bootstrap pareado (0 lo desactiva).",
+    )
     parser.add_argument("--no-write", action="store_true", help="No escribir informes.")
     parser.add_argument(
         "--freeze",
@@ -1013,6 +1108,7 @@ def main(argv: list[str] | None = None) -> int:
         window_start=cfg.test_start,
         extra_systems=extras,
         extra_checks=extra_checks,
+        bootstrap=BootstrapConfig(n_resamples=args.bootstrap) if args.bootstrap else None,
     )
     predictions_sha = _sha256(Path(cfg.predictions_dir) / "recommendations_test.parquet")
     block = render_markdown(diag, cfg, predictions_sha)

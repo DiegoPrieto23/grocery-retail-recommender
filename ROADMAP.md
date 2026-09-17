@@ -205,6 +205,29 @@ categorías por `P(categoría)`, cada una con su mejor referencia (la forma del 
 categoría), o por `P(categoría) × P(referencia)` si se quiere empujar el SKU (la del
 oráculo de SKU). Se evaluaría con la misma NDCG graduada y contra los mismos techos.
 
+### Evaluación robusta (puntos M3 y M4)
+
+Todas las cifras salen de `python -m src.recommender.pipeline` (`metrics.md` y `cuts.md`)
+y de `python -m src.recommender.verify_recommender_diagnostics`. Los tests están en
+`tests/test_evaluation_robustness.py`.
+
+- [x] Varios cortes por cesta (`CutPlan`: todos los `k` en `1..n-1` o `m` fracciones con
+      semilla) con el corte de siempre como cabecera · desglose por `prefix_size` y por
+      fracción del ticket en `reports/recommender/cuts.md` (12.400 queries, 2.947 cestas)
+      · el orden de las líneas, documentado como sin información en `splits.py` y el README
+- [x] Intervalos de confianza de las cifras de cabecera (bootstrap por cesta) · NDCG@5
+      graduada **0,2148 [0,2120, 0,2177]**
+- [x] Bootstrap pareado entre sistemas (`evaluate.paired_bootstrap`) · LambdaRank frente a
+      la popularidad y cada ablación en `metrics.md`, y frente a cada baseline A3 en la
+      sección de diagnóstico · mejor baseline: **+3,9 pp [+3,3, +4,6]** de categoría
+- [x] Cold-start bien representado: todas las cestas de la ventana de test sin historial
+      previo (3.140 cestas, 6.092 queries) en vez de las 942 de la muestra · se eligió
+      sobremuestrear y no un split por `customer_id` porque esos clientes ya quedan fuera
+      de todo entrenamiento
+- [ ] Entrenamiento determinista del ranker · reentrenar con el mismo código movió la
+      cabecera de 0,2138 a 0,2148 (70 árboles frente a 150). Los intervalos lo cubren,
+      pero una serie limpia pediría fijar el orden de las filas y `deterministic=True`
+
 ## Fase 4 — Next Best Action
 
 Se ejecuta entera con `python -m src.nba.pipeline`, que deja los dos modelos en `models/`,

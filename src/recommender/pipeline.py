@@ -21,6 +21,12 @@ El flujo es el de `CHALLENGE.md`, Tarea 3a:
    categoria, en total y por perfil, mas cuatro ablaciones (sin senal de sesion, sin
    features de carrito, relevancia binaria de SKU y sin ranking personal de categorias),
    un baseline de popularidad y los antes/despues de los puntos A1, A2 y A4.
+7. **Incertidumbre y cortes** (puntos M3 y M4): intervalo de confianza de las cifras de
+   cabecera y bootstrap pareado entre sistemas. Ademas, varios cortes por cesta sobre una
+   muestra de test (`cuts.md`) y el cold-start sobremuestreado.
+
+    python -m src.recommender.pipeline --cuts random_fractions --cut-fractions 3
+    python -m src.recommender.pipeline --cuts off --no-cold-start   # solo la cabecera
 
 Cualquier cifra que aparezca en el README sale de aqui (`CLAUDE.md`, "Splits y evaluacion").
 """
@@ -36,6 +42,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -50,8 +57,13 @@ from src.recommender import history as hs
 from src.recommender import ranker as rk
 from src.recommender import splits
 from src.recommender.config import (
+    CUT_ALL_PREFIXES,
+    CUT_EMPTY_AND_HALF,
+    CUT_RANDOM_FRACTIONS,
     RELEVANCE_BINARY_SKU,
     REQUIRED_TABLES,
+    BootstrapConfig,
+    CutPlan,
     RecommenderConfig,
     RerankConfig,
 )
@@ -83,6 +95,33 @@ PRE_A4_FILENAME = "baseline_pre_a4.json"
 # Top-5 de la ablacion con relevancia binaria de SKU, para que el verificador de
 # diagnostico la compare con los baselines de categoria sobre las mismas queries.
 SKU_PREDICTIONS_FILENAME = "recommendations_test_sku.parquet"
+
+# Informe del desglose por corte (punto M3).
+CUTS_REPORT = "cuts.md"
+CUTS_JSON = "cuts.json"
+
+# Sistemas que se puntuan sobre cada ventana de test: nombre -> columna de score. Todos
+# pasan por el mismo re-ranking servido. El primero es el servido.
+LAMBDARANK = "lambdarank"
+SYSTEM_SCORES: dict[str, str] = {
+    LAMBDARANK: "score",
+    "popularidad": "score_popularity",
+    "sin_sesion": "score_no_session",
+    "sin_carrito": "score_no_cart",
+    "relevancia_sku": "score_sku",
+    "sin_ranking_personal": "score_no_rank",
+}
+SYSTEM_NAMES: dict[str, str] = {
+    LAMBDARANK: "LambdaRank servido",
+    "popularidad": "Popularidad reciente x estacionalidad (mismo pool)",
+    "sin_sesion": "LambdaRank sin senal de sesion",
+    "sin_carrito": "LambdaRank sin features de carrito",
+    "relevancia_sku": "LambdaRank con relevancia binaria de SKU",
+    "sin_ranking_personal": "LambdaRank sin ranking personal de categorias",
+}
+
+# Metricas que se contrastan entre sistemas (columnas de `evaluate.system_per_query`).
+COMPARED_METRICS = ("ndcg_graded", "cat_hit", "sku_hit", "ndcg")
 
 # La seccion de baselines y techo teorico de `metrics.md` la escribe
 # `verify_recommender_diagnostics.py`, no este orquestador. Va entre estas marcas para
@@ -224,11 +263,26 @@ def build_window_inputs(
     end: dt.date | None,
     n_queries: int | None,
     salt: str,
+    cuts: CutPlan | None = None,
+    new_customers_only: bool = False,
 ) -> WindowInputs:
-    """Queries, prefijo, target, carrito y sesion de una ventana."""
+    """Queries, prefijo, target, carrito y sesion de una ventana.
+
+    Con `cuts` de varios cortes por cesta, `n_queries` cuenta **cestas** y la muestra se
+    toma antes de explotarlas (`splits.sample_baskets`). Con `new_customers_only`, solo
+    entran las cestas sin historial previo (perfiles 1 y 2).
+    """
+    plan = cuts or CutPlan()
     window = splits.baskets_between(tables["baskets"], start, end)
+    if new_customers_only:
+        window = splits.new_customer_baskets(window, bundle.known_customers)
+    if not plan.one_per_basket:
+        window = splits.sample_baskets(window, n_queries, salt=salt)
+        n_queries = None
     add_to_cart = splits.basket_add_to_cart(tables["sessions"], tables["session_events"])
-    query_items = splits.build_query_items(window, tables["basket_items"], add_to_cart)
+    query_items = splits.build_query_items(
+        window, tables["basket_items"], add_to_cart, cuts=plan
+    )
 
     queries = splits.build_queries(
         window,
@@ -271,7 +325,9 @@ def build_window(
     salt: str,
     cfg: RecommenderConfig,
     products_indexed: DataFrame,
-) -> tuple[DataFrame, DataFrame, DataFrame]:
+    cuts: CutPlan | None = None,
+    new_customers_only: bool = False,
+) -> tuple[DataFrame, DataFrame, DataFrame, hs.AsOfHistory]:
     """Construye las queries de una ventana, su matriz de features y su contexto.
 
     Returns:
@@ -281,7 +337,14 @@ def build_window(
         el llamador suelta (`history.unpersist()`) cuando ya ha recogido la matriz.
     """
     win = build_window_inputs(
-        tables, bundle, start=start, end=end, n_queries=n_queries, salt=salt
+        tables,
+        bundle,
+        start=start,
+        end=end,
+        n_queries=n_queries,
+        salt=salt,
+        cuts=cuts,
+        new_customers_only=new_customers_only,
     )
     queries, prefix, target = win.queries, win.prefix, win.target
     session_product, session_query, cart = win.session_product, win.session_query, win.cart
@@ -459,8 +522,153 @@ def rank_feature_importance(importance: pd.DataFrame) -> pd.DataFrame:
 
 def _queries_to_pandas(queries: DataFrame) -> pd.DataFrame:
     return queries.select(
-        "basket_id", "customer_id", "profile", "n_target", "prefix_size", "basket_day", "channel"
+        "basket_id",
+        "customer_id",
+        "profile",
+        "n_target",
+        "prefix_size",
+        "basket_day",
+        "channel",
+        "source_basket_id",
+        "n_items",
     ).toPandas()
+
+
+# Columnas de la matriz que sobreviven a la puntuacion: identificadores, etiqueta, las dos
+# del re-ranking y las banderas que explican de donde salio cada candidato. Arrastrar
+# todas las features en cada `sort_values` de la evaluacion multiplicaria la memoria sin
+# aportar nada.
+EXPLAIN_COLUMNS = [f"src_{s}" for s in cand.SOURCE_NAMES] + [
+    "n_sources",
+    "sess_viewed",
+    "is_on_promo",
+    "cat_in_cart",
+]
+
+
+@dataclass
+class Scorers:
+    """Los modelos entrenados, con las features que ve cada uno."""
+
+    served: object
+    no_session: object
+    no_cart: object
+    sku: object
+    no_rank: object
+    no_session_features: tuple[str, ...]
+    no_cart_features: tuple[str, ...]
+    no_rank_features: tuple[str, ...]
+
+    def score(self, matrix: pd.DataFrame) -> pd.DataFrame:
+        """Matriz de features -> una columna de score por sistema (`SYSTEM_SCORES`)."""
+        keep = ["basket_id", "product_id", "profile", "label", "category_idx", *EXPLAIN_COLUMNS]
+        scored = matrix[keep].copy()
+        scored["score"] = rk.score(self.served, matrix)
+        scored["score_no_session"] = rk.score(
+            self.no_session, matrix, feature_columns=self.no_session_features
+        )
+        scored["score_no_cart"] = rk.score(
+            self.no_cart, matrix, feature_columns=self.no_cart_features
+        )
+        scored["score_sku"] = rk.score(self.sku, matrix)
+        scored["score_no_rank"] = rk.score(
+            self.no_rank, matrix, feature_columns=self.no_rank_features
+        )
+        scored["score_popularity"] = ev.popularity_baseline(matrix)
+        return scored
+
+
+def per_system_tables(
+    scored: pd.DataFrame,
+    queries: pd.DataFrame,
+    target: pd.DataFrame,
+    product_category: pd.DataFrame,
+    *,
+    k: int,
+    rerank: RerankConfig,
+    systems: tuple[str, ...] = tuple(SYSTEM_SCORES),
+) -> dict[str, pd.DataFrame]:
+    """Metricas por query de cada sistema (`evaluate.system_per_query`), mismo re-ranking."""
+    return {
+        name: ev.system_per_query(
+            ev.top_k_predictions(scored, k=k, score_col=SYSTEM_SCORES[name], rerank=rerank),
+            queries,
+            target,
+            product_category,
+            k=k,
+        )
+        for name in systems
+    }
+
+
+def compare_systems(
+    tables: dict[str, pd.DataFrame], bootstrap: BootstrapConfig, *, k: int
+) -> pd.DataFrame:
+    """Bootstrap pareado del LambdaRank servido frente a cada otro sistema, total y por perfil."""
+    names = ev.system_metrics(k)
+    metrics = {column: names[column] for column in COMPARED_METRICS}
+    return ev.paired_bootstrap(tables, LAMBDARANK, metrics, bootstrap)
+
+
+@dataclass
+class ExtraWindow:
+    """Una evaluacion adicional sobre la ventana de test (cortes o cold-start)."""
+
+    plan: CutPlan
+    queries: pd.DataFrame
+    per_system: dict[str, pd.DataFrame]
+    n_baskets: int
+
+
+def evaluate_extra_window(
+    tables: dict[str, DataFrame],
+    bundle: SourceBundle,
+    cfg: RecommenderConfig,
+    *,
+    products_indexed: DataFrame,
+    product_category: pd.DataFrame,
+    scorers: Scorers,
+    cuts: CutPlan,
+    n_baskets: int | None,
+    salt: str,
+    new_customers_only: bool = False,
+    systems: tuple[str, ...] = tuple(SYSTEM_SCORES),
+) -> ExtraWindow:
+    """Construye, puntua y evalua otra muestra de la ventana de test con los mismos modelos.
+
+    Las fuentes de candidatos (`bundle`) y los modelos son los de la evaluacion de
+    cabecera; solo cambian las queries.
+    """
+    queries, matrix, context, history = build_window(
+        tables,
+        bundle,
+        start=cfg.test_start,
+        end=None,
+        n_queries=n_baskets,
+        salt=salt,
+        cfg=cfg,
+        products_indexed=products_indexed,
+        cuts=cuts,
+        new_customers_only=new_customers_only,
+    )
+    pdf = rk.collect_for_ranking(matrix)
+    history.unpersist()
+    q = _queries_to_pandas(queries)
+    ctx = context.toPandas()
+    queries.unpersist()
+    scored = scorers.score(pdf)
+    del pdf
+    gc.collect()
+    target = ctx.loc[ctx["role"] == "target", ["basket_id", "product_id"]]
+    per_system = per_system_tables(
+        scored, q, target, product_category, k=cfg.top_k, rerank=cfg.rerank, systems=systems
+    )
+    return ExtraWindow(
+        plan=cuts,
+        queries=q,
+        per_system=per_system,
+        n_baskets=int(q["source_basket_id"].nunique()),
+    )
 
 
 def run(
@@ -578,29 +786,25 @@ def run(
     test_q = _queries_to_pandas(test_queries)
     timer.step(f"Matriz de test: {len(test_pdf):,} filas / {len(test_q):,} queries")
 
-    # A partir de aqui solo se necesitan los identificadores, la etiqueta, los scores, las
-    # dos columnas del re-ranking y las banderas que explican de donde salio cada
-    # candidato. Arrastrar todas las features en cada `sort_values` de la evaluacion
-    # multiplicaria la memoria sin aportar nada.
-    explain = [f"src_{s}" for s in cand.SOURCE_NAMES] + [
-        "n_sources",
-        "sess_viewed",
-        "is_on_promo",
-        "cat_in_cart",
-    ]
-    keep = ["basket_id", "product_id", "profile", "label", "category_idx", *explain]
-    scored = test_pdf[keep].copy()
-    scored["score"] = rk.score(booster, test_pdf)
-    scored["score_no_session"] = rk.score(booster_ns, test_pdf, feature_columns=no_session)
-    scored["score_no_cart"] = rk.score(booster_nc, test_pdf, feature_columns=no_cart)
-    scored["score_sku"] = rk.score(booster_sku, test_pdf)
-    scored["score_no_rank"] = rk.score(booster_nr, test_pdf, feature_columns=no_rank)
-    scored["score_popularity"] = ev.popularity_baseline(test_pdf)
+    scorers = Scorers(
+        served=booster,
+        no_session=booster_ns,
+        no_cart=booster_nc,
+        sku=booster_sku,
+        no_rank=booster_nr,
+        no_session_features=no_session,
+        no_cart_features=no_cart,
+        no_rank_features=no_rank,
+    )
+    scored = scorers.score(test_pdf)
     del test_pdf
+    explain = EXPLAIN_COLUMNS
 
     # Todas las variantes con el mismo re-ranking: la comparacion es de orden, no de reglas.
     rerank = cfg.rerank
-    summary, per_query = ev.evaluate(scored, test_q, k=cfg.top_k, rerank=rerank)
+    summary, per_query = ev.evaluate(
+        scored, test_q, k=cfg.top_k, rerank=rerank, bootstrap=cfg.bootstrap
+    )
     summary_ns, _ = ev.evaluate(
         scored, test_q, k=cfg.top_k, score_col="score_no_session", rerank=rerank
     )
@@ -619,7 +823,9 @@ def run(
     target_pdf = context_pdf.loc[context_pdf["role"] == "target", ["basket_id", "product_id"]]
     prefix_pdf = context_pdf.loc[context_pdf["role"] == "prefix", ["basket_id", "product_id"]]
     product_category = tables["products"].select("product_id", "category").toPandas()
-    by_category = ev.category_metrics(top_k, target_pdf, product_category, test_q, k=cfg.top_k)
+    by_category = ev.category_metrics(
+        top_k, target_pdf, product_category, test_q, k=cfg.top_k, bootstrap=cfg.bootstrap
+    )
     wasted = ev.wasted_slot_metrics(top_k, prefix_pdf, product_category, test_q, k=cfg.top_k)
     cart_ablation = cart_rerank_ablation(
         scored, test_q, target_pdf, prefix_pdf, product_category, k=cfg.top_k, served=rerank
@@ -629,6 +835,56 @@ def run(
     )
     top_k_sku = ev.top_k_predictions(scored, k=cfg.top_k, score_col="score_sku", rerank=rerank)
     timer.step("Evaluacion")
+
+    # --- Incertidumbre (punto M4): el servido frente a cada sistema, mismas queries ---
+    headline_tables = per_system_tables(
+        scored, test_q, target_pdf, product_category, k=cfg.top_k, rerank=rerank
+    )
+    comparisons = compare_systems(headline_tables, cfg.bootstrap, k=cfg.top_k)
+    timer.step(f"Bootstrap pareado ({cfg.bootstrap.n_resamples} remuestreos)")
+    del scored
+    gc.collect()
+
+    extra = dict(
+        products_indexed=products_indexed,
+        product_category=product_category,
+        scorers=scorers,
+    )
+    # --- Varios cortes por cesta (punto M3) ---
+    cut_eval = None
+    if cfg.n_cut_baskets:
+        # Misma sal que la muestra de cabecera: las cestas son las primeras de su lista.
+        cut_eval = evaluate_extra_window(
+            tables,
+            test_bundle,
+            cfg,
+            cuts=cfg.cuts,
+            n_baskets=cfg.n_cut_baskets,
+            salt="test",
+            systems=(LAMBDARANK,),
+            **extra,
+        )
+        timer.step(
+            f"Cortes ({cfg.cuts.mode}): {len(cut_eval.queries):,} queries / "
+            f"{cut_eval.n_baskets:,} cestas"
+        )
+
+    # --- Cold-start sobremuestreado (punto M4) ---
+    cold_eval = None
+    if cfg.cold_start_oversample:
+        cold_eval = evaluate_extra_window(
+            tables,
+            test_bundle,
+            cfg,
+            cuts=CutPlan(mode=CUT_EMPTY_AND_HALF),
+            n_baskets=None,
+            salt="cold_start",
+            new_customers_only=True,
+            **extra,
+        )
+        timer.step(
+            f"Cold-start: {len(cold_eval.queries):,} queries / {cold_eval.n_baskets:,} cestas"
+        )
     recommendations = top_k[
         ["basket_id", "product_id", "rank", "score", "label", "profile", *explain]
     ]
@@ -654,6 +910,10 @@ def run(
         "n_train_queries": n_train_queries,
         "n_train_queries_sku": n_train_queries_sku,
         "test_queries": test_q,
+        "comparisons": comparisons,
+        "bootstrap": cfg.bootstrap,
+        "cuts": None if cut_eval is None else cut_report(cut_eval, headline_tables[LAMBDARANK], cfg),
+        "cold_start": None if cold_eval is None else cold_start_report(cold_eval, cfg),
     }
 
     if write:
@@ -675,6 +935,8 @@ def run(
             Path(cfg.predictions_dir) / "recommender_test_context.parquet", index=False
         )
         _write_reports(cfg, result)
+        if result["cuts"] is not None:
+            _write_cut_report(cfg, result)
         timer.step("Modelo, predicciones e informes escritos")
         _track(cfg, result)
 
@@ -1102,6 +1364,340 @@ def _cart_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> 
     )
 
 
+# --------------------------------------------------------------------------------------
+# Incertidumbre y cortes (puntos M3 y M4)
+# --------------------------------------------------------------------------------------
+# Metricas de las tablas de cortes y de cold-start, en el orden en que se ensenan.
+REPORTED_METRICS = ("ndcg_graded", "cat_hit", "sku_hit", "ndcg", "recall")
+
+
+def _reported(k: int) -> dict[str, str]:
+    names = ev.system_metrics(k)
+    return {column: names[column] for column in REPORTED_METRICS}
+
+
+def cut_report(
+    cut_eval: ExtraWindow, headline: pd.DataFrame, cfg: RecommenderConfig
+) -> dict[str, object]:
+    """Desglose por corte del LambdaRank servido, con IC por cesta (punto M3).
+
+    `headline` es la tabla por query de la evaluacion de cabecera: sirve de referencia,
+    con el corte de siempre, sobre las mismas cestas.
+    """
+    k = cfg.top_k
+    per_query = cut_eval.per_system[LAMBDARANK]
+    metrics = _reported(k)
+    plain = {"n_target": "n_target_medio"}
+    by_size, by_fraction = ev.cut_groups(per_query)
+
+    def table(groups: dict[str, object], frame: pd.DataFrame) -> pd.DataFrame:
+        return ev.summarise_by(
+            frame, groups, metrics, bootstrap=cfg.bootstrap, plain=plain  # type: ignore[arg-type]
+        )
+
+    baskets = set(per_query[ev.CLUSTER_COLUMN])
+    same = headline.loc[headline[ev.CLUSTER_COLUMN].isin(baskets)]
+    empty = (same["prefix_size"] == 0).to_numpy()
+    reference = table(
+        {
+            "cabecera: carrito vacio": empty,
+            "cabecera: mitad del ticket": ~empty,
+            "cabecera: las dos": np.ones(len(same), dtype=bool),
+        },
+        same,
+    )
+    return {
+        "plan": dataclasses.asdict(cut_eval.plan),
+        "n_baskets": cut_eval.n_baskets,
+        "n_queries": int(len(per_query)),
+        "n_headline_baskets": int(len(same)),
+        "baskets_in_headline_sample": bool(len(same) == cut_eval.n_baskets),
+        "overall": table({"todos los cortes": np.ones(len(per_query), dtype=bool)}, per_query),
+        "by_prefix_size": table(by_size, per_query),
+        "by_fraction": table(by_fraction, per_query),
+        "headline_same_baskets": reference,
+    }
+
+
+def cold_start_report(cold_eval: ExtraWindow, cfg: RecommenderConfig) -> dict[str, object]:
+    """Perfiles 1 y 2 sobre todas las cestas sin historial de la ventana (punto M4)."""
+    k = cfg.top_k
+    served = cold_eval.per_system[LAMBDARANK]
+    profile = served["profile"].to_numpy()
+    groups = {"perfiles 1 y 2": np.ones(len(served), dtype=bool)}
+    for value in sorted(np.unique(profile)):
+        groups[splits.PROFILE_LABELS[int(value)]] = profile == value
+    queries = cold_eval.queries
+    return {
+        "n_baskets": cold_eval.n_baskets,
+        "n_queries": int(len(served)),
+        "n_anonymous_baskets": int(
+            queries.loc[queries["customer_id"].isna(), "source_basket_id"].nunique()
+        ),
+        "n_new_customers": int(queries["customer_id"].dropna().nunique()),
+        "summary": ev.summarise_by(
+            served,
+            groups,
+            _reported(k),
+            bootstrap=cfg.bootstrap,
+            plain={"n_target": "n_target_medio"},
+        ),
+        "comparisons": compare_systems(cold_eval.per_system, cfg.bootstrap, k=k),
+    }
+
+
+def _fold_ci(df: pd.DataFrame) -> pd.DataFrame:
+    """Junta cada metrica con su intervalo en una celda: `valor [bajo, alto]`."""
+    out = df.copy()
+    for column in df.columns:
+        low, high = column + ev.CI_LOW, column + ev.CI_HIGH
+        if low in df.columns and high in df.columns:
+            out[column] = [
+                f"{v:.4f} [{lo:.4f}, {hi:.4f}]"
+                for v, lo, hi in zip(df[column], df[low], df[high])
+            ]
+            out = out.drop(columns=[low, high])
+    return out
+
+
+def _ci_table(df: pd.DataFrame, columns: list[str] | None = None) -> str:
+    """Tabla Markdown con los intervalos plegados (y, si se indica, solo esas columnas)."""
+    if columns is not None:
+        keep = [
+            c
+            for c in df.columns
+            if c in columns or any(c == m + suffix for m in columns for suffix in (ev.CI_LOW, ev.CI_HIGH))
+        ]
+        df = df[keep]
+    return _table(_fold_ci(df))
+
+
+def _is_rate(metric: str) -> bool:
+    return "hit_rate" in metric or "precision" in metric or "recall" in metric
+
+
+def _diff_cell(row: dict) -> str:
+    """Diferencia con su intervalo; en puntos porcentuales si la metrica es una tasa."""
+    d, lo, hi = row["diferencia"], row["ci_low"], row["ci_high"]
+    if _is_rate(row["metrica"]):
+        return f"{d * 100:+.2f} pp [{lo * 100:+.2f}, {hi * 100:+.2f}]"
+    return f"{d:+.4f} [{lo:+.4f}, {hi:+.4f}]"
+
+
+def _p_cell(p: float) -> str:
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+
+
+def _comparison_table(comparisons: pd.DataFrame, group: str) -> list[str]:
+    """Filas `sistema | diferencia [IC] | p` por metrica, para un grupo."""
+    sub = comparisons.loc[comparisons["grupo"] == group]
+    metrics = list(dict.fromkeys(sub["metrica"]))
+    head = "| Frente a | " + " | ".join(f"{m}: diferencia [IC 95 %] | p" for m in metrics) + " |"
+    lines = [head, "| --- |" + " ---: | ---: |" * len(metrics)]
+    for name in dict.fromkeys(sub["sistema"]):
+        cells = []
+        for metric in metrics:
+            row = sub.loc[(sub["sistema"] == name) & (sub["metrica"] == metric)].iloc[0]
+            cells += [_diff_cell(row.to_dict()), _p_cell(row["p_value"])]
+        lines.append(f"| {SYSTEM_NAMES.get(name, name)} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _bootstrap_note(bootstrap: BootstrapConfig) -> str:
+    return (
+        f"Entre corchetes, el intervalo de confianza al {bootstrap.confidence:.0%}: "
+        f"bootstrap percentil con {bootstrap.n_resamples:,} remuestreos de cestas "
+        f"(semilla {bootstrap.seed}; `evaluate.bootstrap_means`)."
+    )
+
+
+def _width_note(by_category: pd.DataFrame, k: int) -> str:
+    """Anchura del intervalo en el grupo mas pequeno, para leer la tabla con ella delante."""
+    metric = f"cat_hit_rate@{k}"
+    if metric + ev.CI_LOW not in by_category.columns:
+        return ""
+    row = by_category.loc[by_category["n_queries"].idxmin()]
+    width = (row[metric + ev.CI_HIGH] - row[metric + ev.CI_LOW]) * 100
+    return (
+        f"En el grupo mas pequeno ({row['grupo']}, n = {int(row['n_queries']):,}) el "
+        f"intervalo de {metric} mide {width:.1f} puntos: las diferencias entre perfiles "
+        "pequenos se leen con eso delante. Los perfiles 1 y 2, con muchas mas queries, "
+        'estan en "Cold-start sobremuestreado".'
+    )
+
+
+def _comparison_section(result: dict[str, object], k: int) -> str:
+    """Diferencias del LambdaRank servido con cada sistema, con IC y p-valor."""
+    comparisons: pd.DataFrame = result["comparisons"]  # type: ignore[assignment]
+    bootstrap: BootstrapConfig = result["bootstrap"]  # type: ignore[assignment]
+    return "\n".join(
+        [
+            "### Diferencias con intervalo de confianza (bootstrap pareado)",
+            "",
+            "Diferencia = LambdaRank servido - el otro sistema, sobre las mismas queries y "
+            "con el mismo re-ranking. Cada remuestreo sortea las mismas cestas para los dos "
+            f"sistemas (`evaluate.paired_bootstrap`, {bootstrap.n_resamples:,} remuestreos). "
+            "El p-valor es bilateral y no esta corregido por comparaciones multiples. Las "
+            "tasas van en puntos porcentuales. El desglose por perfil esta en "
+            "`metrics.json` (`comparisons`).",
+            "",
+            *_comparison_table(comparisons, "total"),
+        ]
+    )
+
+
+def _cold_start_section(result: dict[str, object], k: int) -> str:
+    """Perfiles 1 y 2 sobremuestreados: todas las cestas sin historial de la ventana."""
+    cold = result["cold_start"]
+    if cold is None:
+        return ""
+    summary: pd.DataFrame = result["by_category"]  # type: ignore[assignment]
+    head = summary.set_index("grupo")["n_queries"]
+    in_headline = [
+        f"{int(head[label]):,} en el perfil {p}"
+        for p, label in splits.PROFILE_LABELS.items()
+        if p in (1, 2) and label in head.index
+    ]
+    comparisons: pd.DataFrame = cold["comparisons"]  # type: ignore[index]
+    profile_tables: list[str] = []
+    for p in (1, 2):
+        label = splits.PROFILE_LABELS[p]
+        if (comparisons["grupo"] == label).any():
+            profile_tables += [
+                f"**{label}.**",
+                "",
+                *_comparison_table(comparisons, label),
+                "",
+            ]
+    return "\n".join(
+        [
+            "## Cold-start sobremuestreado (punto M4)",
+            "",
+            f"En la muestra de cabecera el cold-start son pocas queries ({' y '.join(in_headline)}). "
+            f"Aqui entran **todas** las cestas de la ventana de test sin compras anteriores a "
+            f"{result['test_start']}: {cold['n_baskets']:,} cestas "  # type: ignore[index]
+            f"({cold['n_anonymous_baskets']:,} anonimas y el resto de "  # type: ignore[index]
+            f"{cold['n_new_customers']:,} clientes nuevos), cada una con los dos cortes de "  # type: ignore[index]
+            f"cabecera (carrito vacio y mitad del ticket): {cold['n_queries']:,} queries. "  # type: ignore[index]
+            "Las queries de una misma cesta estan correladas, asi que el bootstrap remuestrea "
+            "cestas.",
+            "",
+            "Estos clientes no tienen ninguna cesta antes del inicio del test, asi que no han "
+            "entrado en ninguna fuente de candidatos (popularidad, afinidades, ALS) ni en el "
+            "entrenamiento del ranker. Son clientes nunca vistos por ningun modelo. Lo unico "
+            "que se sabe de ellos es su historial as-of dentro de la propia ventana, igual que "
+            "en produccion. Mismos modelos y mismas fuentes que la cabecera.",
+            "",
+            _ci_table(cold["summary"]),  # type: ignore[index]
+            "",
+            _bootstrap_note(result["bootstrap"]),  # type: ignore[arg-type]
+            "",
+            "### Frente a los demas sistemas, por perfil",
+            "",
+            "Diferencia = LambdaRank servido - el otro sistema (bootstrap pareado por cesta).",
+            "",
+            *profile_tables,
+        ]
+    )
+
+
+def _write_cut_report(cfg: RecommenderConfig, result: dict[str, object]) -> None:
+    """`cuts.md` y `cuts.json`: el acierto a medida que se llena el carrito (punto M3)."""
+    reports = Path(cfg.reports_dir)
+    k = cfg.top_k
+    cuts: dict = result["cuts"]  # type: ignore[assignment]
+    plan = cuts["plan"]
+    by_size: pd.DataFrame = cuts["by_prefix_size"]
+    graded, cat = f"ndcg_graded@{k}", f"cat_hit_rate@{k}"
+    first, last = by_size.iloc[0], by_size.iloc[-1]
+    mode_text = {
+        CUT_ALL_PREFIXES: "todos los cortes `k` = 1..n-1 de cada cesta",
+        CUT_RANDOM_FRACTIONS: (
+            f"{plan['n_fractions']} cortes por cesta con `k` uniforme en 1..n-1 (sorteo por "
+            f"hash con semilla {plan['seed']}; si dos sorteos coinciden, cuenta uno)"
+        ),
+    }.get(plan["mode"], plan["mode"])
+    subset = (
+        "si: son las primeras de la misma lista"
+        if cuts["baskets_in_headline_sample"]
+        else f"no del todo ({cuts['n_headline_baskets']:,} de {cuts['n_baskets']:,})"
+    )
+
+    text = f"""# Evaluacion con varios cortes por cesta (punto M3)
+
+Generado por `python -m src.recommender.pipeline`. Ninguna cifra se copia a mano. La cifra de
+cabecera del recomendador sigue siendo la de [`metrics.md`](metrics.md): un corte por cesta
+(carrito vacio o mitad del ticket), para no romper la serie historica. Este informe
+responde a otra pregunta: **como cambia el acierto a medida que se llena el carrito**.
+
+## Montaje
+
+| | |
+| --- | --- |
+| Cortes | {mode_text} (`CutPlan(mode="{plan['mode']}")`) |
+| Cestas | {cuts['n_baskets']:,} de la ventana de test, desde {cfg.test_start} (cestas de 2 o mas lineas) |
+| Queries | {cuts['n_queries']:,} ({cuts['n_queries'] / max(cuts['n_baskets'], 1):.1f} por cesta) |
+| Cestas dentro de la muestra de cabecera | {subset} |
+| Modelo y fuentes | los de la cabecera (mismo LambdaRank, mismo re-ranking) |
+| Intervalos | bootstrap por cesta, {cfg.bootstrap.n_resamples:,} remuestreos, {cfg.bootstrap.confidence:.0%} |
+
+**El orden de las lineas no aporta informacion.** En las cestas con sesion, el generador
+asigna los `add_to_cart` con una permutacion aleatoria del ticket, y en las demas el orden
+lo pone un hash (`src/recommender/splits.py`). El prefijo de tamano `k` es, a efectos
+practicos, un subconjunto aleatorio de `k` lineas. Un corte "tardio" no es "el final de la
+compra": es una cesta con mas contexto y menos que adivinar.
+
+Las queries de una misma cesta estan correladas, asi que `n_cestas` (y no `n_queries`) es
+el tamano efectivo de cada fila. Dos efectos mecanicos al leer las tablas:
+
+- al crecer `k` quedan menos productos por adivinar (`n_target_medio`), y el
+  `hit_rate` y el `recall` se mueven aunque el modelo no cambie;
+- las filas altas de `prefix_size` solo tienen cestas largas, que son otra poblacion.
+
+La fraccion del ticket (`prefix_size / n_items`) compara cestas de distinto tamano en el
+mismo punto de la compra, y corrige en parte lo segundo.
+
+## Lectura rapida
+
+Con 1 linea en el carrito, NDCG@{k} graduada {first[graded]:.4f} y cat_hit_rate@{k}
+{first[cat]:.4f}. Con {last['grupo']} lineas, {last[graded]:.4f} y {last[cat]:.4f}
+(n_target medio {first['n_target_medio']:.1f} frente a {last['n_target_medio']:.1f}).
+
+## Todos los cortes
+
+{_ci_table(cuts['overall'])}
+
+## Por `prefix_size` (lineas ya en el carrito)
+
+{_ci_table(by_size)}
+
+## Por fraccion del ticket ya en el carrito
+
+{_ci_table(cuts['by_fraction'])}
+
+## Referencia: el corte de cabecera sobre las mismas cestas
+
+Las mismas cestas, evaluadas con el corte de siempre (una query por cesta: la mitad con el
+carrito vacio y la otra mitad con la mitad del ticket).
+
+{_ci_table(cuts['headline_same_baskets'])}
+"""
+    (reports / CUTS_REPORT).write_text(text, encoding="utf-8")
+
+    payload = {
+        "test_start": str(cfg.test_start),
+        "top_k": k,
+        "bootstrap": dataclasses.asdict(cfg.bootstrap),
+        **{
+            key: (value.to_dict(orient="records") if isinstance(value, pd.DataFrame) else value)
+            for key, value in cuts.items()
+        },
+    }
+    (reports / CUTS_JSON).write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def _write_reports(cfg: RecommenderConfig, result: dict[str, object]) -> None:
     """Deja el informe de la fase en `reports/recommender/`."""
     reports = Path(cfg.reports_dir)
@@ -1109,7 +1705,20 @@ def _write_reports(cfg: RecommenderConfig, result: dict[str, object]) -> None:
     k = cfg.top_k
 
     summary: pd.DataFrame = result["summary"]  # type: ignore[assignment]
-    total = summary.iloc[0]
+    result = {**result, "test_start": cfg.test_start}
+    headline_columns = [
+        "grupo",
+        "n_queries",
+        f"ndcg_graded@{k}",
+        f"cat_hit_rate@{k}",
+        f"sku_hit_rate@{k}",
+    ]
+    cuts_line = (
+        f"\nEl acierto segun cuantas lineas lleva ya el carrito (varios cortes por cesta, "
+        f"punto M3) esta en [`{CUTS_REPORT}`]({CUTS_REPORT}).\n"
+        if result.get("cuts") is not None
+        else ""
+    )
 
     text = f"""# Recomendador de cesta (Fase 3, Tarea 3a)
 
@@ -1138,15 +1747,18 @@ La metrica principal del recomendador es la **NDCG@{k} con relevancia graduada**
 exacto, 1 si solo acierta la categoria. Es la que optimiza el LambdaRank. Se lee siempre
 junto a `cat_hit_rate@{k}` (lo que ensena la demo) y `sku_hit_rate@{k}`.
 
-{_table(result['by_category'][['grupo', 'n_queries', f'ndcg_graded@{k}', f'cat_hit_rate@{k}', f'sku_hit_rate@{k}']])}
+{_ci_table(result['by_category'], headline_columns)}
 
+{_bootstrap_note(cfg.bootstrap)} {_width_note(result['by_category'], k)}
+{cuts_line}
 {_objective_section(cfg, result, k)}
 
 ## Resultado a nivel de SKU
 
-Las metricas de SKU exacto de siempre (NDCG@{k} binaria, recall, precision, F1).
+Las metricas de SKU exacto de siempre (NDCG@{k} binaria, recall, precision, F1), con su
+intervalo de confianza.
 
-{_table(summary)}
+{_ci_table(summary)}
 
 ## Comparacion
 
@@ -1160,6 +1772,8 @@ ranker de la de la primera etapa.
 {_system_row("LambdaRank con relevancia binaria de SKU (objetivo anterior)", _objective_summary(result, "sku", k), k)}
 {_system_row("**LambdaRank completo**", summary, k, bold=True)}
 
+{_comparison_section(result, k)}
+
 ### Por perfil, sin senal de sesion
 
 {_table(result['summary_no_session'])}
@@ -1170,7 +1784,7 @@ La misma lista, puntuada dos veces. "Acierta la categoria" significa que el prod
 recomendado pertenece a una categoria que el cliente si acabo comprando, aunque la
 referencia concreta fuera otra.
 
-{_table(result['by_category'])}
+{_ci_table(result['by_category'])}
 
 {_sku_category_paragraph(result['by_category'].iloc[0], k)}
 
@@ -1181,6 +1795,8 @@ referencia concreta fuera otra.
 {_kaggle_section(summary, k)}
 
 {_baseline_section(cfg, result, k)}
+
+{_cold_start_section(result, k)}
 
 ## Techo de la primera etapa
 
@@ -1224,7 +1840,15 @@ Importancia por ganancia, las {len(result['feature_importance'])} primeras.
         },
         "objective_ablation": result["objective_ablation"].to_dict(orient="records"),  # type: ignore[union-attr]
         "rank_feature_importance": result["rank_feature_importance"].to_dict(orient="records"),  # type: ignore[union-attr]
+        "bootstrap": dataclasses.asdict(cfg.bootstrap),
+        "comparisons": result["comparisons"].to_dict(orient="records"),  # type: ignore[union-attr]
     }
+    cold = result.get("cold_start")
+    if cold is not None:
+        payload["cold_start"] = {
+            key: (value.to_dict(orient="records") if isinstance(value, pd.DataFrame) else value)
+            for key, value in cold.items()  # type: ignore[union-attr]
+        }
     (reports / "metrics.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -1247,6 +1871,35 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Muestra reducida de queries: sirve para comprobar que el flujo corre.",
     )
+    parser.add_argument(
+        "--cuts",
+        choices=(CUT_ALL_PREFIXES, CUT_RANDOM_FRACTIONS, "off"),
+        default=CUT_ALL_PREFIXES,
+        help="Evaluacion con varios cortes por cesta (punto M3); 'off' la desactiva.",
+    )
+    parser.add_argument(
+        "--cut-baskets",
+        type=int,
+        default=RecommenderConfig.n_cut_baskets,
+        help="Cestas de test que se explotan en cortes.",
+    )
+    parser.add_argument(
+        "--cut-fractions",
+        type=int,
+        default=CutPlan.n_fractions,
+        help="Cortes por cesta con --cuts random_fractions.",
+    )
+    parser.add_argument(
+        "--no-cold-start",
+        action="store_true",
+        help="No evaluar el cold-start sobremuestreado (punto M4).",
+    )
+    parser.add_argument(
+        "--bootstrap",
+        type=int,
+        default=BootstrapConfig.n_resamples,
+        help="Remuestreos del bootstrap de los intervalos de confianza.",
+    )
     return parser.parse_args(argv)
 
 
@@ -1258,8 +1911,17 @@ def main(argv: list[str] | None = None) -> None:
         "predictions_dir": args.predictions,
         "reports_dir": args.reports,
     }
+    kwargs |= {
+        "n_cut_baskets": None if args.cuts == "off" else args.cut_baskets,
+        "cold_start_oversample": not args.no_cold_start,
+        "bootstrap": BootstrapConfig(n_resamples=args.bootstrap),
+    }
+    if args.cuts != "off":
+        kwargs["cuts"] = CutPlan(mode=args.cuts, n_fractions=args.cut_fractions)
     if args.quick:
         kwargs |= {"n_train_queries": 2_000, "n_valid_queries": 500, "n_test_queries": 2_000}
+        if kwargs["n_cut_baskets"] is not None:
+            kwargs["n_cut_baskets"] = min(kwargs["n_cut_baskets"], 300)
     cfg = RecommenderConfig(**kwargs)
 
     # 6 GB no es capricho. Con 4 GB las caches de `fit_sources` -- 2,5 M de lineas mas las
@@ -1278,7 +1940,7 @@ def main(argv: list[str] | None = None) -> None:
             f"sobre {result['n_test_queries']:,} cestas de test"
         )
         print("\nPor perfil:")
-        print(result["summary"].to_string(index=False))
+        print(_fold_ci(result["summary"]).to_string(index=False))
     finally:
         spark.stop()
 

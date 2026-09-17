@@ -231,6 +231,17 @@ equivale, en la práctica, a "el resto de la cesta".
 - Mantener el corte actual como cifra de cabecera para no romper la serie histórica.
 - Documentar en `splits.py` y en el README que el orden no aporta información.
 
+**Estado (Sesión 5).** Hecho. `CutPlan` (`config.py`) y `splits.build_query_items` admiten
+cuatro modos: el corte de cabecera (sin cambios), todos los `k` en `1..n-1`, `m` fracciones
+aleatorias con semilla (por hash, no por `F.rand`) y "carrito vacío y mitad". Con varios
+cortes, la clave de la query pasa a ser `<basket_id>#k<k>` y la cesta real queda en
+`source_basket_id`. El resto del pipeline no cambia. `reports/recommender/cuts.md`
+desglosa por `prefix_size` y por fracción del ticket 12.400 queries de 2.947 cestas de la
+muestra de test, con intervalos por cesta. `cat_hit_rate@5` pasa del 83,5 % con hasta el
+25 % del ticket en el carrito al 39,5 % con más del 75 %, sobre todo porque queda menos por
+adivinar (de 5,3 a 1,1 productos). La nota sobre el orden está en `splits.py` y en el
+README. Los tests están en `tests/test_evaluation_robustness.py`.
+
 ### M4 · Sin intervalos de confianza, y el cold-start está poco representado — **MEDIA**
 
 **Problema.** Todas las métricas son medias puntuales. Los perfiles 1 y 2 tienen solo 521
@@ -248,6 +259,34 @@ diferencias que pueden caer dentro del ruido, sobre todo en cold-start.
   sistemas) en `evaluate.summarise`.
 - Sobremuestrear los perfiles 1 y 2 en el test, o añadir el **split por `customer_id`**
   que ya contempla `CLAUDE.md` para un cold-start real (clientes nunca vistos).
+
+**Estado (Sesión 5).** Hecho.
+
+- **Intervalos y contraste.** `evaluate.summarise` y `category_metrics` llevan intervalos
+  al 95 % (bootstrap percentil, 1.000 remuestreos de cestas). `evaluate.paired_bootstrap`
+  da la diferencia, su intervalo y el p-valor entre dos sistemas sobre las mismas cestas.
+  `metrics.md` los aplica a la cabecera, al LambdaRank frente a la popularidad y a cada
+  ablación. El verificador los aplica al LambdaRank frente a cada baseline A3. Se
+  remuestrean cestas, no queries, para que los cortes de una misma cesta no estrechen el
+  intervalo.
+- **Cold-start: sobremuestreo, no split por cliente.** Los clientes sin compras antes de
+  `test_start` ya quedan fuera de todas las fuentes y del entrenamiento del ranker, así
+  que son clientes nunca vistos. Evaluar todas sus cestas (3.140, cada una con los dos
+  cortes de cabecera: 6.092 queries) da un cold-start real sin reentrenar ni romper la
+  serie. Un split por `customer_id` habría obligado a entrenar sin una parte de la base.
+  Resultado: `cat_hit_rate@5` 59,5 % [57,9, 61,2] en el perfil 1 y 45,8 % [44,1, 47,6] en
+  el 2, con intervalos de ±1,5 puntos frente a ±4–5 en la muestra.
+- **Lo que confirman los intervalos.** El LambdaRank supera al mejor baseline en
+  +3,9 pp [+3,3, +4,6] de categoría. La relevancia graduada gana +4,1 pp de categoría y
+  pierde 0,9 de SKU, ambas fuera del ruido. El ranking personal de categorías no se
+  distingue de cero (−0,1 pp [−0,5, +0,3]).
+- **Un hallazgo de paso.** El entrenamiento del ranker no es determinista entre
+  ejecuciones: reentrenar paró en 70 árboles en vez de 150 y movió la NDCG@5 graduada de
+  0,2138 a 0,2148, dentro de su intervalo. Queda anotado en el README.
+- **Un bug de paso.** `candidates_als` creaba su resultado vacío con
+  `createDataFrame([])`, que levanta un worker de Python que en este entorno casca. Solo
+  ocurría si ninguna query tenía cliente conocido, como en el cold-start sobremuestreado.
+  Ahora el vacío se construye en la JVM.
 
 ### Fuga de datos y encoding — **verificado, sin incidencias**
 

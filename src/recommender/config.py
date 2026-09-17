@@ -190,6 +190,75 @@ class RerankConfig:
         return self.max_per_category is not None or self.exclude_cart_categories
 
 
+# Como se corta cada cesta en prefijo y target (punto M3, `splits.build_query_items`).
+CUT_HEADLINE = "headline"
+CUT_ALL_PREFIXES = "all_prefixes"
+CUT_RANDOM_FRACTIONS = "random_fractions"
+CUT_EMPTY_AND_HALF = "empty_and_half"
+CUT_MODES: tuple[str, ...] = (
+    CUT_HEADLINE,
+    CUT_ALL_PREFIXES,
+    CUT_RANDOM_FRACTIONS,
+    CUT_EMPTY_AND_HALF,
+)
+
+
+@dataclass(frozen=True)
+class CutPlan:
+    """Cortes por cesta con los que se construyen las queries (punto M3).
+
+    - `headline`: un corte por cesta, el de siempre. El hash del `basket_id` decide si el
+      carrito va vacio o con la mitad de las lineas. Es la cifra de cabecera y la serie
+      historica de `metrics.md`.
+    - `all_prefixes`: todos los `k` en `1..n-1`, una query por corte.
+    - `random_fractions`: `n_fractions` cortes por cesta con `k` uniforme en `1..n-1`,
+      sorteado con un hash de (`basket_id`, `seed`, j). Si dos sorteos coinciden, el corte
+      cuenta una sola vez.
+    - `empty_and_half`: los dos cortes de cabecera a la vez, carrito vacio y mitad del
+      ticket. Lo usa el sobremuestreo del cold-start (punto M4): cada cesta aporta una
+      query al perfil 1 y otra al 2.
+    """
+
+    mode: str = CUT_HEADLINE
+    n_fractions: int = 3
+    seed: int = SEED
+
+    def __post_init__(self) -> None:
+        if self.mode not in CUT_MODES:
+            raise ValueError(f"modo de corte desconocido: {self.mode!r}")
+        if self.n_fractions < 1:
+            raise ValueError("n_fractions debe ser al menos 1")
+
+    @property
+    def one_per_basket(self) -> bool:
+        """Si cada cesta da una sola query (y la clave de query es el `basket_id`)."""
+        return self.mode == CUT_HEADLINE
+
+
+@dataclass(frozen=True)
+class BootstrapConfig:
+    """Bootstrap de las metricas (punto M4, `evaluate.bootstrap_means`).
+
+    Se remuestrean **cestas**, no queries: con varios cortes por cesta, las queries de una
+    misma cesta estan correladas, y remuestrearlas por separado estrecharia el intervalo
+    sin motivo. Con un corte por cesta las dos cosas coinciden.
+
+    Con 1.000 remuestreos, el error Monte Carlo de un extremo del intervalo al 95 % es
+    pequeno frente a su anchura. El p-valor mas pequeno que se puede reportar es
+    `1 / (n_resamples + 1)`.
+    """
+
+    n_resamples: int = 1_000
+    confidence: float = 0.95
+    seed: int = SEED
+
+    def __post_init__(self) -> None:
+        if not 0 < self.confidence < 1:
+            raise ValueError("confidence debe estar entre 0 y 1")
+        if self.n_resamples < 1:
+            raise ValueError("n_resamples debe ser al menos 1")
+
+
 @dataclass(frozen=True)
 class RecommenderConfig:
     """Configuracion completa de la Fase 3."""
@@ -217,6 +286,19 @@ class RecommenderConfig:
     ranker: RankerConfig = field(default_factory=RankerConfig)
     rerank: RerankConfig = field(default_factory=RerankConfig)
     seed: int = SEED
+
+    # Evaluacion con varios cortes por cesta (punto M3): cuantas cestas de test se
+    # explotan y como. Con `all_prefixes` salen unas 4 queries por cesta (5,1 lineas de
+    # media), asi que 3.000 cestas cuestan menos que las 18.000 queries de cabecera. Las
+    # cestas se eligen con el mismo hash que la muestra de cabecera. `None` la desactiva.
+    n_cut_baskets: int | None = 3_000
+    cuts: CutPlan = field(default_factory=lambda: CutPlan(mode=CUT_ALL_PREFIXES))
+
+    # Sobremuestreo del cold-start (punto M4): todas las cestas de la ventana de test de
+    # clientes sin compras anteriores (o anonimas), con los dos cortes de cabecera.
+    cold_start_oversample: bool = True
+
+    bootstrap: BootstrapConfig = field(default_factory=BootstrapConfig)
 
     def __post_init__(self) -> None:
         if self.fit_end >= self.test_start:

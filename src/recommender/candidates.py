@@ -402,9 +402,15 @@ def candidates_als(
         .select("customer_id_idx")
     )
     if users.isEmpty():
-        return queries.sparkSession.createDataFrame(
-            [], "basket_id string, product_id string, als_score double, als_rank int"
-        )
+        # Vacio pero construido en la JVM: `createDataFrame([])` levanta un worker de
+        # Python, que en este entorno casca (`src/etl/session.py`). Pasa cuando ninguna
+        # query tiene cliente conocido, como en el cold-start sobremuestreado.
+        return queries.select(
+            "basket_id",
+            F.lit(None).cast("string").alias("product_id"),
+            F.lit(None).cast("double").alias("als_score"),
+            F.lit(None).cast("int").alias("als_rank"),
+        ).limit(0)
 
     recs = (
         model.recommendForUserSubset(users, cfg.n_als)

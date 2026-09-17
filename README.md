@@ -37,8 +37,8 @@ las del dataset de la Fase 7**; donde se comparan con las anteriores, se dice.
 un ETL en PySpark que las limpia y documenta cada corrección, un Data Trust Score que pasa
 de **91,42 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
 [notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL,
-un recomendador de cesta de dos etapas que acierta la categoría en el **71,7 %** de las
-cestas y el SKU exacto en el **54,0 %** (NDCG@5 graduada = 0,2138), una política de Next Best
+un recomendador de cesta de dos etapas que acierta la categoría en el **71,8 %** de las
+cestas y el SKU exacto en el **54,2 %** (NDCG@5 graduada = 0,2148 [0,2120, 0,2177]), una política de Next Best
 Action que decide en euros, dos documentos que traducen todo eso a negocio — el
 [resumen de impacto](IMPACT.md) y el
 [informe de hallazgos](reports/insights/business_findings.md) — y una
@@ -470,6 +470,19 @@ ranker, y otra con el historial hasta noviembre, para las de test. Sin ese doble
 ranker aprendería con *features* que ya contienen la respuesta — "lo que el cliente ya
 compró" — y en test se desplomaría.
 
+Dentro de cada cesta de test se simula un instante de la compra: un **prefijo** (lo que ya
+está en el carrito) y un **target** (lo que falta por añadir). **El orden de las líneas no
+aporta información.** En las cestas con sesión, el generador asigna los `add_to_cart` con
+una permutación aleatoria del ticket, y en las demás el orden lo pone un hash. Un prefijo
+de `k` líneas es, en la práctica, un subconjunto aleatorio de la cesta: el problema es
+completar la cesta, no adivinar el siguiente artículo. La cifra de cabecera usa **un corte
+por cesta**, igual que siempre, para no romper la serie: carrito vacío en la mitad de las
+cestas y la mitad del ticket en la otra mitad, según un hash del `basket_id`
+([`splits.py`](src/recommender/splits.py)). El pipeline evalúa además **todos los cortes
+`k = 1..n-1`** de una muestra de cestas, o `m` fracciones aleatorias con semilla
+(`--cuts random_fractions`), y los desglosa por `prefix_size` y por fracción del ticket en
+[`cuts.md`](reports/recommender/cuts.md).
+
 ### Las cinco fuentes de candidatos
 
 | Fuente | De dónde sale | Perfiles que cubre |
@@ -481,7 +494,7 @@ compró" — y en test se desplomaría.
 | ALS implícito (Spark MLlib) | `customer_id × product_id` | 3 y 4 |
 
 Unidas dan **140 candidatos por cesta** de los 496 del catálogo, y el pool contiene ya el
-**77,8 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 150
+**77,8 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 70
 árboles con 60 *features*, entrenado con relevancia graduada (SKU exacto y categoría),
 ordena, y un re-ranking final (una referencia por categoría, nada de lo que ya hay en el
 carrito) devuelve el top-5.
@@ -502,17 +515,19 @@ las mismas cestas, el mismo pool y el mismo re-ranking:
 
 | | Relevancia binaria de SKU | **Relevancia graduada (servida)** | Mejor baseline | Techo (oráculo) |
 | --- | ---: | ---: | ---: | ---: |
-| NDCG@5 graduada | 0,2086 | **0,2138** | 0,1680 | 0,2340 |
-| `cat_hit_rate@5` | 67,9 % | **71,7 %** (+3,8 pp) | 67,9 % | 78,2 % |
-| `sku_hit_rate@5` | 54,9 % | **54,0 %** (−0,9 pp) | 42,1 % | 59,2 % |
-| NDCG@5 de SKU | 0,2045 | 0,1993 | 0,1374 | 0,2269 |
+| NDCG@5 graduada | 0,2083 | **0,2148** | 0,1680 | 0,2340 |
+| `cat_hit_rate@5` | 67,8 % | **71,8 %** (+4,1 pp [+3,6, +4,5]) | 67,9 % | 78,2 % |
+| `sku_hit_rate@5` | 55,1 % | **54,2 %** (−0,9 pp [−1,4, −0,5]) | 42,1 % | 59,2 % |
+| NDCG@5 de SKU | 0,2048 | 0,2006 | 0,1374 | 0,2269 |
 
 El techo es el mejor de los dos oráculos del diagnóstico en cada fila. El cambio es un
 intercambio consciente: casi 4 puntos más de cestas con la categoría acertada a cambio de
-uno menos con el SKU exacto. El LambdaRank pasa de empatar con el mejor baseline de
-categoría a sacarle **3,8 pp**, y alcanza el **91,8 %** del techo teórico de categoría y el
-**91,2 %** del de SKU. La categoría mejora en los cuatro perfiles (de +0,7 a +4,1 pp), más
-en los recurrentes.
+uno menos con el SKU exacto. Entre corchetes, el intervalo de confianza al 95 % de la
+diferencia (bootstrap pareado por cesta, ver
+[más abajo](#cuánto-ruido-hay-en-estas-cifras)). El LambdaRank pasa de empatar con el mejor
+baseline de categoría a sacarle **3,9 pp [+3,3, +4,6]**, y alcanza el **91,9 %** del techo
+teórico de categoría y el **91,5 %** del de SKU. La categoría mejora en los cuatro perfiles
+(de +0,5 a +4,4 pp), más en los recurrentes.
 
 Dos matices:
 
@@ -522,9 +537,9 @@ Dos matices:
 - **El ranking personal de categorías no aporta.** Se añadieron tres *features* que
   comparan la categoría del candidato con el resto de categorías del cliente
   (`cat_freq_rank`, `cat_freq_share` y `cat_due_rank`, la última con el mismo criterio
-  que el mejor baseline). Quedan en los puestos 5, 8 y 10 de 60 por ganancia, pero la
-  ablación sin ellas da lo mismo (−0,06 pp de categoría): el árbol ya sacaba esa señal de
-  las *features* de reposición y de `hist_rank`.
+  que el mejor baseline). Quedan en los puestos 6, 9 y 10 de 60 por ganancia, pero la
+  ablación sin ellas da lo mismo: −0,1 pp de categoría, con un intervalo de [−0,5, +0,3] y
+  p = 0,57. El árbol ya sacaba esa señal de las *features* de reposición y de `hist_rank`.
 
 La idea más ambiciosa del punto A4, un modelo jerárquico (primero qué categoría toca,
 después qué referencia), está valorada en el
@@ -593,10 +608,12 @@ tiene sesión detrás:
 | Sistema | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: |
 | Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0881 | 0,0793 | 27,0 % |
-| LambdaRank sin señal de sesión | 0,1932 | 0,1856 | 53,5 % |
-| **LambdaRank completo** | **0,1993** | **0,1902** | **54,0 %** |
+| LambdaRank sin señal de sesión | 0,1938 | 0,1854 | 53,4 % |
+| **LambdaRank completo** | **0,2006** | **0,1910** | **54,2 %** |
 
-Las tres filas pasan por el mismo re-ranking final y son métricas de SKU exacto. La sesión suma un **+3,2 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
+Las tres filas pasan por el mismo re-ranking final y son métricas de SKU exacto. La sesión
+suma un **+3,5 %** de NDCG@5 (+0,0069 [+0,0055, +0,0084], p < 0,001), pequeño pero fuera
+del ruido. Antes de la Fase 7 sumaba un +13 %: con el
 historial prediciendo bien la referencia, lo que el cliente mira en la web aporta menos
 información nueva.
 
@@ -607,18 +624,88 @@ cambia es qué fuentes tienen algo que decir.
 
 | Perfil | Cestas | NDCG@5 graduada | Acierta categoría | Acierta SKU | NDCG@5 SKU | Recall@5 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 521 | 0,1532 | 59,7 % | 39,7 % | 0,1309 | 0,1151 |
-| 2 · nuevo, con artículos | 421 | 0,1121 | 46,3 % | 23,8 % | 0,1003 | 0,1091 |
-| 3 · recurrente, carrito vacío | 8.713 | 0,2384 | 79,0 % | 61,9 % | 0,2128 | 0,1799 |
-| 4 · recurrente, con artículos | 8.345 | 0,1971 | 66,2 % | 48,1 % | 0,1945 | 0,2097 |
-| **Total** | **18.000** | **0,2138** | **71,7 %** | **54,0 %** | **0,1993** | **0,1902** |
+| 1 · nuevo, carrito vacío | 521 | 0,1520 | 59,7 % | 40,3 % | 0,1317 | 0,1175 |
+| 2 · nuevo, con artículos | 421 | 0,1110 | 44,7 % | 22,6 % | 0,0994 | 0,1062 |
+| 3 · recurrente, carrito vacío | 8.713 | 0,2393 | 79,0 % | 61,9 % | 0,2136 | 0,1801 |
+| 4 · recurrente, con artículos | 8.345 | 0,1984 | 66,5 % | 48,6 % | 0,1965 | 0,2112 |
+| **Total** | **18.000** | **0,2148** | **71,8 %** | **54,2 %** | **0,2006** | **0,1910** |
 
 El cold-start rinde peor, como se esperaba, pero no se desploma: **el perfil 2 es el peor**
-(NDCG@5 graduada 0,1121, un 43 % por debajo del 4). Tiene sentido — no tiene historial anterior a
+(NDCG@5 graduada 0,1110, un 44 % por debajo del 4). Tiene sentido — no tiene historial anterior a
 la ventana ni ALS, como mucho las pocas compras que haya hecho desde entonces, y encima su
 cesta ya va por la mitad, así que lo fácil de acertar ya está dentro. Y el perfil 3 es el
-mejor en `hit_rate` (62,9 %) porque evalúa la cesta entera: cinco huecos contra 5,0
+mejor en `hit_rate` (61,9 %) porque evalúa la cesta entera: cinco huecos contra 5,0
 productos por adivinar en vez de 2,9.
+
+### Cuánto ruido hay en estas cifras
+
+Todas las métricas son medias por cesta, y con 421 cestas un *hit rate* se mueve varios
+puntos por puro azar. Desde el punto M4 del [diagnóstico](docs/diagnostico-fase7.md), cada
+cifra de cabecera de [`metrics.md`](reports/recommender/metrics.md) lleva su **intervalo de
+confianza al 95 %**: bootstrap percentil con 1.000 remuestreos de cestas
+(`evaluate.bootstrap_means`). Las comparaciones entre sistemas usan un **bootstrap
+pareado** (`evaluate.paired_bootstrap`): cada remuestreo sortea las mismas cestas para los
+dos sistemas, así que la dificultad de cada cesta se cancela y se ven diferencias pequeñas.
+El p-valor es bilateral y no está corregido por comparaciones múltiples.
+
+| LambdaRank servido frente a… | NDCG@5 graduada | `cat_hit_rate@5` | `sku_hit_rate@5` |
+| --- | ---: | ---: | ---: |
+| Mejor baseline (frecuencia personal × `due`) | +0,0468 [+0,0446, +0,0491] | +3,9 pp [+3,3, +4,6] | +12,0 pp [+11,3, +12,7] |
+| Popularidad, mismo pool | +0,0944 [+0,0916, +0,0972] | +13,6 pp [+12,8, +14,4] | +27,2 pp [+26,3, +28,0] |
+| Relevancia binaria de SKU | +0,0065 [+0,0053, +0,0079] | +4,1 pp [+3,6, +4,5] | −0,9 pp [−1,4, −0,5] |
+| Sin señal de sesión | +0,0056 [+0,0045, +0,0068] | +0,4 pp [+0,0, +0,7] | +0,7 pp [+0,4, +1,1] |
+| Sin *features* de carrito | +0,0009 [−0,0002, +0,0018] | +0,5 pp [+0,1, +0,8] | +0,0 pp [−0,4, +0,4] |
+| Sin ranking personal de categorías | −0,0001 [−0,0014, +0,0010] | −0,1 pp [−0,5, +0,3] | +0,1 pp [−0,3, +0,5] |
+
+Lo que se sostiene: el LambdaRank supera a todos los baselines, el objetivo graduado cambia
+SKU por categoría y la sesión aporta poco pero algo. Las *features* de carrito solo suman
+medio punto de categoría (p = 0,02, en el límite con tantas comparaciones), porque el
+re-ranking ya hace casi todo ese trabajo. El ranking personal de categorías no aporta nada.
+
+**Reentrenar también mueve las cifras.** El entrenamiento del LambdaRank no es
+determinista entre ejecuciones: con el mismo código y los mismos datos, la ejecución que
+añadió los intervalos paró en 70 árboles (antes, 150) y movió la NDCG@5 graduada de 0,2138
+a 0,2148, dentro de su propio intervalo. Las cifras de este README son las de esa
+ejecución.
+
+**Cold-start con más cestas.** Los perfiles 1 y 2 son solo 942 de las 18.000 cestas de la
+muestra. Por eso el pipeline evalúa además **todas** las cestas de la ventana de test sin
+compras anteriores: 3.140 (1.495 anónimas y 1.645 de 496 clientes nuevos), cada una con
+los dos cortes de cabecera, 6.092 queries en total. Esos clientes no aparecen en ninguna
+fuente de candidatos ni en el entrenamiento del ranker, así que ningún modelo los ha visto.
+Con el mismo modelo y las mismas fuentes:
+
+| Perfil | Cestas | NDCG@5 graduada | Acierta categoría | Acierta SKU |
+| --- | ---: | ---: | ---: | ---: |
+| 1 · nuevo, carrito vacío | 3.140 | 0,1494 [0,1434, 0,1555] | 59,5 % [57,9, 61,2] | 38,8 % [37,0, 40,4] |
+| 2 · nuevo, con artículos | 2.952 | 0,1161 [0,1103, 0,1224] | 45,8 % [44,1, 47,6] | 26,6 % [25,0, 28,2] |
+
+Los intervalos pasan de ±4–5 puntos a ±1,5. Las cifras son compatibles con las de la
+muestra de cabecera, salvo el SKU del perfil 2 (26,6 % frente a 22,6 % [18,5, 26,4]), que
+en la muestra salía algo bajo. Frente a la popularidad sobre el mismo pool, el LambdaRank gana
++3,2 pp de categoría en el perfil 1 y +4,2 pp en el 2, ambos con p < 0,001. Se eligió
+sobremuestrear en vez de un split por `customer_id`: las ventanas temporales ya dejan fuera
+de todo entrenamiento a estos clientes, así que no hace falta reentrenar sin una parte de
+la base ni romper la serie de la cabecera. Detalle en la sección "Cold-start
+sobremuestreado" de [`metrics.md`](reports/recommender/metrics.md).
+
+### Cuando el carrito se llena
+
+La cabecera usa un corte por cesta. [`cuts.md`](reports/recommender/cuts.md) evalúa
+**todos** los cortes `k = 1..n-1` de 2.947 cestas de la muestra de test (12.400 queries,
+intervalos por cesta):
+
+| Parte del ticket ya en el carrito | Queries | NDCG@5 graduada | Acierta categoría | Acierta SKU | Productos por adivinar |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| hasta el 25 % | 2.723 | 0,2661 [0,2568, 0,2745] | 83,5 % | 66,2 % | 5,3 |
+| 25–50 % | 4.239 | 0,2166 [0,2091, 0,2246] | 71,8 % | 53,6 % | 3,5 |
+| 50–75 % | 3.506 | 0,1676 [0,1598, 0,1753] | 56,9 % | 38,6 % | 2,1 |
+| más del 75 % | 1.932 | 0,1224 [0,1128, 0,1322] | 39,5 % | 24,6 % | 1,1 |
+
+El acierto cae a medida que el carrito se llena, en buena parte porque queda menos que
+adivinar (de 5,3 a 1,1 productos): el `recall` apenas se mueve (de 0,19 a 0,23). Como el
+orden de las líneas es aleatorio, un corte tardío es una cesta con más contexto y menos
+target, no "el final de la compra".
 
 ### Categoría frente a SKU
 
@@ -627,7 +714,7 @@ categoría que el cliente sí compró, aunque fuera otra referencia:
 
 | | Acierta la categoría | Acierta el SKU |
 | --- | ---: | ---: |
-| Al menos uno en el top-5 | **71,7 %** | **54,0 %** |
+| Al menos uno en el top-5 | **71,8 %** | **54,2 %** |
 | Precisión media del top-5 | 22,7 % | 14,5 % |
 
 La distancia entre las dos columnas es la parte del error que está en *elegir la
@@ -651,7 +738,7 @@ evaluación y en la demo) lo dejan en **0 %** y suben el acierto de categoría *
 ### F1@5 frente a Kaggle
 
 Para tener un orden de magnitud externo, el pipeline calcula también Precision@5
-(**0,1445**) y F1@5 (**0,1642**; **0,1546** promediando el F1 de cada cesta) y lo pone al
+(**0,1451**) y F1@5 (**0,1649**; **0,1552** promediando el F1 de cada cesta) y lo pone al
 lado del primer puesto de *Instacart Market Basket Analysis* (F1 ≈ 0,41).
 
 **No es una comparación equivalente**, y el
@@ -670,10 +757,10 @@ recomendación. La tabla que lo resume:
 
 | Perfil | Popularidad | Co-compra SKU | Co-compra categoría | Historial | ALS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 93 % | 0 % | 0 % | 22 % | 0 % |
-| 2 · nuevo, con artículos | 85 % | 20 % | 22 % | 20 % | 0 % |
-| 3 · recurrente, carrito vacío | 59 % | 0 % | 0 % | 99 % | 46 % |
-| 4 · recurrente, con artículos | 57 % | 12 % | 17 % | 98 % | 43 % |
+| 1 · nuevo, carrito vacío | 91 % | 0 % | 0 % | 24 % | 0 % |
+| 2 · nuevo, con artículos | 84 % | 19 % | 22 % | 21 % | 0 % |
+| 3 · recurrente, carrito vacío | 60 % | 0 % | 0 % | 99 % | 46 % |
+| 4 · recurrente, con artículos | 58 % | 11 % | 17 % | 98 % | 43 % |
 
 Con fidelidad de marca, el historial personal está detrás de casi todas las
 recomendaciones a clientes recurrentes (antes, del 42-49 %). Desde el punto A1 también
@@ -1020,6 +1107,7 @@ saltan solos en un repo recién clonado.
 | `test_rfm.py` | 13 | Quintiles, segmentos y clientes sin compras |
 | `test_schemas.py` | 16 | Tipos al leer, ida y vuelta a Parquet por los dos motores |
 | `test_recommender.py` | 17 | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte; y Precision/F1 a mano |
+| `test_evaluation_robustness.py` | 19 | Varios cortes por cesta sin solapes y con su propio `cut_ts`, muestra por cesta, cold-start, y el bootstrap (por cesta y pareado) contra casos conocidos |
 | `test_cart_rerank.py` | 11 | Re-ranking por categoría y carrito, huecos regalados a mano, y features de carrito iguales en Spark y en pandas |
 | `test_nba.py` | 25 | Que las features no miran tras el corte, y la aritmética del valor esperado a mano |
 | `test_impact.py` | 18 | La cadena de multiplicaciones que lleva de `hit_rate@5` a euros |
@@ -1078,6 +1166,11 @@ Quedan tres deudas anotadas, ninguna bloqueante:
 - **El modelo de propensión no tiene features de calendario** (detectado en la Fase 5). Por
   eso la política elige protector solar en noviembre. El índice estacional ya se calcula en
   la Fase 2: es meterlo en `src/nba/features.py`.
+- **El entrenamiento del ranker no es determinista entre ejecuciones.** Con los mismos
+  datos, la parada temprana cae en un número de árboles distinto (70 frente a 150) y la
+  cabecera se mueve en la tercera decimal. Los intervalos de confianza lo cubren, pero una
+  serie histórica limpia pediría fijar el orden de las filas y `deterministic=True` en
+  LightGBM.
 - **Los topes de candidatos no se han reajustado al catálogo de 496 productos** (Fase 7c).
   Se dejaron como estaban para que la comparación con la Fase 3 fuera limpia; con el pool
   cubriendo ya el 76,9 % del target, afinarlos es margen, no un arreglo.
@@ -1091,7 +1184,7 @@ Quedan tres deudas anotadas, ninguna bloqueante:
 | **0 · Setup** | Estructura del repo, entorno con `constraints.txt` y CI en GitHub Actions | El workflow instala y ejecuta la suite | ✅ |
 | **1 · Generador** | `data_generation/generate_dataset.py`: 7 tablas, 3,1 M de líneas de ticket, con ciclos de reposición, fidelidad de marca, afinidad de cesta, estacionalidad, uplift de promoción, churn progresivo, embudo online y defectos de calidad inyectados a propósito | 36 tests; dos ejecuciones dan `sha256` idénticos | ✅ |
 | **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta y las 9 preguntas de negocio como funciones | 149 tests; informes regenerables en `reports/etl/` | Data Trust **91,42 (C) → 100,00 (A)** |
-| **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank` con relevancia graduada. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | Tests de fuga de datos, historial as-of, paridad con la demo y objetivo; `reports/recommender/` y `verify_recommender_diagnostics` | **NDCG@5 graduada = 0,2138** · categoría 71,7 % · SKU 54,0 % · 91,8 % del techo teórico de categoría |
+| **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank` con relevancia graduada. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | Tests de fuga de datos, historial as-of, paridad con la demo y objetivo; `reports/recommender/` y `verify_recommender_diagnostics` | **NDCG@5 graduada = 0,2148** [0,2120, 0,2177] · categoría 71,8 % · SKU 54,2 % · 91,9 % del techo teórico de categoría |
 | **4 · Next Best Action** | Dos modelos de propensión (churn a 4 semanas, compra en categoría a 7 días) sobre cortes temporales, y política de valor esperado con catálogo de acciones y economía por departamento | 25 tests, incluida la aritmética del valor esperado a mano; `reports/nba/` | **AUC 0,8527 / 0,7630** · política **+3.938 €** vs. no actuar |
 | **5 · Empaquetado** | Resumen de impacto en euros con su barrido de supuestos, informe de 8 hallazgos de negocio con figuras, y registro opcional de experimentos en MLflow | 37 tests; `IMPACT.md` y `reports/insights/` se regeneran con un comando | **289.430 €/año** por cada 100.000 clientes y 100.000 cestas online/mes |
 | **6 · Demo** | Catálogo con 60 fotos reales de Pexels, inferencia sin Spark y app en Streamlit con cesta en vivo, top-5 explicado, NBA y cestas reales de test | 59 tests, incluida la paridad con el pipeline; arranque real verificado | ✅ acierto de categoría y exacto, lado a lado |

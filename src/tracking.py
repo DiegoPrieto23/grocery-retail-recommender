@@ -232,6 +232,11 @@ def recommender_metrics(result: dict[str, Any], *, k: int) -> dict[str, float]:
     for _, row in result["summary"].iloc[1:].iterrows():
         profile = str(row["grupo"]).split(" - ")[0].strip()
         metrics[f"ndcg@{k}_perfil_{profile}"] = row[f"ndcg@{k}"]
+    # Intervalos de confianza de las cifras de cabecera (punto M4), si se calcularon.
+    for name in (f"ndcg_graded@{k}", f"cat_hit_rate@{k}", f"sku_hit_rate@{k}"):
+        for suffix in ("_ci_low", "_ci_high"):
+            if name + suffix in by_category.index:
+                metrics[name + suffix] = by_category[name + suffix]
     return metrics
 
 

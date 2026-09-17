@@ -53,12 +53,34 @@ cuando `T > k`: la cifra sirve para comparar sistemas, no como porcentaje de per
 Todo se desglosa por los cuatro perfiles de `CHALLENGE.md`, que es donde se ve si el
 sistema aguanta el cold-start o solo funciona con clientes conocidos.
 
+## Incertidumbre (punto M4)
+
+Todas las metricas son medias por query, y con 421 queries en un perfil el error estandar
+de un *hit rate* ronda los 2,4 puntos. Por eso, con un `BootstrapConfig`:
+
+- `summarise` y `category_metrics` anaden a cada metrica su intervalo de confianza
+  percentil (`<metrica>_ci_low`, `<metrica>_ci_high`);
+- `paired_bootstrap` compara sistemas **sobre las mismas queries**: remuestrea las
+  mismas cestas para todos y da la diferencia media, su intervalo y un p-valor
+  bilateral. Sirve para "LambdaRank frente a un baseline" y para cualquier ablacion.
+
+La unidad que se remuestrea es la **cesta** (`source_basket_id`), no la query. Con varios
+cortes por cesta (punto M3), las queries de una misma cesta estan correladas, y tratarlas
+como independientes daria intervalos demasiado estrechos. Con un corte por cesta las dos
+unidades coinciden. El p-valor sale del bootstrap centrado:
+
+    p = (1 + #{ |d*_b - d| >= |d| }) / (B + 1)
+
+donde `d` es la diferencia observada y `d*_b` la de cada remuestreo. No se corrige por
+comparaciones multiples: con siete baselines, un p de 0,03 aislado no es concluyente.
+
 Al final del modulo esta la bateria de **baselines independientes del pool** (punto A3 de
 `docs/diagnostico-fase7.md`), que la lanza `verify_recommender_diagnostics.py`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -66,7 +88,7 @@ import pandas as pd
 
 from src.recommender import formulas as fx
 from src.recommender import rerank as rr
-from src.recommender.config import RerankConfig
+from src.recommender.config import BootstrapConfig, RerankConfig
 from src.recommender.schema import RELEVANCE_CATEGORY, RELEVANCE_GAIN, RELEVANCE_SKU
 from src.recommender.splits import PROFILE_LABELS
 
@@ -109,6 +131,16 @@ def top_k_predictions(
     return rr.top_k(scored, k=k, score_col=score_col, rerank=rerank)
 
 
+# Columnas de `queries` que se arrastran a las tablas por query, si existen: la cesta real
+# (para remuestrear por cesta) y el corte (para desglosar por el).
+CLUSTER_COLUMN = "source_basket_id"
+_QUERY_COLUMNS = ("basket_id", CLUSTER_COLUMN, "profile", "n_target", "n_items", "prefix_size")
+
+
+def _query_frame(queries: pd.DataFrame) -> pd.DataFrame:
+    return queries[[c for c in _QUERY_COLUMNS if c in queries.columns]].copy()
+
+
 def per_query_metrics(
     top_k: pd.DataFrame, queries: pd.DataFrame, *, k: int
 ) -> pd.DataFrame:
@@ -116,7 +148,8 @@ def per_query_metrics(
 
     Args:
         top_k: Salida de `top_k_predictions`, con `label` y `rank`.
-        queries: Una fila por query con `basket_id`, `profile` y `n_target`.
+        queries: Una fila por query con `basket_id`, `profile` y `n_target` (y, si las
+            tiene, `source_basket_id`, `n_items` y `prefix_size`, que se arrastran).
         k: Longitud de la lista.
 
     Returns:
@@ -131,7 +164,7 @@ def per_query_metrics(
     )
     n_hits = hits.groupby("basket_id").size()
 
-    out = queries[["basket_id", "profile", "n_target"]].copy()
+    out = _query_frame(queries)
     out["dcg"] = out["basket_id"].map(dcg).fillna(0.0)
     out["n_hits"] = out["basket_id"].map(n_hits).fillna(0).astype(int)
     out["ndcg"] = out["dcg"] / _idcg(out["n_target"].to_numpy(), k)
@@ -150,29 +183,318 @@ def harmonic_f1(precision: float, recall: float) -> float:
     return 0.0 if total == 0 else 2 * precision * recall / total
 
 
-def summarise(per_query: pd.DataFrame, *, k: int, label: str = "total") -> pd.DataFrame:
-    """Agrega las metricas por perfil y en total, con el numero de queries de cada uno."""
+# --------------------------------------------------------------------------------------
+# Incertidumbre: bootstrap por cesta (punto M4)
+# --------------------------------------------------------------------------------------
+CI_LOW, CI_HIGH = "_ci_low", "_ci_high"
 
-    def block(frame: pd.DataFrame, name: str) -> dict:
+# Cuantos valores (remuestreos x cestas x metricas) se materializan a la vez.
+_BOOTSTRAP_CHUNK = 4_000_000
+
+
+def _clusters(frame: pd.DataFrame, cluster: str | None) -> np.ndarray | None:
+    """Codigo de cesta de cada fila. `None` si cada fila es su propia unidad."""
+    column = cluster if cluster is not None else CLUSTER_COLUMN
+    if column not in frame.columns:
+        return None
+    codes, _ = pd.factorize(frame[column], sort=False)
+    return codes
+
+
+def bootstrap_replicates(
+    values: np.ndarray,
+    bootstrap: BootstrapConfig,
+    *,
+    clusters: np.ndarray | None = None,
+    stream: int = 0,
+) -> np.ndarray:
+    """Medias de `values` (filas x metricas) en cada remuestreo por cesta.
+
+    Se sortean cestas con reemplazo y la media de cada remuestreo es la de todas sus
+    queries (estimador de razon: suma de la metrica entre numero de queries). Con la
+    misma `bootstrap.seed`, `stream` y `clusters`, dos llamadas remuestrean exactamente las
+    mismas cestas: es lo que hace pareada la comparacion entre sistemas.
+
+    Returns:
+        Matriz `(n_resamples, n_metricas)`.
+    """
+    values = np.asarray(values, dtype=float)
+    if values.ndim == 1:
+        values = values[:, None]
+    if clusters is None:
+        sums, counts = values, np.ones(len(values))
+    else:
+        n_groups = int(clusters.max()) + 1 if len(clusters) else 0
+        counts = np.bincount(clusters, minlength=n_groups).astype(float)
+        sums = np.column_stack(
+            [np.bincount(clusters, weights=values[:, j], minlength=n_groups) for j in range(values.shape[1])]
+        )
+    n_groups = len(counts)
+    rng = np.random.default_rng([bootstrap.seed, stream])
+    out = np.empty((bootstrap.n_resamples, values.shape[1]))
+    if n_groups == 0:
+        out[:] = np.nan
+        return out
+    step = max(1, _BOOTSTRAP_CHUNK // (n_groups * max(values.shape[1], 1)))
+    uniform = np.full(n_groups, 1.0 / n_groups)
+    for lo in range(0, bootstrap.n_resamples, step):
+        hi = min(lo + step, bootstrap.n_resamples)
+        # Cuantas veces sale cada cesta en cada remuestreo.
+        weights = rng.multinomial(n_groups, uniform, size=hi - lo).astype(float)
+        out[lo:hi] = (weights @ sums) / (weights @ counts)[:, None]
+    return out
+
+
+def percentile_interval(
+    replicates: np.ndarray, confidence: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extremos del intervalo percentil de cada columna de `replicates`."""
+    alpha = (1.0 - confidence) / 2.0
+    low, high = np.quantile(replicates, [alpha, 1.0 - alpha], axis=0)
+    return low, high
+
+
+def bootstrap_means(
+    frame: pd.DataFrame,
+    columns: Mapping[str, str],
+    bootstrap: BootstrapConfig,
+    *,
+    cluster: str | None = None,
+    stream: int = 0,
+    derived: Mapping[str, object] | None = None,
+) -> dict[str, float]:
+    """Intervalo de confianza de la media de cada columna, remuestreando cestas.
+
+    Args:
+        frame: Una fila por query.
+        columns: Columna de `frame` -> nombre de la metrica en el resumen.
+        bootstrap: Remuestreos, confianza y semilla.
+        cluster: Columna de la cesta; por defecto `source_basket_id` si existe.
+        stream: Distingue los sorteos de cada grupo (total, perfiles...).
+        derived: Metricas que no son una media, como nombre -> funcion que recibe un dict
+            {nombre: replicas} y devuelve las replicas de la derivada (p. ej. el F1 de
+            las medias de precision y recall).
+
+    Returns:
+        `{<metrica>_ci_low: ..., <metrica>_ci_high: ...}` para cada metrica.
+    """
+    names = list(columns.values())
+    reps = bootstrap_replicates(
+        frame[list(columns)].to_numpy(dtype=float),
+        bootstrap,
+        clusters=_clusters(frame, cluster),
+        stream=stream,
+    )
+    by_name = {name: reps[:, j] for j, name in enumerate(names)}
+    for name, fn in (derived or {}).items():
+        by_name[name] = fn(by_name)  # type: ignore[operator]
+    stacked = np.column_stack(list(by_name.values()))
+    low, high = percentile_interval(stacked, bootstrap.confidence)
+    out: dict[str, float] = {}
+    for j, name in enumerate(by_name):
+        out[name + CI_LOW] = float(low[j])
+        out[name + CI_HIGH] = float(high[j])
+    return out
+
+
+def _harmonic_replicates(precision: np.ndarray, recall: np.ndarray) -> np.ndarray:
+    total = precision + recall
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(total == 0, 0.0, 2 * precision * recall / total)
+
+
+def summarise(
+    per_query: pd.DataFrame,
+    *,
+    k: int,
+    label: str = "total",
+    bootstrap: BootstrapConfig | None = None,
+    cluster: str | None = None,
+) -> pd.DataFrame:
+    """Agrega las metricas por perfil y en total, con el numero de queries de cada uno.
+
+    Con `bootstrap`, cada metrica lleva su intervalo de confianza (`<metrica>_ci_low` y
+    `<metrica>_ci_high`), remuestreando cestas dentro de cada grupo. La comparacion
+    pareada entre sistemas, sobre las mismas queries, es `paired_bootstrap`.
+    """
+    columns = {
+        "ndcg": f"ndcg@{k}",
+        "recall": f"recall@{k}",
+        "precision": f"precision@{k}",
+        "f1": f"f1@{k}_por_cesta",
+        "hit": f"hit_rate@{k}",
+    }
+    f1_name = f"f1@{k}"
+    derived = {
+        f1_name: lambda r: _harmonic_replicates(r[f"precision@{k}"], r[f"recall@{k}"])
+    }
+
+    def block(frame: pd.DataFrame, name: str, stream: int) -> dict:
         precision = float(frame["precision"].mean())
         recall = float(frame["recall"].mean())
-        return {
+        row = {
             "grupo": name,
             "n_queries": int(len(frame)),
             f"ndcg@{k}": float(frame["ndcg"].mean()),
             f"recall@{k}": recall,
             f"precision@{k}": precision,
-            f"f1@{k}": harmonic_f1(precision, recall),
+            f1_name: harmonic_f1(precision, recall),
             f"f1@{k}_por_cesta": float(frame["f1"].mean()),
             f"hit_rate@{k}": float(frame["hit"].mean()),
             "n_target_medio": float(frame["n_target"].mean()),
         }
+        if bootstrap is not None:
+            row |= bootstrap_means(
+                frame, columns, bootstrap, cluster=cluster, stream=stream, derived=derived
+            )
+        return row
 
-    rows = [block(per_query, label)]
+    rows = [block(per_query, label, 0)]
     for profile in sorted(per_query["profile"].unique()):
         subset = per_query.loc[per_query["profile"] == profile]
-        rows.append(block(subset, PROFILE_LABELS.get(int(profile), str(profile))))
+        rows.append(block(subset, PROFILE_LABELS.get(int(profile), str(profile)), int(profile)))
     return pd.DataFrame(rows)
+
+
+def paired_bootstrap(
+    systems: Mapping[str, pd.DataFrame],
+    reference: str,
+    metrics: Mapping[str, str],
+    bootstrap: BootstrapConfig,
+    *,
+    by_profile: bool = True,
+    cluster: str | None = None,
+) -> pd.DataFrame:
+    """Diferencia entre `reference` y cada otro sistema, con IC y p-valor, sobre las mismas queries.
+
+    Todos los sistemas se remuestrean con las **mismas** cestas en cada replica, asi que
+    lo que varia entre replicas es la diferencia, no el conjunto de queries. Ese
+    emparejamiento es lo que permite detectar diferencias pequenas: la dificultad de cada
+    cesta se cancela.
+
+    Args:
+        systems: Nombre -> tabla por query (`system_per_query` o `per_query_metrics`),
+            todas con las mismas queries.
+        reference: El sistema contra el que se compara (el LambdaRank servido).
+        metrics: Columna por query -> nombre de la metrica en el informe.
+        bootstrap: Remuestreos, confianza y semilla.
+        by_profile: Repetir el contraste dentro de cada perfil.
+        cluster: Columna de la cesta; por defecto `source_basket_id` si existe.
+
+    Returns:
+        Una fila por (grupo, sistema, metrica) con `n_queries`, las dos medias
+        (`media_referencia`, `media_sistema`), `diferencia` (referencia - sistema),
+        `ci_low`, `ci_high` y `p_value`.
+    """
+    base = systems[reference].set_index("basket_id")
+    table = base.reset_index()
+    columns = list(metrics)
+    rows = []
+    for name, frame in systems.items():
+        if name == reference:
+            continue
+        other = frame.set_index("basket_id")
+        if len(other) != len(base) or not other.index.isin(base.index).all():
+            raise ValueError(f"{name} no tiene las mismas queries que {reference}")
+        other = other.reindex(base.index)
+        diff = base[columns].to_numpy(dtype=float) - other[columns].to_numpy(dtype=float)
+
+        groups: list[tuple[str, np.ndarray, int]] = [
+            ("total", np.ones(len(base), dtype=bool), 0)
+        ]
+        if by_profile:
+            for profile in sorted(base["profile"].unique()):
+                groups.append(
+                    (
+                        PROFILE_LABELS.get(int(profile), str(profile)),
+                        (base["profile"] == profile).to_numpy(),
+                        int(profile),
+                    )
+                )
+        for group, mask, stream in groups:
+            sub = diff[mask]
+            clusters = _clusters(table.loc[mask], cluster)
+            reps = bootstrap_replicates(sub, bootstrap, clusters=clusters, stream=stream)
+            observed = sub.mean(axis=0)
+            low, high = percentile_interval(reps, bootstrap.confidence)
+            extreme = (np.abs(reps - observed) >= np.abs(observed)).sum(axis=0)
+            p_value = (1 + extreme) / (bootstrap.n_resamples + 1)
+            ref_mean = base.loc[mask, columns].to_numpy(dtype=float).mean(axis=0)
+            for j, column in enumerate(columns):
+                rows.append(
+                    {
+                        "grupo": group,
+                        "sistema": name,
+                        "metrica": metrics[column],
+                        "n_queries": int(mask.sum()),
+                        "media_referencia": float(ref_mean[j]),
+                        "media_sistema": float(ref_mean[j] - observed[j]),
+                        "diferencia": float(observed[j]),
+                        "ci_low": float(low[j]),
+                        "ci_high": float(high[j]),
+                        "p_value": float(p_value[j]),
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def summarise_by(
+    per_query: pd.DataFrame,
+    groups: Mapping[str, np.ndarray],
+    metrics: Mapping[str, str],
+    *,
+    bootstrap: BootstrapConfig | None = None,
+    cluster: str | None = None,
+    plain: Mapping[str, str] | None = None,
+) -> pd.DataFrame:
+    """Media de cada metrica en grupos arbitrarios de queries, con IC si hay `bootstrap`.
+
+    Lo usa el desglose por corte (punto M3): `groups` es etiqueta -> mascara booleana.
+    Cada fila lleva tambien el numero de cestas distintas, que es el tamano efectivo del
+    grupo cuando una cesta aporta varias queries. `plain` son medias que se reportan sin
+    intervalo (p. ej. `n_target`).
+    """
+    cluster_col = cluster if cluster is not None else CLUSTER_COLUMN
+    rows = []
+    for stream, (name, mask) in enumerate(groups.items()):
+        frame = per_query.loc[mask]
+        row: dict[str, object] = {"grupo": name, "n_queries": int(len(frame))}
+        if cluster_col in frame.columns:
+            row["n_cestas"] = int(frame[cluster_col].nunique())
+        for column, metric in {**metrics, **(plain or {})}.items():
+            row[metric] = float(frame[column].mean()) if len(frame) else float("nan")
+        if bootstrap is not None and len(frame):
+            row |= bootstrap_means(frame, metrics, bootstrap, cluster=cluster, stream=stream)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# Tramos de la fraccion del ticket que ya esta en el carrito (`prefix_size / n_items`).
+CUT_FRACTION_BINS: tuple[tuple[float, float], ...] = (
+    (0.0, 0.25),
+    (0.25, 0.5),
+    (0.5, 0.75),
+    (0.75, 1.0),
+)
+
+
+def cut_groups(
+    per_query: pd.DataFrame, *, max_prefix: int = 9
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Mascaras del desglose por corte: por `prefix_size` y por fraccion del ticket.
+
+    Los `prefix_size` mayores que `max_prefix` van juntos: hay pocas cestas tan largas.
+    La fraccion es `prefix_size / n_items`, en tramos abiertos por la izquierda.
+    """
+    size = per_query["prefix_size"].to_numpy()
+    by_size = {str(s): size == s for s in range(1, max_prefix + 1)}
+    by_size[f"{max_prefix + 1}+"] = size > max_prefix
+    fraction = size / per_query["n_items"].to_numpy()
+    by_fraction = {
+        f"({lo:.0%}, {hi:.0%}]": (fraction > lo) & (fraction <= hi)
+        for lo, hi in CUT_FRACTION_BINS
+    }
+    return by_size, by_fraction
 
 
 def candidate_recall(scored: pd.DataFrame, queries: pd.DataFrame) -> pd.DataFrame:
@@ -216,18 +538,19 @@ def evaluate(
     k: int,
     score_col: str = "score",
     rerank: RerankConfig | None = None,
+    bootstrap: BootstrapConfig | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Atajo: top-k, metricas por query y resumen por perfil.
+    """Atajo: top-k, metricas por query y resumen por perfil (con IC si hay `bootstrap`).
 
     Returns:
         `(resumen, por_query)`.
     """
     top = top_k_predictions(scored, k=k, score_col=score_col, rerank=rerank)
     per_query = per_query_metrics(top, queries, k=k)
-    return summarise(per_query, k=k), per_query
+    return summarise(per_query, k=k, bootstrap=bootstrap), per_query
 
 
-def category_metrics(
+def category_per_query(
     top_k: pd.DataFrame,
     target: pd.DataFrame,
     product_category: pd.DataFrame,
@@ -235,28 +558,11 @@ def category_metrics(
     *,
     k: int,
 ) -> pd.DataFrame:
-    """Las mismas listas, evaluadas a nivel de **categoria** en vez de de SKU.
-
-    Separa dos fallos que la metrica de SKU confunde en un solo numero:
-
-    - *"no se que necesita este cliente"* -- ni siquiera acierta la categoria;
-    - *"se que necesita leche, pero no cual de las referencias de leche"*.
-
-    En gran consumo el segundo es un problema distinto y mucho mas benigno: si el cliente
-    va a comprar leche, cualquier leche recomendada es una recomendacion util aunque no
-    sea la referencia exacta que acabo eligiendo. Sin este desglose no se sabe cual de los
-    dos limita al sistema.
-
-    Args:
-        top_k: Salida de `top_k_predictions`, con `label` y `rank`.
-        target: Pares `(basket_id, product_id)` que habia que adivinar.
-        product_category: Catalogo con `product_id` y `category`.
-        queries: Una fila por query, con `basket_id`, `profile` y `n_target`.
-        k: Longitud de la lista.
+    """Acierto de categoria y de SKU y NDCG graduada de cada query (ver `category_metrics`).
 
     Returns:
-        Resumen por perfil con la NDCG graduada (la metrica principal, ver la cabecera
-        del modulo) y `hit_rate` y `precision` de categoria y de SKU.
+        Una fila por query de `queries` con `cat_hits`, `sku_hits`, `ndcg_graded`,
+        `cat_hit`, `sku_hit`, `cat_precision` y `sku_precision`.
     """
     catalog = product_category[["product_id", "category"]]
     target_cats = (
@@ -280,29 +586,113 @@ def category_metrics(
     per_query = recs.groupby("basket_id").agg(
         cat_hits=("cat_ok", "sum"), sku_hits=("label", "sum"), dcg=("gain", "sum")
     )
-    out = queries[["basket_id", "profile", "n_target"]].copy()
+    out = _query_frame(queries)
     out["cat_hits"] = out["basket_id"].map(per_query["cat_hits"]).fillna(0)
     out["sku_hits"] = out["basket_id"].map(per_query["sku_hits"]).fillna(0)
     out["ndcg_graded"] = out["basket_id"].map(per_query["dcg"]).fillna(0.0) / _graded_idcg(
         out["n_target"].to_numpy(), k
     )
+    out["cat_hit"] = (out["cat_hits"] > 0).astype(float)
+    out["sku_hit"] = (out["sku_hits"] > 0).astype(float)
+    out["cat_precision"] = out["cat_hits"] / k
+    out["sku_precision"] = out["sku_hits"] / k
+    return out
 
-    def block(frame: pd.DataFrame, name: str) -> dict:
-        return {
-            "grupo": name,
-            "n_queries": int(len(frame)),
-            f"ndcg_graded@{k}": float(frame["ndcg_graded"].mean()),
-            f"cat_hit_rate@{k}": float((frame["cat_hits"] > 0).mean()),
-            f"cat_precision@{k}": float((frame["cat_hits"] / k).mean()),
-            f"sku_hit_rate@{k}": float((frame["sku_hits"] > 0).mean()),
-            f"sku_precision@{k}": float((frame["sku_hits"] / k).mean()),
-        }
 
-    rows = [block(out, "total")]
+def category_metric_columns(k: int) -> dict[str, str]:
+    """Columna de `category_per_query` -> nombre de la metrica agregada."""
+    return {
+        "ndcg_graded": f"ndcg_graded@{k}",
+        "cat_hit": f"cat_hit_rate@{k}",
+        "cat_precision": f"cat_precision@{k}",
+        "sku_hit": f"sku_hit_rate@{k}",
+        "sku_precision": f"sku_precision@{k}",
+    }
+
+
+def category_metrics(
+    top_k: pd.DataFrame,
+    target: pd.DataFrame,
+    product_category: pd.DataFrame,
+    queries: pd.DataFrame,
+    *,
+    k: int,
+    bootstrap: BootstrapConfig | None = None,
+    cluster: str | None = None,
+) -> pd.DataFrame:
+    """Las mismas listas, evaluadas a nivel de **categoria** en vez de de SKU.
+
+    Separa dos fallos que la metrica de SKU confunde en un solo numero:
+
+    - *"no se que necesita este cliente"* -- ni siquiera acierta la categoria;
+    - *"se que necesita leche, pero no cual de las referencias de leche"*.
+
+    En gran consumo el segundo es un problema distinto y mucho mas benigno: si el cliente
+    va a comprar leche, cualquier leche recomendada es una recomendacion util aunque no
+    sea la referencia exacta que acabo eligiendo. Sin este desglose no se sabe cual de los
+    dos limita al sistema.
+
+    Args:
+        top_k: Salida de `top_k_predictions`, con `label` y `rank`.
+        target: Pares `(basket_id, product_id)` que habia que adivinar.
+        product_category: Catalogo con `product_id` y `category`.
+        queries: Una fila por query, con `basket_id`, `profile` y `n_target`.
+        k: Longitud de la lista.
+        bootstrap: Si se indica, cada metrica lleva su intervalo de confianza.
+        cluster: Columna de la cesta para el bootstrap; por defecto `source_basket_id`.
+
+    Returns:
+        Resumen por perfil con la NDCG graduada (la metrica principal, ver la cabecera
+        del modulo) y `hit_rate` y `precision` de categoria y de SKU.
+    """
+    out = category_per_query(top_k, target, product_category, queries, k=k)
+    columns = category_metric_columns(k)
+
+    def block(frame: pd.DataFrame, name: str, stream: int) -> dict:
+        row: dict[str, object] = {"grupo": name, "n_queries": int(len(frame))}
+        for column, metric in columns.items():
+            row[metric] = float(frame[column].mean())
+        if bootstrap is not None:
+            row |= bootstrap_means(frame, columns, bootstrap, cluster=cluster, stream=stream)
+        return row
+
+    rows = [block(out, "total", 0)]
     for profile in sorted(out["profile"].unique()):
         subset = out.loc[out["profile"] == profile]
-        rows.append(block(subset, PROFILE_LABELS.get(int(profile), str(profile))))
+        rows.append(block(subset, PROFILE_LABELS.get(int(profile), str(profile)), int(profile)))
     return pd.DataFrame(rows)
+
+
+def system_per_query(
+    top_k: pd.DataFrame,
+    queries: pd.DataFrame,
+    target: pd.DataFrame,
+    product_category: pd.DataFrame,
+    *,
+    k: int,
+) -> pd.DataFrame:
+    """Todas las metricas por query de un top-k (SKU y categoria), en una tabla.
+
+    Es la entrada de `paired_bootstrap` y del desglose por corte. `system_metrics` da
+    el nombre agregado de cada columna.
+    """
+    sku = per_query_metrics(top_k, queries, k=k)
+    cat = category_per_query(top_k, target, product_category, queries, k=k)
+    extra = [c for c in cat.columns if c not in sku.columns]
+    return sku.merge(cat[["basket_id", *extra]], on="basket_id")
+
+
+def system_metrics(k: int) -> dict[str, str]:
+    """Metricas de `system_per_query` que se reportan con IC, en orden de importancia."""
+    return {
+        "ndcg_graded": f"ndcg_graded@{k}",
+        "cat_hit": f"cat_hit_rate@{k}",
+        "sku_hit": f"sku_hit_rate@{k}",
+        "ndcg": f"ndcg@{k}",
+        "recall": f"recall@{k}",
+        "cat_precision": f"cat_precision@{k}",
+        "sku_precision": f"sku_precision@{k}",
+    }
 
 
 WITH_CART_GROUP = "con carrito (perfiles 2 y 4)"
