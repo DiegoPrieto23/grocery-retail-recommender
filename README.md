@@ -879,20 +879,20 @@ Por **100.000 clientes activos y 100.000 cestas online al mes**:
 
 | Pieza | Al mes | Al año |
 | --- | ---: | ---: |
-| Cross-sell del recomendador (margen, con incrementalidad al 10 %) | 3.095 € | 37.143 € |
+| Cross-sell del recomendador (margen, con incrementalidad al 10 %) | 3.694 € | 44.327 € |
 | Política de Next Best Action | 21.024 € | 252.286 € |
-| **Total** | **24.119 €** | **289.430 €** |
+| **Total** | **24.718 €** | **296.614 €** |
 
 Dos lecturas que conviene no maquillar:
 
-- **La mayor parte del valor sigue viniendo del NBA** (87 % del total). Tiene sentido: la
+- **La mayor parte del valor sigue viniendo del NBA** (85 % del total). Tiene sentido: la
   política decide sobre el cliente entero y el recomendador sólo sobre cinco huecos de una
   cesta. Antes de la Fase 7 el recomendador ponía el 2 % (5.721 €/año); el cambio lo cuenta
   [`IMPACT.md`](IMPACT.md), con las cifras viejas congeladas en
   [`reports/impact/baseline_fase5.json`](reports/impact/baseline_fase5.json).
 - **La cifra que no lleva supuestos dentro es la relativa**: el ranker deja una sugerencia
-  relevante en un **85 % más de cestas** que el baseline de popularidad (49,5 % frente a
-  26,7 %). El resto de la cadena hasta el euro son multiplicaciones sobre esa base.
+  relevante en el **doble de cestas** que el baseline de popularidad (54,2 % frente a
+  27,0 %, +101 %). El resto de la cadena hasta el euro son multiplicaciones sobre esa base.
 
 ### El informe de hallazgos de negocio
 
@@ -1186,7 +1186,7 @@ Quedan tres deudas anotadas, ninguna bloqueante:
 | **2 · ETL y features** | PySpark: limpieza documentada, Data Trust Score, RFM, `due_for_repurchase` (Tarea 2), afinidad de cesta y las 9 preguntas de negocio como funciones | 149 tests; informes regenerables en `reports/etl/` | Data Trust **91,42 (C) → 100,00 (A)** |
 | **3 · Recomendador** | Dos etapas: cinco fuentes de candidatos (popularidad estacional, co-compra de SKU y de categoría, historial con recompra, ALS) + ranker LightGBM `LambdaRank` con relevancia graduada. Split temporal **y por cesta**, con las fuentes reajustadas por ventana | Tests de fuga de datos, historial as-of, paridad con la demo y objetivo; `reports/recommender/` y `verify_recommender_diagnostics` | **NDCG@5 graduada = 0,2148** [0,2120, 0,2177] · categoría 71,8 % · SKU 54,2 % · 91,9 % del techo teórico de categoría |
 | **4 · Next Best Action** | Dos modelos de propensión (churn a 4 semanas, compra en categoría a 7 días) sobre cortes temporales, y política de valor esperado con catálogo de acciones y economía por departamento | 25 tests, incluida la aritmética del valor esperado a mano; `reports/nba/` | **AUC 0,8527 / 0,7630** · política **+3.938 €** vs. no actuar |
-| **5 · Empaquetado** | Resumen de impacto en euros con su barrido de supuestos, informe de 8 hallazgos de negocio con figuras, y registro opcional de experimentos en MLflow | 37 tests; `IMPACT.md` y `reports/insights/` se regeneran con un comando | **289.430 €/año** por cada 100.000 clientes y 100.000 cestas online/mes |
+| **5 · Empaquetado** | Resumen de impacto en euros con su barrido de supuestos, informe de 8 hallazgos de negocio con figuras, y registro opcional de experimentos en MLflow | 37 tests; `IMPACT.md` y `reports/insights/` se regeneran con un comando | **296.614 €/año** por cada 100.000 clientes y 100.000 cestas online/mes |
 | **6 · Demo** | Catálogo con 60 fotos reales de Pexels, inferencia sin Spark y app en Streamlit con cesta en vivo, top-5 explicado, NBA y cestas reales de test | 59 tests, incluida la paridad con el pipeline; arranque real verificado | ✅ acierto de categoría y exacto, lado a lado |
 | **7 · Fidelidad de producto** | Fidelidad de marca y surtido de 8 referencias en el generador, y las Fases 2, 3, 4 y 6 rehechas encima | Tests nuevos del generador; comparación con las cifras congeladas en `reports/*/baseline_*.json` | **NDCG@5 ×5,1** · SKU acertado en el 49,5 % de las cestas (antes 11,8 %) |
 

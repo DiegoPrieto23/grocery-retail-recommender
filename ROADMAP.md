@@ -318,9 +318,10 @@ supuesto es el tamaño del premio, no el signo.
 - [x] Resumen de impacto de negocio (medio folio): NDCG@5 y uplift de NBA traducidos a
       impacto estimado (ej. cross-sell extra en €/mes)
       · `IMPACT.md`, que escribe `python -m src.impact.pipeline` · verificado por
-      `tests/test_impact.py` · regenerado en la 7e: **289.430 €/año** por 100.000 clientes
+      `tests/test_impact.py` · regenerado en la 7e: 289.430 €/año por 100.000 clientes
       y 100.000 cestas online/mes (antes 262.777 €), con las cifras previas congeladas en
-      `reports/impact/baseline_fase5.json`
+      `reports/impact/baseline_fase5.json` · regenerado tras los puntos A1–A4 y M3–M4 del
+      diagnóstico: **296.614 €/año** (el ranker acierta en el 54,2 % de las cestas)
 - [x] Notebook o informe con los hallazgos de negocio (estilo "vistazo al análisis" del
       otro proyecto)
       · `reports/insights/business_findings.md` + 8 figuras, que escribe

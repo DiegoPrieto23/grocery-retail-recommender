@@ -123,13 +123,13 @@ de target encontrada antes de entrenar, no despues de presentar el resultado.
 
 ![Recomendador por perfil](06_recomendador.png)
 
-NDCG@5 = **0,1752** frente a 0,0868 del baseline sin
-aprendizaje. El sistema acierta la **categoria** en el **60,0 %** de las
-cestas y el **SKU exacto** en el **49,5 %**, y el pool de candidatos cubre el
-76,9 % del target.
+NDCG@5 = **0,2006** frente a 0,0881 del baseline sin
+aprendizaje. El sistema acierta la **categoria** en el **71,8 %** de las
+cestas y el **SKU exacto** en el **54,2 %**, y el pool de candidatos cubre el
+77,8 % del target.
 
 Por perfil, el peor es **2 - nuevo, con articulos** (NDCG@5 =
-0,0835). Es el unico que no puede tirar ni de historial ni de ALS, y
+0,0994). Es el unico que no puede tirar ni de historial ni de ALS, y
 encima su cesta ya va por la mitad, asi que lo facil de acertar ya esta dentro.
 
 **Antes de la Fase 7 el mismo codigo daba NDCG@5 = 0,0343**, con la
@@ -141,9 +141,9 @@ referencias, y sin tocar una linea del recomendador la distancia entre categoria
 se cierra.
 
 Parte de la subida es el catalogo mas pequeno: el baseline tambien acierta mas
-(0,0200 -> 0,0868). Lo que es merito del
+(0,0200 -> 0,0881). Lo que es merito del
 ranker es su ventaja sobre ese baseline, que pasa de **x1,71** a
-**x2,02**.
+**x2,28**.
 
 **Por que importa.** Un NDCG bajo se puede leer como "el modelo es malo" y no lo era.
 Medir la categoria al lado del SKU fue lo que senalo al dato, y la demo ensena ahora las
