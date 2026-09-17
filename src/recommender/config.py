@@ -125,6 +125,37 @@ class RankerConfig:
 
 
 @dataclass(frozen=True)
+class RerankConfig:
+    """Reglas que se aplican sobre el orden del ranker antes de cortar el top-k (punto A2).
+
+    Por construccion del generador una cesta lleva una sola linea por categoria, asi que
+    un segundo producto de la misma categoria en el top-k, o uno de una categoria que ya
+    esta en el carrito, casi nunca puede acertar: son huecos regalados.
+
+    - `max_per_category`: cuantas referencias de una misma categoria caben en el top-k
+      (cuota). `None` desactiva la regla.
+    - `exclude_cart_categories`: si se relegan las categorias que ya estan en el carrito.
+
+    Ninguna regla elimina candidatos: los relega detras de los admisibles, en su orden de
+    score, asi que la lista sigue teniendo `k` productos aunque el pool sea corto. Se
+    aplica igual en `evaluate.top_k_predictions` y en `serving.rank_queries`
+    (`src/recommender/rerank.py`).
+    """
+
+    max_per_category: int | None = 1
+    exclude_cart_categories: bool = True
+
+    @classmethod
+    def off(cls) -> "RerankConfig":
+        """Sin re-ranking: el top-k es el orden del ranker tal cual."""
+        return cls(max_per_category=None, exclude_cart_categories=False)
+
+    @property
+    def active(self) -> bool:
+        return self.max_per_category is not None or self.exclude_cart_categories
+
+
+@dataclass(frozen=True)
 class RecommenderConfig:
     """Configuracion completa de la Fase 3."""
 
@@ -149,6 +180,7 @@ class RecommenderConfig:
     candidates: CandidateConfig = field(default_factory=CandidateConfig)
     als: ALSConfig = field(default_factory=ALSConfig)
     ranker: RankerConfig = field(default_factory=RankerConfig)
+    rerank: RerankConfig = field(default_factory=RerankConfig)
     seed: int = SEED
 
     def __post_init__(self) -> None:

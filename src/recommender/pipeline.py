@@ -13,9 +13,10 @@ El flujo es el de `CHALLENGE.md`, Tarea 3a:
    que impide que el ranker aprenda con features que ya contienen la respuesta.
 3. **Generacion de candidatos** y union del pool.
 4. **Features** del par `(query, candidato)`.
-5. **LambdaRank** y top-5.
-6. **NDCG@5 / Recall@5**, en total y por perfil, mas una ablacion sin senal de sesion y
-   un baseline de popularidad.
+5. **LambdaRank**, re-ranking final (`rerank.py`) y top-5.
+6. **NDCG@5 / Recall@5**, en total y por perfil, mas dos ablaciones (sin senal de sesion,
+   sin features de carrito), un baseline de popularidad y el antes/despues del punto A2
+   (features de carrito y re-ranking).
 
 Cualquier cifra que aparezca en el README sale de aqui (`CLAUDE.md`, "Splits y evaluacion").
 """
@@ -42,7 +43,7 @@ from src.recommender import evaluate as ev
 from src.recommender import features as feat
 from src.recommender import ranker as rk
 from src.recommender import splits
-from src.recommender.config import REQUIRED_TABLES, RecommenderConfig
+from src.recommender.config import REQUIRED_TABLES, RecommenderConfig, RerankConfig
 
 
 # F1 del primer puesto de "Instacart Market Basket Analysis" (Kaggle, 2017), redondeado.
@@ -54,6 +55,10 @@ INSTACART_TOP_F1 = 0.41
 # `git show b3c29ba:reports/recommender/metrics.json`. Es lo que permite que la comparacion
 # de la Fase 7c se recalcule en cada ejecucion en vez de copiarse a mano.
 BASELINE_FILENAME = "baseline_fase3.json"
+
+# Metricas del LambdaRank antes del punto A2 (sin features de carrito ni re-ranking),
+# congeladas por `verify_recommender_diagnostics --freeze` en la Sesion 1.
+PRE_A2_FILENAME = "baseline_pre_diagnostico.json"
 
 # La seccion de baselines y techo teorico de `metrics.md` la escribe
 # `verify_recommender_diagnostics.py`, no este orquestador. Va entre estas marcas para
@@ -295,12 +300,88 @@ def build_window(
         promotions=tables["promotions"],
         session_product=session_product,
         session_query=session_query,
+        cart=cart,
         target=target,
     )
     context = prefix.select("basket_id", "product_id", F.lit("prefix").alias("role")).unionByName(
         target.select("basket_id", "product_id", F.lit("target").alias("role"))
     )
     return queries, matrix, context
+
+
+def cart_rerank_variants(served: RerankConfig) -> list[tuple[str, str, str, RerankConfig]]:
+    """Variantes del antes/despues del punto A2: (clave, descripcion, score, reglas)."""
+    return [
+        (
+            "antes",
+            "Sin features de carrito, sin re-ranking (antes)",
+            "score_no_cart",
+            RerankConfig.off(),
+        ),
+        ("solo_rerank", "Sin features de carrito + re-ranking servido", "score_no_cart", served),
+        ("solo_features", "Con features de carrito, sin re-ranking", "score", RerankConfig.off()),
+        (
+            "features_diversidad",
+            "Con features de carrito + 1 por categoria",
+            "score",
+            RerankConfig(max_per_category=1, exclude_cart_categories=False),
+        ),
+        (
+            "features_diversidad_exclusion",
+            "Con features de carrito + 1 por categoria + exclusion del carrito",
+            "score",
+            RerankConfig(max_per_category=1, exclude_cart_categories=True),
+        ),
+    ]
+
+
+def cart_rerank_ablation(
+    scored: pd.DataFrame,
+    queries: pd.DataFrame,
+    target: pd.DataFrame,
+    prefix: pd.DataFrame,
+    product_category: pd.DataFrame,
+    *,
+    k: int,
+    served: RerankConfig,
+) -> pd.DataFrame:
+    """Antes/despues del punto A2: cada combinacion de features de carrito y re-ranking.
+
+    Una fila por variante con las metricas de SKU y de categoria (total) y los huecos
+    regalados, en total y en las queries con carrito.
+    """
+    rows = []
+    for key, label, score_col, rules in cart_rerank_variants(served):
+        top = ev.top_k_predictions(scored, k=k, score_col=score_col, rerank=rules)
+        sku = ev.summarise(ev.per_query_metrics(top, queries, k=k), k=k).iloc[0]
+        cat = ev.category_metrics(top, target, product_category, queries, k=k).iloc[0]
+        wasted = ev.wasted_slot_metrics(top, prefix, product_category, queries, k=k)
+        wasted = wasted.set_index("grupo")
+        recs = top[["basket_id", "product_id"]].merge(product_category, on="product_id")
+        per_list = recs.groupby("basket_id")["category"].agg(["size", "nunique"])
+        rows.append(
+            {
+                "variante": key,
+                "descripcion": label,
+                "servida": score_col == "score" and rules == served,
+                f"cat_hit_rate@{k}": float(cat[f"cat_hit_rate@{k}"]),
+                f"sku_hit_rate@{k}": float(cat[f"sku_hit_rate@{k}"]),
+                f"ndcg@{k}": float(sku[f"ndcg@{k}"]),
+                f"recall@{k}": float(sku[f"recall@{k}"]),
+                f"cat_precision@{k}": float(cat[f"cat_precision@{k}"]),
+                f"huecos_regalados@{k}": float(wasted.loc["total", f"huecos_regalados@{k}"]),
+                f"huecos_repetidos@{k}": float(wasted.loc["total", f"huecos_repetidos@{k}"]),
+                f"huecos_en_carrito@{k}_con_carrito": float(
+                    wasted.loc[ev.WITH_CART_GROUP, f"huecos_en_carrito@{k}"]
+                ),
+                f"listas_con_carrito_afectadas@{k}": float(
+                    wasted.loc[ev.WITH_CART_GROUP, f"listas_con_regalo@{k}"]
+                ),
+                f"listas_con_repetida@{k}": float((per_list["nunique"] < per_list["size"]).mean()),
+                "categorias_distintas_medias": float(per_list["nunique"].mean()),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _queries_to_pandas(queries: DataFrame) -> pd.DataFrame:
@@ -360,6 +441,14 @@ def run(
     )
     timer.step("Ablacion sin senal de sesion")
 
+    # Ablacion del punto A2: el mismo modelo sin las features de carrito. Sin re-ranking
+    # reproduce el sistema de antes; con el, aisla lo que aporta cada una de las dos piezas.
+    no_cart = tuple(c for c in feat.FEATURE_COLUMNS if c not in feat.CART_FEATURES)
+    booster_nc, _ = rk.train_ranker(
+        train_pdf, valid_pdf, cfg=cfg.ranker, feature_columns=no_cart, verbose_eval=0
+    )
+    timer.step("Ablacion sin features de carrito")
+
     # --- Ventana de test: fuentes rehechas con todo lo anterior a `test_start` ---
     test_bundle = fit_sources(tables, cfg.test_start, cfg)
     timer.step(f"Fuentes de candidatos ajustadas hasta {cfg.test_start}")
@@ -378,33 +467,48 @@ def run(
     test_q = _queries_to_pandas(test_queries)
     timer.step(f"Matriz de test: {len(test_pdf):,} filas / {len(test_q):,} queries")
 
-    # A partir de aqui solo se necesitan los identificadores, la etiqueta, los scores y las
-    # banderas que explican de donde salio cada candidato. Arrastrar las 54 features en
-    # cada `sort_values` de la evaluacion multiplicaria la memoria sin aportar nada.
-    explain = [f"src_{s}" for s in cand.SOURCE_NAMES] + ["n_sources", "sess_viewed", "is_on_promo"]
-    scored = test_pdf[["basket_id", "product_id", "profile", "label", *explain]].copy()
+    # A partir de aqui solo se necesitan los identificadores, la etiqueta, los scores, las
+    # dos columnas del re-ranking y las banderas que explican de donde salio cada
+    # candidato. Arrastrar todas las features en cada `sort_values` de la evaluacion
+    # multiplicaria la memoria sin aportar nada.
+    explain = [f"src_{s}" for s in cand.SOURCE_NAMES] + [
+        "n_sources",
+        "sess_viewed",
+        "is_on_promo",
+        "cat_in_cart",
+    ]
+    keep = ["basket_id", "product_id", "profile", "label", "category_idx", *explain]
+    scored = test_pdf[keep].copy()
     scored["score"] = rk.score(booster, test_pdf)
     scored["score_no_session"] = rk.score(booster_ns, test_pdf, feature_columns=no_session)
+    scored["score_no_cart"] = rk.score(booster_nc, test_pdf, feature_columns=no_cart)
     scored["score_popularity"] = ev.popularity_baseline(test_pdf)
     del test_pdf
 
-    summary, per_query = ev.evaluate(scored, test_q, k=cfg.top_k)
-    summary_ns, _ = ev.evaluate(scored, test_q, k=cfg.top_k, score_col="score_no_session")
-    summary_pop, _ = ev.evaluate(scored, test_q, k=cfg.top_k, score_col="score_popularity")
+    # Todas las variantes con el mismo re-ranking: la comparacion es de orden, no de reglas.
+    rerank = cfg.rerank
+    summary, per_query = ev.evaluate(scored, test_q, k=cfg.top_k, rerank=rerank)
+    summary_ns, _ = ev.evaluate(
+        scored, test_q, k=cfg.top_k, score_col="score_no_session", rerank=rerank
+    )
+    summary_pop, _ = ev.evaluate(
+        scored, test_q, k=cfg.top_k, score_col="score_popularity", rerank=rerank
+    )
     pool = ev.candidate_recall(scored, test_q)
     importance = rk.feature_importance(booster)
 
     # Se guardan tambien las banderas de fuente: sin ellas no se puede explicar *por que*
     # se recomendo cada producto, que es justo lo que ensena la demo de los perfiles.
-    top_k = ev.top_k_predictions(scored, k=cfg.top_k)
+    top_k = ev.top_k_predictions(scored, k=cfg.top_k, rerank=rerank)
 
     context_pdf = test_context.toPandas()
-    by_category = ev.category_metrics(
-        top_k,
-        context_pdf.loc[context_pdf["role"] == "target", ["basket_id", "product_id"]],
-        tables["products"].select("product_id", "category").toPandas(),
-        test_q,
-        k=cfg.top_k,
+    target_pdf = context_pdf.loc[context_pdf["role"] == "target", ["basket_id", "product_id"]]
+    prefix_pdf = context_pdf.loc[context_pdf["role"] == "prefix", ["basket_id", "product_id"]]
+    product_category = tables["products"].select("product_id", "category").toPandas()
+    by_category = ev.category_metrics(top_k, target_pdf, product_category, test_q, k=cfg.top_k)
+    wasted = ev.wasted_slot_metrics(top_k, prefix_pdf, product_category, test_q, k=cfg.top_k)
+    cart_ablation = cart_rerank_ablation(
+        scored, test_q, target_pdf, prefix_pdf, product_category, k=cfg.top_k, served=rerank
     )
     timer.step("Evaluacion")
     recommendations = top_k[
@@ -419,6 +523,9 @@ def run(
         "summary_popularity": summary_pop,
         "candidate_recall": pool,
         "by_category": by_category,
+        "wasted_slots": wasted,
+        "cart_ablation": cart_ablation,
+        "rerank": rerank,
         "feature_importance": importance,
         "per_query": per_query,
         "recommendations": recommendations,
@@ -581,6 +688,107 @@ def _baseline_section(cfg: RecommenderConfig, result: dict[str, object], k: int)
     )
 
 
+def _rerank_label(rules: RerankConfig) -> str:
+    parts = []
+    if rules.max_per_category is not None:
+        parts.append(f"como maximo {rules.max_per_category} referencia(s) por categoria")
+    if rules.exclude_cart_categories:
+        parts.append("categorias del carrito relegadas")
+    return ", ".join(parts) if parts else "sin re-ranking"
+
+
+def _cart_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
+    """Antes/despues del punto A2: features de carrito y re-ranking final."""
+    table: pd.DataFrame = result["cart_ablation"]  # type: ignore[assignment]
+    rules: RerankConfig = result["rerank"]  # type: ignore[assignment]
+
+    def pct(value: float) -> str:
+        return f"{value:.1%}"
+
+    lines = [
+        f"| Variante | cat_hit_rate@{k} | sku_hit_rate@{k} | NDCG@{k} | Huecos regalados "
+        "| Huecos en cat. del carrito (perfiles 2 y 4) | Listas con carrito afectadas "
+        "| Listas con cat. repetida | Categorias distintas |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in table.to_dict(orient="records"):
+        cells = [
+            row["descripcion"],
+            f"{row[f'cat_hit_rate@{k}']:.4f}",
+            f"{row[f'sku_hit_rate@{k}']:.4f}",
+            f"{row[f'ndcg@{k}']:.4f}",
+            pct(row[f"huecos_regalados@{k}"]),
+            pct(row[f"huecos_en_carrito@{k}_con_carrito"]),
+            pct(row[f"listas_con_carrito_afectadas@{k}"]),
+            pct(row[f"listas_con_repetida@{k}"]),
+            f"{row['categorias_distintas_medias']:.2f}",
+        ]
+        if row["servida"]:
+            cells = [f"**{c}**" for c in cells]
+        lines.append("| " + " | ".join(cells) + " |")
+
+    before = table.set_index("variante").loc["antes"]
+    served = table.loc[table["servida"]]
+    delta = ""
+    if len(served):
+        after = served.iloc[0]
+        d_cat = (after[f"cat_hit_rate@{k}"] - before[f"cat_hit_rate@{k}"]) * 100
+        d_sku = (after[f"sku_hit_rate@{k}"] - before[f"sku_hit_rate@{k}"]) * 100
+        delta = (
+            'Frente a la fila "antes" (mismo entrenamiento, sin las tres features ni '
+            f"reglas), el sistema servido (en negrita) cambia cat_hit_rate@{k} en "
+            f"**{d_cat:+.2f} pp** y sku_hit_rate@{k} en **{d_sku:+.2f} pp**, y los huecos "
+            f"regalados pasan del {pct(before[f'huecos_regalados@{k}'])} al "
+            f"{pct(after[f'huecos_regalados@{k}'])}."
+        )
+
+    frozen = ""
+    path = Path(cfg.reports_dir) / PRE_A2_FILENAME
+    if path.is_file():
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        old_cat = snap["metrics"]["by_category"][0]
+        old = snap["metrics"]["summary"][0]
+        frozen = (
+            "Referencia congelada del modelo que habia en disco antes de este cambio "
+            f"(`{Path(cfg.reports_dir).as_posix()}/{PRE_A2_FILENAME}`, "
+            f"{snap['congelado']}): cat_hit_rate@{k} {old_cat[f'cat_hit_rate@{k}']:.4f}, "
+            f"sku_hit_rate@{k} {old_cat[f'sku_hit_rate@{k}']:.4f}, NDCG@{k} "
+            f'{old[f"ndcg@{k}"]:.4f}. La fila "antes" lo reentrena con el codigo actual y '
+            "puede diferir un poco: el muestreo de columnas de LightGBM depende del numero "
+            "de features."
+        )
+
+    wasted: pd.DataFrame = result["wasted_slots"]  # type: ignore[assignment]
+    return "\n".join(
+        [
+            "## Carrito y diversidad (punto A2)",
+            "",
+            f"Con una linea por categoria en cada cesta, un hueco del top-{k} se *regala* si "
+            "su categoria ya esta en el carrito (no puede acertar) o ya salio mas arriba en "
+            "la lista (de las dos, como mucho acierta una). Dos piezas atacan el problema: "
+            "tres features de carrito (`cat_in_cart`, `dept_n_in_cart`, "
+            "`dept_share_in_cart`) y un re-ranking final (`src/recommender/rerank.py`). "
+            f"Reglas servidas: **{_rerank_label(rules)}** (`RecommenderConfig.rerank`), las "
+            "mismas en esta evaluacion, en las tablas de arriba y en la demo.",
+            "",
+            *lines,
+            "",
+            'Las filas "sin features de carrito" usan un LambdaRank entrenado aparte con las '
+            "mismas queries y sin esas tres columnas. Los huecos en categorias del carrito "
+            "se miden contra el prefijo del ticket; la regla de exclusion usa el carrito en "
+            "el corte, que ademas incluye los `add_to_cart` de sesion.",
+            "",
+            delta,
+            "",
+            frozen,
+            "",
+            "### Huecos regalados del sistema servido, por perfil",
+            "",
+            _table(wasted),
+        ]
+    )
+
+
 def _write_reports(cfg: RecommenderConfig, result: dict[str, object]) -> None:
     """Deja el informe de la fase en `reports/recommender/`."""
     reports = Path(cfg.reports_dir)
@@ -638,6 +846,8 @@ referencia concreta fuera otra.
 
 {_sku_category_paragraph(result['by_category'].iloc[0], k)}
 
+{_cart_section(cfg, result, k)}
+
 {_kaggle_section(summary, k)}
 
 {_baseline_section(cfg, result, k)}
@@ -671,6 +881,12 @@ Importancia por ganancia, las {len(result['feature_importance'])} primeras.
         "summary_popularity": result["summary_popularity"].to_dict(orient="records"),
         "candidate_recall": result["candidate_recall"].to_dict(orient="records"),
         "by_category": result["by_category"].to_dict(orient="records"),
+        "rerank": {
+            "max_per_category": result["rerank"].max_per_category,  # type: ignore[union-attr]
+            "exclude_cart_categories": result["rerank"].exclude_cart_categories,  # type: ignore[union-attr]
+        },
+        "wasted_slots": result["wasted_slots"].to_dict(orient="records"),  # type: ignore[union-attr]
+        "cart_ablation": result["cart_ablation"].to_dict(orient="records"),  # type: ignore[union-attr]
     }
     (reports / "metrics.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"

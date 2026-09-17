@@ -82,7 +82,7 @@ ORACLE_SKU = "oracle_sku"
 SYSTEM_LABELS: dict[str, str] = {
     ORACLE_CAT: "Oraculo de categoria (techo)",
     ORACLE_SKU: "Oraculo de SKU (techo)",
-    LAMBDARANK: "LambdaRank (Fase 7c, predicciones en disco)",
+    LAMBDARANK: "LambdaRank (predicciones en disco)",
     **ev.BASELINE_LABELS,
 }
 
@@ -284,7 +284,7 @@ def measure(
     queries = test.queries
 
     def summary(top_k: pd.DataFrame) -> pd.DataFrame:
-        return ev.system_summary(top_k, queries, test.target, products, k=k)
+        return ev.system_summary(top_k, queries, test.target, products, k=k, prefix=test.prefix)
 
     summaries: dict[str, pd.DataFrame] = {}
     checks: list[tuple[str, bool, str]] = []
@@ -502,8 +502,8 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
 
     main = [
         f"| Sistema | cat_hit_rate@{k} | % techo | cat_precision@{k} | sku_hit_rate@{k} "
-        f"| % techo SKU | sku_precision@{k} | NDCG@{k} |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"| % techo SKU | sku_precision@{k} | NDCG@{k} | Huecos regalados |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name in _system_order(diag):
         row = total[name]
@@ -523,6 +523,7 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
                     "—" if is_oracle else _pct(row[col("sku_hit_rate")] / sku_ceiling),
                     _num(row[col("sku_precision")]),
                     _num(row[col("ndcg")]),
+                    _pct(row[col("huecos_regalados")]),
                 ]
             )
             + " |"
@@ -600,8 +601,10 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         "### Todos los sistemas, total",
         "",
         "Las columnas \"% techo\" dividen por el oraculo correspondiente sobre las mismas "
-        "queries. Los baselines nunca recomiendan una categoria que ya esta en el carrito; "
-        "el LambdaRank si puede hacerlo (punto A2).",
+        "queries. \"Huecos regalados\" es la parte del top-5 en una categoria que ya esta "
+        "en el carrito o repetida mas arriba en la lista (`evaluate.wasted_slot_metrics`, "
+        "punto A2). Los baselines de categoria no regalan ninguno por construccion; el "
+        "LambdaRank los evita con el re-ranking de `RecommenderConfig.rerank`.",
         "",
         *main,
         "",

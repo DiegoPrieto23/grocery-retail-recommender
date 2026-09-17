@@ -1,7 +1,7 @@
 """Features del ranker: todo lo que se sabe de un candidato en el instante de la compra.
 
 Cada fila es un par `(query, candidato)` y todas sus columnas se calculan con informacion
-**anterior** a la cesta que se quiere predecir. Las familias son cinco:
+**anterior** a la cesta que se quiere predecir. Las familias son seis:
 
 1. **Senal de cada fuente de candidatos** (`candidates.SOURCE_COLUMNS`): score y puesto de
    quien lo propuso, y cuantas fuentes coincidieron.
@@ -12,6 +12,8 @@ Cada fila es un par `(query, candidato)` y todas sus columnas se calculan con in
 4. **Contexto y promocion**: canal, mes, dia de la semana, tamano del carrito, RFM del
    cliente y si el producto esta en promocion ese dia.
 5. **Sesion**: lo que la navegacion sabia **antes** del corte (`cut_ts`).
+6. **Carrito** (punto A2 del diagnostico): si la categoria del candidato ya esta en el
+   carrito, y cuantas lineas del carrito (y que proporcion) son de su departamento.
 
 ## Por que la sesion no filtra el target
 
@@ -35,6 +37,7 @@ from pyspark.sql import functions as F
 
 from src.recommender.candidates import SOURCE_COLUMNS, SOURCE_NAMES
 from src.recommender.schema import (
+    CART_FEATURES,
     CATEGORICAL_FEATURES,
     CHANNELS,
     CONTEXT_FEATURES,
@@ -164,6 +167,37 @@ def session_features(events_before_cut: DataFrame) -> tuple[DataFrame, DataFrame
 
 
 # --------------------------------------------------------------------------------------
+# Carrito
+# --------------------------------------------------------------------------------------
+def cart_features(cart: DataFrame, products: DataFrame) -> tuple[DataFrame, DataFrame, DataFrame]:
+    """Composicion del carrito en el instante del corte, por categoria y por departamento.
+
+    `cart` es el de `candidates.in_cart` (prefijo mas `add_to_cart` de sesion anteriores
+    al corte): lo mismo que se excluye del pool, que es lo que el cliente tiene delante.
+
+    Returns:
+        `(por_categoria, por_departamento, por_query)`: `cat_in_cart` por
+        `(basket_id, category)`, `dept_n_in_cart` por `(basket_id, department_idx)` y el
+        numero de lineas del carrito (`_cart_size`) por `basket_id`.
+    """
+    items = (
+        cart.select("basket_id", "product_id")
+        .distinct()
+        .join(F.broadcast(products.select("product_id", "category", "department_idx")), "product_id")
+    )
+    per_category = (
+        items.select("basket_id", "category").distinct().withColumn("cat_in_cart", F.lit(1.0))
+    )
+    per_department = items.groupBy("basket_id", "department_idx").agg(
+        F.count(F.lit(1)).cast("double").alias("dept_n_in_cart")
+    )
+    per_query = items.groupBy("basket_id").agg(
+        F.count(F.lit(1)).cast("double").alias("_cart_size")
+    )
+    return per_category, per_department, per_query
+
+
+# --------------------------------------------------------------------------------------
 # Cliente
 # --------------------------------------------------------------------------------------
 def customer_profile(history_baskets: DataFrame, history_items: DataFrame) -> DataFrame:
@@ -204,6 +238,7 @@ def build_feature_matrix(
     promotions: DataFrame,
     session_product: DataFrame,
     session_query: DataFrame,
+    cart: DataFrame,
     target: DataFrame | None = None,
 ) -> DataFrame:
     """Cruza el pool de candidatos con todas las familias de features.
@@ -220,6 +255,7 @@ def build_feature_matrix(
         promotions: Promociones limpias.
         session_product: Vistas por producto antes del corte.
         session_query: Tamano de la sesion antes del corte.
+        cart: Lo que hay en el carrito en el corte (`candidates.in_cart`).
         target: Pares `(basket_id, product_id)` que hay que adivinar. Si se pasa, se anade
             la columna `label`; si no, la matriz es de inferencia.
 
@@ -257,6 +293,18 @@ def build_feature_matrix(
         .join(F.broadcast(pop), ["product_id", "month"], "left")
         .drop("month")
         .join(F.broadcast(products), "product_id", "left")
+    )
+
+    # --- Carrito: su categoria y su departamento, vistos desde el candidato ---
+    cart_category, cart_department, cart_size = cart_features(cart, products)
+    df = (
+        df.join(cart_category, ["basket_id", "category"], "left")
+        .join(cart_department, ["basket_id", "department_idx"], "left")
+        .join(cart_size, "basket_id", "left")
+        # Nulo si el carrito esta vacio o no tiene nada del departamento: el relleno a 0 de
+        # abajo lo deja en "0 % del carrito", que es lo que significa.
+        .withColumn("dept_share_in_cart", F.col("dept_n_in_cart") / F.col("_cart_size"))
+        .drop("_cart_size")
     )
 
     # --- Cliente x producto: lo compre quien lo compre, no solo si lo propuso `hist` ---
@@ -356,6 +404,7 @@ def build_feature_matrix(
         "n_sources": 0.0,
         "cust_frequency": 0.0,
         "cust_n_products": 0.0,
+        **{column: 0.0 for column in CART_FEATURES},
     }
     for column, value in zero_filled.items():
         df = df.withColumn(column, F.coalesce(F.col(column), F.lit(value)))

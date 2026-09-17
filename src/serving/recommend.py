@@ -5,7 +5,7 @@ con el mismo booster LightGBM que entreno la Fase 3. No entrena nada.
 
 ## Que garantiza que esto da lo mismo que Spark
 
-Nada, salvo un test. Este modulo es una reimplementacion, y una reimplementacion de 54
+Nada, salvo un test. Este modulo es una reimplementacion, y una reimplementacion de 57
 features es justo el sitio donde se cuela una diferencia silenciosa: un `left join` que
 descarta filas, un nulo que se rellena con 0 en un lado y se queda NaN en el otro, un
 desempate distinto al ordenar. Por eso existe `tests/test_serving_parity.py`, que pasa
@@ -35,11 +35,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.recommender.config import CandidateConfig
+from src.recommender import rerank as rr
+from src.recommender.config import CandidateConfig, RerankConfig
 
 # Del modulo `schema`, no de `candidates` / `features`: esos importan PySpark, que es justo
 # lo que esta ruta evita. Las constantes son las mismas, no una copia.
 from src.recommender.schema import (
+    CART_FEATURES,
     CATEGORICAL_FEATURES,
     CHANNELS,
     FEATURE_COLUMNS,
@@ -73,6 +75,7 @@ ZERO_FILLED: dict[str, float] = {
     "n_sources": 0.0,
     "cust_frequency": 0.0,
     "cust_n_products": 0.0,
+    **{column: 0.0 for column in CART_FEATURES},
 }
 
 
@@ -95,6 +98,9 @@ class ServingBundle:
     booster: object
     window_start: dt.date
     cfg: CandidateConfig
+    # Mismas reglas por defecto que `RecommenderConfig.rerank`, que es con lo que se
+    # generaron las predicciones contra las que compara el test de paridad.
+    rerank: RerankConfig = RerankConfig()
 
     # Vistas indexadas por `customer_id` de las tres tablas grandes. Sin ellas, cada
     # recomendacion recorre los 2,2 M de filas del historial y tarda ~3,5 s; con ellas,
@@ -399,10 +405,14 @@ def build_feature_matrix(
     queries: pd.DataFrame,
     bundle: ServingBundle,
     *,
+    cart: pd.DataFrame,
     session_product: pd.DataFrame | None = None,
     session_query: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Cruza el pool de candidatos con las seis familias de features."""
+    """Cruza el pool de candidatos con las familias de features.
+
+    `cart` es lo mismo que se excluye del pool: lo que el cliente tiene en el carrito.
+    """
     q = queries[
         [
             "basket_id",
@@ -439,6 +449,9 @@ def build_feature_matrix(
         pop, left_on=["product_id", "basket_month"], right_on=["product_id", "month"], how="left"
     ).drop(columns="month")
     df = df.merge(bundle.products, on="product_id", how="left")
+
+    # --- Carrito (espejo de features.cart_features) ---
+    df = _add_cart(df, cart, bundle.products)
 
     # --- Cliente x producto ---
     # Igual que en las fuentes: se recorta a los clientes de estas queries antes de cruzar.
@@ -498,6 +511,34 @@ def build_feature_matrix(
         df[column] = pd.to_numeric(df[column], errors="coerce").fillna(value)
 
     return df[["basket_id", "product_id", "profile", *FEATURE_COLUMNS]]
+
+
+def _add_cart(df: pd.DataFrame, cart: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
+    """Anade `cat_in_cart`, `dept_n_in_cart` y `dept_share_in_cart` (nulos si no aplican)."""
+    items = (
+        cart[["basket_id", "product_id"]]
+        .drop_duplicates()
+        .merge(products[["product_id", "category", "department_idx"]], on="product_id")
+    )
+    if items.empty:
+        for column in CART_FEATURES:
+            df[column] = np.nan
+        return df
+
+    per_category = items[["basket_id", "category"]].drop_duplicates().assign(cat_in_cart=1.0)
+    per_department = (
+        items.groupby(["basket_id", "department_idx"], as_index=False)
+        .size()
+        .rename(columns={"size": "dept_n_in_cart"})
+    )
+    per_department["dept_n_in_cart"] = per_department["dept_n_in_cart"].astype(float)
+    cart_size = items.groupby("basket_id").size().astype(float)
+
+    df = df.merge(per_category, on=["basket_id", "category"], how="left").merge(
+        per_department, on=["basket_id", "department_idx"], how="left"
+    )
+    df["dept_share_in_cart"] = df["dept_n_in_cart"] / df["basket_id"].map(cart_size)
+    return df
 
 
 def _active_promotions(df: pd.DataFrame, bundle: ServingBundle) -> pd.DataFrame:
@@ -568,11 +609,13 @@ def rank_queries(
     session_product: pd.DataFrame | None = None,
     session_query: pd.DataFrame | None = None,
     top_k: int = 5,
+    rerank: RerankConfig | None = None,
 ) -> pd.DataFrame:
     """Ruta completa para un lote de queries: candidatos, features, score y top-k.
 
-    `cart` es lo que se excluye del pool. Por defecto es el propio prefijo; el test de
-    paridad pasa el carrito de la Fase 3, que ademas incluye los `add_to_cart` de sesion.
+    `cart` es lo que se excluye del pool y de lo que salen las features de carrito. Por
+    defecto es el propio prefijo; el test de paridad pasa el carrito de la Fase 3, que
+    ademas incluye los `add_to_cart` de sesion. `rerank` por defecto es el del bundle.
     """
     sources = {
         "pop": candidates_popularity(queries, bundle),
@@ -590,19 +633,17 @@ def rank_queries(
         pool,
         queries,
         bundle,
+        cart=exclude,
         session_product=session_product,
         session_query=session_query,
     )
     scored = score_matrix(matrix, bundle)
-    # Mismo desempate que `evaluate.top_k`: score y, a igualdad, id de producto.
-    ordered = scored.sort_values(
-        ["basket_id", "score", "product_id"], ascending=[True, False, True]
-    )
-    ordered["rank"] = ordered.groupby("basket_id").cumcount() + 1
-    top = ordered.loc[ordered["rank"] <= top_k]
+    # La misma funcion que `evaluate.top_k_predictions`: desempate y re-ranking identicos.
+    top = rr.top_k(scored, k=top_k, rerank=bundle.rerank if rerank is None else rerank)
     keep = ["basket_id", "product_id", "rank", "score", "profile", "n_sources"]
     keep += [f"src_{s}" for s in SOURCE_NAMES]
     keep += ["cat_due", "cat_overdue_ratio", "hist_ever_bought", "is_on_promo", "aff_lift_max"]
+    keep += ["cat_in_cart"]
     return top[[c for c in keep if c in top.columns]].reset_index(drop=True)
 
 

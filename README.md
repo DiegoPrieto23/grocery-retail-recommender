@@ -37,7 +37,7 @@ las del dataset de la Fase 7**; donde se comparan con las anteriores, se dice.
 un ETL en PySpark que las limpia y documenta cada corrección, un Data Trust Score que pasa
 de **91,42 (C) a 100,00 (A)**, cuatro tablas de features listas para modelar, un
 [notebook de EDA](notebooks/01_eda.ipynb) con 9 preguntas de negocio resueltas en Spark SQL,
-un recomendador de cesta de dos etapas con **NDCG@5 = 0,1752**, una política de Next Best
+un recomendador de cesta de dos etapas con **NDCG@5 = 0,1759**, una política de Next Best
 Action que decide en euros, dos documentos que traducen todo eso a negocio — el
 [resumen de impacto](IMPACT.md) y el
 [informe de hallazgos](reports/insights/business_findings.md) — y una
@@ -110,7 +110,7 @@ grocery-retail-recommender/
 │   │   ├── config.py         #   ventanas temporales, tamaños de pool, hiperparámetros
 │   │   ├── splits.py         #   split por cesta, prefijo/target y los 4 perfiles
 │   │   ├── candidates.py     #   popularidad, co-compra (SKU y categoría), historial, ALS
-│   │   ├── features.py       #   54 features del par (query, candidato)
+│   │   ├── features.py       #   57 features del par (query, candidato)
 │   │   ├── ranker.py         #   LightGBM LambdaRank
 │   │   ├── evaluate.py       #   NDCG@5, Recall@5, Precision@5, F1@5, desglose SKU / categoría y baselines
 │   │   ├── oracle.py         #   oráculo bayesiano: el techo teórico con los pesos reales del generador
@@ -478,8 +478,9 @@ compró" — y en test se desplomaría.
 | ALS implícito (Spark MLlib) | `customer_id × product_id` | 3 y 4 |
 
 Unidas dan **139 candidatos por cesta** de los 496 del catálogo, y el pool contiene ya el
-**76,9 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 87
-árboles con 54 *features* devuelve el top-5.
+**76,9 %** de lo que hay que adivinar. Sobre ellos, un **LightGBM `LambdaRank`** de 169
+árboles con 57 *features* ordena, y un re-ranking final (una referencia por categoría,
+nada de lo que ya hay en el carrito) devuelve el top-5.
 
 ### La señal de sesión, que obligó a arreglar el generador
 
@@ -495,11 +496,11 @@ tiene sesión detrás:
 
 | Sistema | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: |
-| Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0868 | 0,0783 | 26,7 % |
-| LambdaRank sin señal de sesión | 0,1667 | 0,1606 | 48,3 % |
-| **LambdaRank completo** | **0,1752** | **0,1678** | **49,5 %** |
+| Popularidad reciente × estacionalidad (sin aprendizaje) | 0,0881 | 0,0793 | 27,0 % |
+| LambdaRank sin señal de sesión | 0,1690 | 0,1630 | 48,7 % |
+| **LambdaRank completo** | **0,1759** | **0,1681** | **49,5 %** |
 
-La sesión suma un **+5,1 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
+Las tres filas pasan por el mismo re-ranking final. La sesión suma un **+4,1 %** de NDCG@5. Antes de la Fase 7 sumaba un +13 %: con el
 historial prediciendo bien la referencia, lo que el cliente mira en la web aporta menos
 información nueva.
 
@@ -510,16 +511,16 @@ cambia es qué fuentes tienen algo que decir.
 
 | Perfil | Cestas | NDCG@5 | Recall@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: | ---: |
-| 1 · nuevo, carrito vacío | 521 | 0,1185 | 0,1070 | 37,2 % |
-| 2 · nuevo, con artículos | 421 | 0,0835 | 0,0924 | 20,9 % |
-| 3 · recurrente, carrito vacío | 8.713 | 0,1886 | 0,1593 | 57,5 % |
-| 4 · recurrente, con artículos | 8.345 | 0,1694 | 0,1844 | 43,3 % |
-| **Total** | **18.000** | **0,1752** | **0,1678** | **49,5 %** |
+| 1 · nuevo, carrito vacío | 521 | 0,1204 | 0,1068 | 37,2 % |
+| 2 · nuevo, con artículos | 421 | 0,0851 | 0,0957 | 21,1 % |
+| 3 · recurrente, carrito vacío | 8.713 | 0,1881 | 0,1591 | 57,4 % |
+| 4 · recurrente, con artículos | 8.345 | 0,1713 | 0,1851 | 43,4 % |
+| **Total** | **18.000** | **0,1759** | **0,1681** | **49,5 %** |
 
 El cold-start rinde peor, como se esperaba, pero no se desploma: **el perfil 2 es el peor**
-(NDCG@5 0,0835, un 51 % por debajo del 4). Tiene sentido — es el único que no puede tirar
+(NDCG@5 0,0851, un 50 % por debajo del 4). Tiene sentido — es el único que no puede tirar
 ni de historial ni de ALS, y encima su cesta ya va por la mitad, así que lo fácil de
-acertar ya está dentro. Y el perfil 3 es el mejor en `hit_rate` (57,5 %) porque evalúa la
+acertar ya está dentro. Y el perfil 3 es el mejor en `hit_rate` (57,4 %) porque evalúa la
 cesta entera: cinco huecos contra 5,0 productos por adivinar en vez de 2,9.
 
 ### Categoría frente a SKU
@@ -529,18 +530,30 @@ categoría que el cliente sí compró, aunque fuera otra referencia:
 
 | | Acierta la categoría | Acierta el SKU |
 | --- | ---: | ---: |
-| Al menos uno en el top-5 | **60,0 %** | **49,5 %** |
-| Precisión media del top-5 | 17,6 % | 12,8 % |
+| Al menos uno en el top-5 | **61,7 %** | **49,5 %** |
+| Precisión media del top-5 | 17,5 % | 12,9 % |
 
 La distancia entre las dos columnas es la parte del error que está en *elegir la
-referencia* y no en *saber qué categoría toca*. Hoy es pequeña: el 82 % de las cestas que
+referencia* y no en *saber qué categoría toca*. Hoy es pequeña: el 80 % de las cestas que
 aciertan la categoría aciertan también el SKU. **Antes de la Fase 7 era el 23 %**, y esa
 brecha es la historia de la [Fase 7](#fase-7--fidelidad-de-producto).
+
+### Carrito y diversidad
+
+Con una línea por categoría en cada cesta, recomendar otra leche cuando ya hay leche en el
+carrito, o dos leches en el mismo top-5, es regalar un hueco. Antes del punto A2 del
+[diagnóstico](docs/diagnostico-fase7.md) pasaba en el 4,2 % de los huecos: el 13,6 % de
+las listas repetía categoría y el 28,3 % de las listas con carrito tenía algún hueco
+regalado. Tres *features* de carrito (`cat_in_cart`, `dept_n_in_cart`,
+`dept_share_in_cart`) y un re-ranking final (`src/recommender/rerank.py`, el mismo en la
+evaluación y en la demo) lo dejan en **0 %** y suben el acierto de categoría **+1,5 pp**
+(60,2 % → 61,7 %) sin mover el de SKU. El desglose por variante está en
+[`metrics.md`](reports/recommender/metrics.md#carrito-y-diversidad-punto-a2).
 
 ### F1@5 frente a Kaggle
 
 Para tener un orden de magnitud externo, el pipeline calcula también Precision@5
-(**0,1282**) y F1@5 (**0,1454**; **0,1367** promediando el F1 de cada cesta) y lo pone al
+(**0,1285**) y F1@5 (**0,1457**; **0,1370** promediando el F1 de cada cesta) y lo pone al
 lado del primer puesto de *Instacart Market Basket Analysis* (F1 ≈ 0,41).
 
 **No es una comparación equivalente**, y el
@@ -892,7 +905,7 @@ de ×1,71 a **×2,02**.
 
 ## Tests
 
-**323 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17. Los que
+**355 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17. Los que
 necesitan artefactos que no se versionan (el bundle de serving, las tablas procesadas) se
 saltan solos en un repo recién clonado.
 
@@ -907,6 +920,7 @@ saltan solos en un repo recién clonado.
 | `test_rfm.py` | 13 | Quintiles, segmentos y clientes sin compras |
 | `test_schemas.py` | 16 | Tipos al leer, ida y vuelta a Parquet por los dos motores |
 | `test_recommender.py` | 17 | Que no hay fuga: ni entre ventanas, ni del target al pool, ni de la sesión pasado el corte; y Precision/F1 a mano |
+| `test_cart_rerank.py` | 11 | Re-ranking por categoría y carrito, huecos regalados a mano, y features de carrito iguales en Spark y en pandas |
 | `test_nba.py` | 25 | Que las features no miran tras el corte, y la aritmética del valor esperado a mano |
 | `test_impact.py` | 18 | La cadena de multiplicaciones que lleva de `hit_rate@5` a euros |
 | `test_tracking.py` | 19 | Qué se registra en MLflow, y que ni su ausencia ni sus fallos estorban |

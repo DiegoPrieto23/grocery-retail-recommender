@@ -95,6 +95,15 @@ SESSION_FEATURES: tuple[str, ...] = (
     "sess_n_events_before",
 )
 
+# Lo que ya hay en el carrito, visto desde el candidato (punto A2 del diagnostico). Con una
+# linea por categoria en cada cesta, un candidato de una categoria ya presente casi nunca
+# acierta; sin estas columnas el ranker no tenia forma de saberlo.
+CART_FEATURES: tuple[str, ...] = (
+    "cat_in_cart",
+    "dept_n_in_cart",
+    "dept_share_in_cart",
+)
+
 FEATURE_COLUMNS: tuple[str, ...] = (
     SOURCE_FEATURES
     + CUSTOMER_PRODUCT_FEATURES
@@ -102,6 +111,7 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     + PRODUCT_FEATURES
     + CONTEXT_FEATURES
     + SESSION_FEATURES
+    + CART_FEATURES
 )
 
 # Las que LightGBM debe tratar como categoricas y no como numeros ordenados.

@@ -1,7 +1,7 @@
 """Paridad entre la ruta de serving en pandas (Fase 6b) y la de Spark (Fase 3).
 
 `src/serving/recommend.py` es una reimplementacion: replica en pandas las cinco fuentes de
-candidatos y las 54 features que la Fase 3 construye con Spark. Una reimplementacion sin
+candidatos y las 57 features que la Fase 3 construye con Spark. Una reimplementacion sin
 un test que la ate no vale nada — la demo ensenaria un top-5 parecido pero no el del
 sistema medido, y el NDCG@5 del README dejaria de describirla.
 

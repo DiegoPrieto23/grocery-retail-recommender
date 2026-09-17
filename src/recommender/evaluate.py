@@ -47,6 +47,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from src.recommender import rerank as rr
+from src.recommender.config import RerankConfig
 from src.recommender.splits import PROFILE_LABELS
 
 # Descuento posicional 1 / log2(i+1), precalculado para los primeros puestos.
@@ -59,17 +61,23 @@ def _idcg(n_target: np.ndarray, k: int) -> np.ndarray:
     return ideal[np.clip(n_target, 1, k) - 1]
 
 
-def top_k_predictions(scored: pd.DataFrame, *, k: int, score_col: str = "score") -> pd.DataFrame:
+def top_k_predictions(
+    scored: pd.DataFrame,
+    *,
+    k: int,
+    score_col: str = "score",
+    rerank: RerankConfig | None = None,
+) -> pd.DataFrame:
     """Se queda con los `k` mejores candidatos de cada query, con su posicion.
 
     El desempate por `product_id` no es cosmetico: sin el, dos ejecuciones con el mismo
     modelo podrian devolver listas distintas cuando hay scores empatados.
+
+    Con `rerank`, antes de cortar se aplican las reglas de diversidad y de carrito
+    (`rerank.py`); `scored` necesita entonces `category_idx` y `cat_in_cart`. Es la misma
+    funcion que usa la demo (`serving.rank_queries`).
     """
-    ordered = scored.sort_values(
-        ["basket_id", score_col, "product_id"], ascending=[True, False, True], kind="stable"
-    )
-    ordered = ordered.assign(rank=ordered.groupby("basket_id").cumcount() + 1)
-    return ordered.loc[ordered["rank"] <= k].reset_index(drop=True)
+    return rr.top_k(scored, k=k, score_col=score_col, rerank=rerank)
 
 
 def per_query_metrics(
@@ -173,14 +181,19 @@ def candidate_recall(scored: pd.DataFrame, queries: pd.DataFrame) -> pd.DataFram
 
 
 def evaluate(
-    scored: pd.DataFrame, queries: pd.DataFrame, *, k: int, score_col: str = "score"
+    scored: pd.DataFrame,
+    queries: pd.DataFrame,
+    *,
+    k: int,
+    score_col: str = "score",
+    rerank: RerankConfig | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Atajo: top-k, metricas por query y resumen por perfil.
 
     Returns:
         `(resumen, por_query)`.
     """
-    top = top_k_predictions(scored, k=k, score_col=score_col)
+    top = top_k_predictions(scored, k=k, score_col=score_col, rerank=rerank)
     per_query = per_query_metrics(top, queries, k=k)
     return summarise(per_query, k=k), per_query
 
@@ -251,6 +264,79 @@ def category_metrics(
     return pd.DataFrame(rows)
 
 
+WITH_CART_GROUP = "con carrito (perfiles 2 y 4)"
+
+
+def wasted_slot_metrics(
+    top_k: pd.DataFrame,
+    prefix: pd.DataFrame,
+    product_category: pd.DataFrame,
+    queries: pd.DataFrame,
+    *,
+    k: int,
+) -> pd.DataFrame:
+    """Huecos "regalados" del top-k: los que por construccion casi no pueden acertar.
+
+    Con una linea por categoria en cada cesta (regla del generador), un hueco se regala si
+    su categoria:
+
+    - ya esta en el prefijo del ticket (`en_carrito`): nunca puede acertar;
+    - ya aparecio mas arriba en la misma lista (`repetida`): de las dos, como mucho una
+      acierta. Se cuenta a partir de la segunda aparicion, y solo si no es ya `en_carrito`,
+      para que las dos columnas sumen `regalados`.
+
+    Se mide contra el **prefijo** (lo que acabo en el ticket), no contra el carrito de
+    sesion completo: es donde el fallo esta garantizado. Punto A2 del diagnostico.
+
+    Returns:
+        Por grupo (total, perfiles y "con carrito"): porcentaje de huecos en cada caso y
+        porcentaje de listas con al menos un hueco regalado.
+    """
+    catalog = product_category[["product_id", "category"]]
+    recs = (
+        top_k[["basket_id", "product_id", "rank"]]
+        .merge(catalog, on="product_id")
+        .sort_values(["basket_id", "rank"], kind="stable")
+    )
+    cart_cats = (
+        prefix[["basket_id", "product_id"]]
+        .merge(catalog, on="product_id")[["basket_id", "category"]]
+        .drop_duplicates()
+        .assign(_in_cart=1)
+    )
+    recs = recs.merge(cart_cats, on=["basket_id", "category"], how="left")
+    in_cart = recs["_in_cart"].notna().to_numpy()
+    repeated = recs.duplicated(["basket_id", "category"]).to_numpy() & ~in_cart
+    recs = recs.assign(in_cart=in_cart, repeated=repeated, wasted=in_cart | repeated)
+
+    per_query = recs.groupby("basket_id").agg(
+        slots=("rank", "size"),
+        in_cart=("in_cart", "sum"),
+        repeated=("repeated", "sum"),
+        wasted=("wasted", "sum"),
+    )
+    out = queries[["basket_id", "profile"]].merge(
+        per_query, left_on="basket_id", right_index=True, how="left"
+    ).fillna({"slots": 0, "in_cart": 0, "repeated": 0, "wasted": 0})
+
+    def block(frame: pd.DataFrame, name: str) -> dict:
+        slots = max(float(frame["slots"].sum()), 1.0)
+        return {
+            "grupo": name,
+            f"huecos_en_carrito@{k}": float(frame["in_cart"].sum()) / slots,
+            f"huecos_repetidos@{k}": float(frame["repeated"].sum()) / slots,
+            f"huecos_regalados@{k}": float(frame["wasted"].sum()) / slots,
+            f"listas_con_regalo@{k}": float((frame["wasted"] > 0).mean()),
+        }
+
+    rows = [block(out, "total")]
+    for profile in sorted(out["profile"].unique()):
+        subset = out.loc[out["profile"] == profile]
+        rows.append(block(subset, PROFILE_LABELS.get(int(profile), str(profile))))
+    rows.append(block(out.loc[out["profile"].isin([2, 4])], WITH_CART_GROUP))
+    return pd.DataFrame(rows)
+
+
 def popularity_baseline(scored: pd.DataFrame) -> pd.Series:
     """Baseline sin aprendizaje: ordenar por popularidad reciente x estacionalidad.
 
@@ -274,8 +360,8 @@ def popularity_baseline(scored: pd.DataFrame) -> pd.Series:
 # Reglas comunes, para que las cifras sean comparables entre si:
 #
 # - Ninguno recomienda una categoria que ya esta en el carrito. Por construccion del
-#   generador (una linea por categoria) esos huecos no pueden acertar. El LambdaRank no
-#   aplica esta regla (punto A2), y la tabla lo deja a la vista.
+#   generador (una linea por categoria) esos huecos no pueden acertar. El LambdaRank lo
+#   hace con `RerankConfig.exclude_cart_categories` (punto A2).
 # - Los baselines de categoria eligen 5 categorias distintas y una referencia en cada
 #   una; los de producto pueden repetir categoria.
 # - Cuando el criterio principal no da para cinco (cliente nuevo, pocas reglas...), se
@@ -567,8 +653,16 @@ def system_summary(
     product_category: pd.DataFrame,
     *,
     k: int,
+    prefix: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Metricas de SKU y de categoria de un top-k, en total y por perfil, en una tabla."""
+    """Metricas de SKU y de categoria de un top-k, en total y por perfil, en una tabla.
+
+    Con `prefix`, anade las columnas de huecos regalados (`wasted_slot_metrics`).
+    """
     sku = summarise(per_query_metrics(top_k, queries, k=k), k=k)
     cat = category_metrics(top_k, target, product_category, queries, k=k)
-    return sku.merge(cat.drop(columns="n_queries"), on="grupo")
+    out = sku.merge(cat.drop(columns="n_queries"), on="grupo")
+    if prefix is not None:
+        wasted = wasted_slot_metrics(top_k, prefix, product_category, queries, k=k)
+        out = out.merge(wasted, on="grupo", how="left")
+    return out

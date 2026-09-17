@@ -69,7 +69,7 @@ perfil.
       candidatos por cesta de media, `pool_recall` = 31,1 %
 - [x] Feature engineering para el ranker: señal de cada fuente de candidatos,
       recency/frequency, promoción, popularidad reciente, señal de sesión
-      · `src/recommender/features.py` · 54 features en 5 familias
+      · `src/recommender/features.py` · 57 features en 6 familias (la de carrito, del punto A2)
 - [x] **Deuda detectada en la Fase 2 (Q9 del EDA): la señal de sesión estaba contaminada.**
       **Resuelta arreglando el generador.** El problema era peor de lo anotado: no sólo
       `add_to_cart`, también los `view` cubrían el 100 % de la cesta. `_generate_sessions`

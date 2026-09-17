@@ -2,16 +2,16 @@
   "generated": "2026-09-17",
   "test_start": "2025-11-01",
   "top_k": 5,
-  "recommendations_sha256": "6fcf750fbae032476cfb7776d5f5d90ad9cb7af6329a4a78e2c3b40def7a032c",
+  "recommendations_sha256": "02092ed97cc531f08afde09b4026dadf56ac9312344b796517373f727a9f07d0",
   "headline": {
     "best_baseline": "personal_frequency",
     "best_baseline_cat_hit_rate": 0.6612777777777777,
-    "lambdarank_cat_hit_rate": 0.6003333333333334,
-    "gap_best_baseline_minus_lambdarank": 0.06094444444444436,
+    "lambdarank_cat_hit_rate": 0.6168333333333333,
+    "gap_best_baseline_minus_lambdarank": 0.0444444444444444,
     "ceiling_cat_hit_rate": 0.7816111111111111,
     "ceiling_sku_hit_rate": 0.592,
     "pct_of_ceiling": {
-      "lambdarank": 0.7680716468832185,
+      "lambdarank": 0.7891818892600754,
       "random": 0.3524059990049044,
       "global_popularity": 0.7419859265050821,
       "category_popularity": 0.781576515743834,
@@ -21,7 +21,7 @@
       "association_rules": 0.7799417158291279
     },
     "pct_of_sku_ceiling": {
-      "lambdarank": 0.8357732732732733,
+      "lambdarank": 0.8355855855855856,
       "random": 0.06897522522522523,
       "global_popularity": 0.44969969969969975,
       "category_popularity": 0.447728978978979,
@@ -48,7 +48,11 @@
           "cat_hit_rate@5": 0.7816111111111111,
           "cat_precision@5": 0.26602222222222227,
           "sku_hit_rate@5": 0.5541666666666667,
-          "sku_precision@5": 0.14953333333333332
+          "sku_precision@5": 0.14953333333333332,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -63,7 +67,11 @@
           "cat_hit_rate@5": 0.654510556621881,
           "cat_precision@5": 0.2122840690978887,
           "sku_hit_rate@5": 0.42034548944337813,
-          "sku_precision@5": 0.10326295585412668
+          "sku_precision@5": 0.10326295585412668,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -78,7 +86,11 @@
           "cat_hit_rate@5": 0.5296912114014252,
           "cat_precision@5": 0.13871733966745842,
           "sku_hit_rate@5": 0.2494061757719715,
-          "sku_precision@5": 0.05748218527315915
+          "sku_precision@5": 0.05748218527315915,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -93,7 +105,11 @@
           "cat_hit_rate@5": 0.8521749110524504,
           "cat_precision@5": 0.3240445311603352,
           "sku_hit_rate@5": 0.6311259038218754,
-          "sku_precision@5": 0.18110868816710662
+          "sku_precision@5": 0.18110868816710662,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -108,7 +124,11 @@
           "cat_hit_rate@5": 0.7285799880167765,
           "cat_precision@5": 0.2152186938286399,
           "sku_hit_rate@5": 0.4975434391851408,
-          "sku_precision@5": 0.12409826243259435
+          "sku_precision@5": 0.12409826243259435,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         }
       ]
     },
@@ -128,7 +148,11 @@
           "cat_hit_rate@5": 0.7309444444444444,
           "cat_precision@5": 0.2338777777777778,
           "sku_hit_rate@5": 0.592,
-          "sku_precision@5": 0.16605555555555557
+          "sku_precision@5": 0.16605555555555557,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -143,7 +167,11 @@
           "cat_hit_rate@5": 0.6372360844529751,
           "cat_precision@5": 0.1980806142034549,
           "sku_hit_rate@5": 0.45873320537428025,
-          "sku_precision@5": 0.11938579654510557
+          "sku_precision@5": 0.11938579654510557,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -158,7 +186,11 @@
           "cat_hit_rate@5": 0.46318289786223277,
           "cat_precision@5": 0.12114014251781473,
           "sku_hit_rate@5": 0.2589073634204275,
-          "sku_precision@5": 0.060807600950118765
+          "sku_precision@5": 0.060807600950118765,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -173,7 +205,11 @@
           "cat_hit_rate@5": 0.8056926431768622,
           "cat_precision@5": 0.28541260185929074,
           "sku_hit_rate@5": 0.6836910363824171,
-          "sku_precision@5": 0.20734534603466087
+          "sku_precision@5": 0.20734534603466087,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -188,87 +224,111 @@
           "cat_hit_rate@5": 0.6722588376273217,
           "cat_precision@5": 0.18799281006590776,
           "sku_hit_rate@5": 0.5213900539245057,
-          "sku_precision@5": 0.13116836428999404
+          "sku_precision@5": 0.13116836428999404,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         }
       ]
     },
     "lambdarank": {
-      "label": "LambdaRank (Fase 7c, predicciones en disco)",
+      "label": "LambdaRank (predicciones en disco)",
       "by_profile": [
         {
           "grupo": "total",
           "n_queries": 18000,
-          "ndcg@5": 0.17519606727196535,
-          "recall@5": 0.1678384263884264,
-          "precision@5": 0.1282,
-          "f1@5": 0.1453654954560822,
-          "f1@5_por_cesta": 0.13674592115448667,
-          "hit_rate@5": 0.49477777777777776,
+          "ndcg@5": 0.17591233452191546,
+          "recall@5": 0.1681192864234531,
+          "precision@5": 0.12853333333333333,
+          "f1@5": 0.1456850932201046,
+          "f1@5_por_cesta": 0.1370395417882389,
+          "hit_rate@5": 0.49466666666666664,
           "n_target_medio": 3.9326666666666665,
-          "cat_hit_rate@5": 0.6003333333333334,
-          "cat_precision@5": 0.17644444444444446,
-          "sku_hit_rate@5": 0.49477777777777776,
-          "sku_precision@5": 0.1282
+          "cat_hit_rate@5": 0.6168333333333333,
+          "cat_precision@5": 0.1753888888888889,
+          "sku_hit_rate@5": 0.49466666666666664,
+          "sku_precision@5": 0.12853333333333333,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
           "n_queries": 521,
-          "ndcg@5": 0.1185130831169989,
-          "recall@5": 0.10701041867068736,
-          "precision@5": 0.0856046065259117,
-          "f1@5": 0.09511807061912439,
-          "f1@5_por_cesta": 0.08912147247080068,
+          "ndcg@5": 0.12043442244475001,
+          "recall@5": 0.10680477019248613,
+          "precision@5": 0.08598848368522072,
+          "f1@5": 0.09527283817748051,
+          "f1@5_por_cesta": 0.08931950433869819,
           "hit_rate@5": 0.3723608445297505,
           "n_target_medio": 4.165067178502879,
-          "cat_hit_rate@5": 0.5700575815738963,
-          "cat_precision@5": 0.1596928982725528,
+          "cat_hit_rate@5": 0.5623800383877159,
+          "cat_precision@5": 0.1585412667946257,
           "sku_hit_rate@5": 0.3723608445297505,
-          "sku_precision@5": 0.0856046065259117
+          "sku_precision@5": 0.08598848368522072,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
           "n_queries": 421,
-          "ndcg@5": 0.08354575364245335,
-          "recall@5": 0.0923594615993666,
-          "precision@5": 0.04560570071258908,
-          "f1@5": 0.06106060244618095,
-          "f1@5_por_cesta": 0.05934094936470233,
-          "hit_rate@5": 0.20902612826603326,
+          "ndcg@5": 0.08509133001351883,
+          "recall@5": 0.0956848772763262,
+          "precision@5": 0.04750593824228029,
+          "f1@5": 0.06349010380513767,
+          "f1@5_por_cesta": 0.06142987390018269,
+          "hit_rate@5": 0.21140142517814728,
           "n_target_medio": 2.344418052256532,
-          "cat_hit_rate@5": 0.42280285035629456,
-          "cat_precision@5": 0.10973871733966745,
-          "sku_hit_rate@5": 0.20902612826603326,
-          "sku_precision@5": 0.04560570071258908
+          "cat_hit_rate@5": 0.43705463182897863,
+          "cat_precision@5": 0.10498812351543943,
+          "sku_hit_rate@5": 0.21140142517814728,
+          "sku_precision@5": 0.04750593824228029,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
           "n_queries": 8713,
-          "ndcg@5": 0.1885546478716604,
-          "recall@5": 0.15930013818513764,
-          "precision@5": 0.15691495466544245,
-          "f1@5": 0.15809855080719457,
-          "f1@5_por_cesta": 0.15021811198549173,
-          "hit_rate@5": 0.575232411339378,
+          "ndcg@5": 0.18807517145819003,
+          "recall@5": 0.15906712617374844,
+          "precision@5": 0.15680018363365086,
+          "f1@5": 0.1579255201136778,
+          "f1@5_por_cesta": 0.15000260143167846,
+          "hit_rate@5": 0.5740847010214621,
           "n_target_medio": 5.031906346838058,
-          "cat_hit_rate@5": 0.6754275220934236,
-          "cat_precision@5": 0.2102375760358086,
-          "sku_hit_rate@5": 0.575232411339378,
-          "sku_precision@5": 0.15691495466544245
+          "cat_hit_rate@5": 0.6848387467003328,
+          "cat_precision@5": 0.20810283484448525,
+          "sku_hit_rate@5": 0.5740847010214621,
+          "sku_precision@5": 0.15680018363365086,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
           "n_queries": 8345,
-          "ndcg@5": 0.16941096290020013,
-          "recall@5": 0.18435875488601672,
-          "precision@5": 0.10504493708807669,
-          "f1@5": 0.1338334951882463,
-          "f1@5_por_cesta": 0.12955798013317482,
-          "hit_rate@5": 0.4328340323547034,
+          "ndcg@5": 0.17125863013179893,
+          "recall@5": 0.18505292590373476,
+          "precision@5": 0.10576393049730377,
+          "f1@5": 0.13459965860173856,
+          "f1@5_por_cesta": 0.13029857965747724,
+          "hit_rate@5": 0.4336728579988017,
           "n_target_medio": 2.850569203115638,
-          "cat_hit_rate@5": 0.5327741162372678,
-          "cat_precision@5": 0.1455721989215099,
-          "sku_hit_rate@5": 0.4328340323547034,
-          "sku_precision@5": 0.10504493708807669
+          "cat_hit_rate@5": 0.5582983822648292,
+          "cat_precision@5": 0.14583582983822646,
+          "sku_hit_rate@5": 0.4336728579988017,
+          "sku_precision@5": 0.10576393049730377,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         }
       ]
     },
@@ -288,7 +348,11 @@
           "cat_hit_rate@5": 0.27544444444444444,
           "cat_precision@5": 0.06408888888888889,
           "sku_hit_rate@5": 0.04083333333333333,
-          "sku_precision@5": 0.008211111111111112
+          "sku_precision@5": 0.008211111111111112,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.028366666666666665,
+          "huecos_regalados@5": 0.028366666666666665,
+          "listas_con_regalo@5": 0.1371111111111111
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -303,7 +367,11 @@
           "cat_hit_rate@5": 0.2763915547024952,
           "cat_precision@5": 0.058349328214971206,
           "sku_hit_rate@5": 0.023032629558541268,
-          "sku_precision@5": 0.004606525911708254
+          "sku_precision@5": 0.004606525911708254,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.024568138195777352,
+          "huecos_regalados@5": 0.024568138195777352,
+          "listas_con_regalo@5": 0.11516314779270634
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -318,7 +386,11 @@
           "cat_hit_rate@5": 0.15914489311163896,
           "cat_precision@5": 0.037054631828978626,
           "sku_hit_rate@5": 0.028503562945368172,
-          "sku_precision@5": 0.005700712589073635
+          "sku_precision@5": 0.005700712589073635,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.027078384798099764,
+          "huecos_regalados@5": 0.027078384798099764,
+          "listas_con_regalo@5": 0.13064133016627077
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -333,7 +405,11 @@
           "cat_hit_rate@5": 0.33237690806840353,
           "cat_precision@5": 0.08029381384138642,
           "sku_hit_rate@5": 0.04866291747962814,
-          "sku_precision@5": 0.009778491908642259
+          "sku_precision@5": 0.009778491908642259,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.02850912429702743,
+          "huecos_regalados@5": 0.02850912429702743,
+          "listas_con_regalo@5": 0.13864340640422357
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -348,7 +424,11 @@
           "cat_hit_rate@5": 0.22180946674655483,
           "cat_precision@5": 0.048891551827441586,
           "sku_hit_rate@5": 0.03439185140802876,
-          "sku_precision@5": 0.006926303175554225
+          "sku_precision@5": 0.006926303175554225,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.028520071899340922,
+          "huecos_regalados@5": 0.028520071899340922,
+          "listas_con_regalo@5": 0.1372079089275015
         }
       ]
     },
@@ -368,7 +448,11 @@
           "cat_hit_rate@5": 0.5799444444444445,
           "cat_precision@5": 0.1666,
           "sku_hit_rate@5": 0.26622222222222225,
-          "sku_precision@5": 0.06064444444444445
+          "sku_precision@5": 0.06064444444444445,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.005333333333333333,
+          "huecos_regalados@5": 0.005333333333333333,
+          "listas_con_regalo@5": 0.02666666666666667
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -383,7 +467,11 @@
           "cat_hit_rate@5": 0.564299424184261,
           "cat_precision@5": 0.16429942418426102,
           "sku_hit_rate@5": 0.30902111324376197,
-          "sku_precision@5": 0.072552783109405
+          "sku_precision@5": 0.072552783109405,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -398,7 +486,11 @@
           "cat_hit_rate@5": 0.42042755344418054,
           "cat_precision@5": 0.1016627078384798,
           "sku_hit_rate@5": 0.1828978622327791,
-          "sku_precision@5": 0.03942992874109264
+          "sku_precision@5": 0.03942992874109264,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.00665083135391924,
+          "huecos_regalados@5": 0.00665083135391924,
+          "listas_con_regalo@5": 0.0332541567695962
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -413,7 +505,11 @@
           "cat_hit_rate@5": 0.6654424423275566,
           "cat_precision@5": 0.2078503385745438,
           "sku_hit_rate@5": 0.3207850338574544,
-          "sku_precision@5": 0.07512911741076551
+          "sku_precision@5": 0.07512911741076551,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -428,7 +524,11 @@
           "cat_hit_rate@5": 0.49970041941282206,
           "cat_precision@5": 0.12695026962252845,
           "sku_hit_rate@5": 0.21078490113840623,
-          "sku_precision@5": 0.0458478130617136
+          "sku_precision@5": 0.0458478130617136,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.011168364289994008,
+          "huecos_regalados@5": 0.011168364289994008,
+          "listas_con_regalo@5": 0.05584182144997004
         }
       ]
     },
@@ -448,7 +548,11 @@
           "cat_hit_rate@5": 0.6108888888888889,
           "cat_precision@5": 0.1791,
           "sku_hit_rate@5": 0.26505555555555554,
-          "sku_precision@5": 0.06046666666666667
+          "sku_precision@5": 0.06046666666666667,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -463,7 +567,11 @@
           "cat_hit_rate@5": 0.5662188099808061,
           "cat_precision@5": 0.17197696737044144,
           "sku_hit_rate@5": 0.30902111324376197,
-          "sku_precision@5": 0.07332053742802302
+          "sku_precision@5": 0.07332053742802302,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -478,7 +586,11 @@
           "cat_hit_rate@5": 0.4418052256532066,
           "cat_precision@5": 0.10926365795724466,
           "sku_hit_rate@5": 0.18527315914489312,
-          "sku_precision@5": 0.03942992874109264
+          "sku_precision@5": 0.03942992874109264,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -493,7 +605,11 @@
           "cat_hit_rate@5": 0.7006771490875703,
           "cat_precision@5": 0.22384942040628947,
           "sku_hit_rate@5": 0.32193274417537016,
-          "sku_precision@5": 0.0755193389188569
+          "sku_precision@5": 0.0755193389188569,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -508,7 +624,11 @@
           "cat_hit_rate@5": 0.5284601557819053,
           "cat_precision@5": 0.13634511683642903,
           "sku_hit_rate@5": 0.20695026962252847,
-          "sku_precision@5": 0.04500898741761534
+          "sku_precision@5": 0.04500898741761534,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         }
       ]
     },
@@ -528,7 +648,11 @@
           "cat_hit_rate@5": 0.6612777777777777,
           "cat_precision@5": 0.2011111111111111,
           "sku_hit_rate@5": 0.40694444444444444,
-          "sku_precision@5": 0.09975555555555556
+          "sku_precision@5": 0.09975555555555556,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -543,7 +667,11 @@
           "cat_hit_rate@5": 0.5662188099808061,
           "cat_precision@5": 0.17197696737044144,
           "sku_hit_rate@5": 0.30902111324376197,
-          "sku_precision@5": 0.07332053742802302
+          "sku_precision@5": 0.07332053742802302,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -558,7 +686,11 @@
           "cat_hit_rate@5": 0.4418052256532066,
           "cat_precision@5": 0.10926365795724466,
           "sku_hit_rate@5": 0.18527315914489312,
-          "sku_precision@5": 0.03942992874109264
+          "sku_precision@5": 0.03942992874109264,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -573,7 +705,11 @@
           "cat_hit_rate@5": 0.7457821645816596,
           "cat_precision@5": 0.25010903248020205,
           "sku_hit_rate@5": 0.4789395156662458,
-          "sku_precision@5": 0.12392976012854355
+          "sku_precision@5": 0.12392976012854355,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -588,7 +724,11 @@
           "cat_hit_rate@5": 0.590053924505692,
           "cat_precision@5": 0.1564050329538646,
           "sku_hit_rate@5": 0.34907130017974836,
-          "sku_precision@5": 0.0792091072498502
+          "sku_precision@5": 0.0792091072498502,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         }
       ]
     },
@@ -608,7 +748,11 @@
           "cat_hit_rate@5": 0.6594444444444445,
           "cat_precision@5": 0.19901111111111114,
           "sku_hit_rate@5": 0.4037777777777778,
-          "sku_precision@5": 0.09867777777777778
+          "sku_precision@5": 0.09867777777777778,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -623,7 +767,11 @@
           "cat_hit_rate@5": 0.5662188099808061,
           "cat_precision@5": 0.17197696737044144,
           "sku_hit_rate@5": 0.30902111324376197,
-          "sku_precision@5": 0.07332053742802302
+          "sku_precision@5": 0.07332053742802302,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -638,7 +786,11 @@
           "cat_hit_rate@5": 0.4418052256532066,
           "cat_precision@5": 0.10926365795724466,
           "sku_hit_rate@5": 0.18527315914489312,
-          "sku_precision@5": 0.03942992874109264
+          "sku_precision@5": 0.03942992874109264,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -653,7 +805,11 @@
           "cat_hit_rate@5": 0.7471594169631585,
           "cat_precision@5": 0.24705612303454613,
           "sku_hit_rate@5": 0.4788247446344543,
-          "sku_precision@5": 0.12257546195340296
+          "sku_precision@5": 0.12257546195340296,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -668,7 +824,11 @@
           "cat_hit_rate@5": 0.5846614739364889,
           "cat_precision@5": 0.15506291192330737,
           "sku_hit_rate@5": 0.34236069502696226,
-          "sku_precision@5": 0.07829838226482923
+          "sku_precision@5": 0.07829838226482923,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         }
       ]
     },
@@ -688,7 +848,11 @@
           "cat_hit_rate@5": 0.612,
           "cat_precision@5": 0.1797777777777778,
           "sku_hit_rate@5": 0.45605555555555555,
-          "sku_precision@5": 0.11484444444444443
+          "sku_precision@5": 0.11484444444444443,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.014533333333333334,
+          "huecos_regalados@5": 0.014533333333333334,
+          "listas_con_regalo@5": 0.07116666666666667
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -703,7 +867,11 @@
           "cat_hit_rate@5": 0.564299424184261,
           "cat_precision@5": 0.16429942418426102,
           "sku_hit_rate@5": 0.30902111324376197,
-          "sku_precision@5": 0.072552783109405
+          "sku_precision@5": 0.072552783109405,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -718,7 +886,11 @@
           "cat_hit_rate@5": 0.42042755344418054,
           "cat_precision@5": 0.1016627078384798,
           "sku_hit_rate@5": 0.1828978622327791,
-          "sku_precision@5": 0.03942992874109264
+          "sku_precision@5": 0.03942992874109264,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.00665083135391924,
+          "huecos_regalados@5": 0.00665083135391924,
+          "listas_con_regalo@5": 0.0332541567695962
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -733,7 +905,11 @@
           "cat_hit_rate@5": 0.6987260415471135,
           "cat_precision@5": 0.22373464937449788,
           "sku_hit_rate@5": 0.546539653391484,
-          "sku_precision@5": 0.14578216458165963
+          "sku_precision@5": 0.14578216458165963,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.015218638815562952,
+          "huecos_regalados@5": 0.015218638815562952,
+          "listas_con_regalo@5": 0.07460117066452428
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -748,7 +924,11 @@
           "cat_hit_rate@5": 0.5340922708208508,
           "cat_precision@5": 0.1387896944278011,
           "sku_hit_rate@5": 0.38454164170161775,
-          "sku_precision@5": 0.08898741761533852
+          "sku_precision@5": 0.08898741761533852,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.01512282804074296,
+          "huecos_regalados@5": 0.01512282804074296,
+          "listas_con_regalo@5": 0.07393648891551828
         }
       ]
     },
@@ -768,7 +948,11 @@
           "cat_hit_rate@5": 0.6096111111111111,
           "cat_precision@5": 0.17822222222222223,
           "sku_hit_rate@5": 0.25855555555555554,
-          "sku_precision@5": 0.05912222222222222
+          "sku_precision@5": 0.05912222222222222,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "1 - nuevo, carrito vacio",
@@ -783,7 +967,11 @@
           "cat_hit_rate@5": 0.5662188099808061,
           "cat_precision@5": 0.17197696737044144,
           "sku_hit_rate@5": 0.30902111324376197,
-          "sku_precision@5": 0.07332053742802302
+          "sku_precision@5": 0.07332053742802302,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "2 - nuevo, con articulos",
@@ -798,7 +986,11 @@
           "cat_hit_rate@5": 0.4346793349168646,
           "cat_precision@5": 0.10831353919239904,
           "sku_hit_rate@5": 0.16864608076009502,
-          "sku_precision@5": 0.036579572446555825
+          "sku_precision@5": 0.036579572446555825,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "3 - recurrente, carrito vacio",
@@ -813,7 +1005,11 @@
           "cat_hit_rate@5": 0.7006771490875703,
           "cat_precision@5": 0.22384942040628947,
           "sku_hit_rate@5": 0.32193274417537016,
-          "sku_precision@5": 0.0755193389188569
+          "sku_precision@5": 0.0755193389188569,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         },
         {
           "grupo": "4 - recurrente, con articulos",
@@ -828,7 +1024,11 @@
           "cat_hit_rate@5": 0.5260635110844817,
           "cat_precision@5": 0.13449970041941284,
           "sku_hit_rate@5": 0.19376872378669863,
-          "sku_precision@5": 0.04225284601557819
+          "sku_precision@5": 0.04225284601557819,
+          "huecos_en_carrito@5": 0.0,
+          "huecos_repetidos@5": 0.0,
+          "huecos_regalados@5": 0.0,
+          "listas_con_regalo@5": 0.0
         }
       ]
     }
@@ -920,7 +1120,7 @@
     {
       "check": "LambdaRank recalculado desde predictions/ = reports/recommender/metrics.json",
       "ok": true,
-      "detail": "0.6003 frente a 0.6003"
+      "detail": "0.6168 frente a 0.6168"
     },
     {
       "check": "Techo realizado compatible con el esperado en las 4 metricas, total y por perfil (max |z| <= 3.5)",
