@@ -3,8 +3,9 @@
     python -m data_generation.export_oracle
     python -m data_generation.export_oracle --from-date 2025-11-01 --out data/oracle
 
-El generador sabe, para cada cesta, con que peso sale cada categoria antes del primer
-sorteo (afinidad x estacionalidad x ciclo de reposicion, con los gates de hogar) y que
+El generador sabe, para cada cesta, con que peso sale cada categoria antes de aplicar la
+mision (afinidad x estacionalidad x ciclo de reposicion, con los gates de hogar), con que
+probabilidad tocaba cada mision de compra en esa visita, su factor de tamano y que
 referencia es la mas probable dentro de cada categoria. Este script vuelve a ejecutar el
 generador con un `OracleRecorder` y vuelca esa informacion para las cestas con fecha
 `>= from_date` (la ventana de test del recomendador).
@@ -28,8 +29,11 @@ cambia ni un byte del dataset.
 - `category_weights.parquet`: una fila por `(basket_id, category)` con peso > 0:
   `weight` (sin normalizar), `best_product_id` y `best_product_prob` (probabilidad de esa
   referencia si la categoria sale).
-- `manifest.json`: semilla, escala, fecha de corte, orden de categorias, pares de
-  afinidad con el lift **aplicado** y los hashes contra los que se valido.
+- `basket_missions.parquet`: una fila por cesta: `size_factor` y la probabilidad de cada
+  mision (una columna `mission_<nombre>` por mision).
+- `manifest.json`: semilla, escala, fecha de corte, orden de categorias, el resto del
+  proceso generativo (matriz de complementos y sustitutos **aplicada**, perfiles, tamano
+  de cada mision y tope de categorias) y los hashes contra los que se valido.
 """
 
 from __future__ import annotations
@@ -54,6 +58,7 @@ from data_generation.generate_dataset import SEED, GeneratorConfig, OracleRecord
 DEFAULT_FROM_DATE = dt.date(2025, 11, 1)
 
 WEIGHTS_FILENAME = "category_weights.parquet"
+MISSIONS_FILENAME = "basket_missions.parquet"
 MANIFEST_FILENAME = "manifest.json"
 
 
@@ -82,6 +87,43 @@ def oracle_frame(recorder: OracleRecorder, basket_ids: np.ndarray, product_ids: 
         },
         columns=columns,
     )
+
+
+def missions_frame(recorder: OracleRecorder, basket_ids: np.ndarray) -> pd.DataFrame:
+    """Una fila por cesta registrada: factor de tamano y probabilidad de cada mision."""
+    columns = ["basket_id", "size_factor", *(f"mission_{m}" for m in cat.MISSION_NAMES)]
+    if not recorder.basket_index:
+        return pd.DataFrame(columns=columns)
+    probs = np.vstack(recorder.mission_probs)
+    frame = pd.DataFrame(
+        {
+            "basket_id": basket_ids[np.asarray(recorder.basket_index)],
+            "size_factor": np.asarray(recorder.size_factor, dtype=np.float64),
+        }
+    )
+    for i, name in enumerate(cat.MISSION_NAMES):
+        frame[f"mission_{name}"] = probs[:, i]
+    return frame[columns]
+
+
+def generative_process() -> dict:
+    """Lo que el oraculo necesita del proceso, ademas de lo registrado por cesta."""
+    return {
+        "missions": [
+            {
+                "name": m.name,
+                "size_mean": m.size_mean,
+                "size_dispersion": m.size_dispersion,
+            }
+            for m in cat.MISSIONS
+        ],
+        "mission_profiles": cat.mission_profiles(),
+        # Fila = categoria que entra; columna = categoria afectada. Complementos con el
+        # lift **aplicado** (no el nominal de DATA_SPEC.md) y sustitutos con su factor.
+        "interaction": cat.interaction_matrix(),
+        "max_categories_per_basket": cat.MAX_CATEGORIES_PER_BASKET,
+        "second_reference_prob": [cat.second_reference_prob(c) for c in cat.CATEGORIES],
+    }
 
 
 def export(
@@ -121,8 +163,11 @@ def export(
         tables["products"]["product_id"].to_numpy(),
     )
 
+    missions = missions_frame(recorder, tables["baskets"]["basket_id"].to_numpy())
+
     out_dir.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(out_dir / WEIGHTS_FILENAME, index=False)
+    missions.to_parquet(out_dir / MISSIONS_FILENAME, index=False)
     manifest = {
         "seed": seed,
         "scale": scale,
@@ -130,14 +175,11 @@ def export(
         "n_baskets": int(frame["basket_id"].nunique()),
         "n_rows": int(len(frame)),
         "categories": [c.name for c in cat.CATEGORIES],
-        # Lift tal y como lo aplica el generador (no el nominal de DATA_SPEC.md).
-        "affinity_pairs": [
-            {"trigger": t, "associated": a, "applied_lift": float(cat.applied_affinity_lift(l))}
-            for t, a, l in cat.AFFINITY_PAIRS
-        ],
+        **generative_process(),
         "dataset_sha256": regenerated["sha256"],
         "validated_against": str((raw_dir / MANIFEST_FILENAME).as_posix()) if check_manifest else None,
         "weights_sha256": hashlib.sha256((out_dir / WEIGHTS_FILENAME).read_bytes()).hexdigest(),
+        "missions_sha256": hashlib.sha256((out_dir / MISSIONS_FILENAME).read_bytes()).hexdigest(),
     }
     (out_dir / MANIFEST_FILENAME).write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

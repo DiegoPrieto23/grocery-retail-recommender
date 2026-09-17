@@ -92,6 +92,16 @@ PRE_A1_FILENAME = "baseline_pre_a1.json"
 # --snapshot baseline_pre_a4.json`.
 PRE_A4_FILENAME = "baseline_pre_a4.json"
 
+# Metricas del recomendador sobre el dataset anterior a la Fase 8 (misiones de compra,
+# cola larga del tamano de cesta y sustitucion), congeladas por
+# `verify_recommender_diagnostics --freeze --snapshot baseline_pre_fase8.json` junto con
+# el diagnostico (baselines y techo). El resto de artefactos de ese momento estan en
+# `snapshots/pre-fase-8/`.
+PRE_FASE8_FILENAME = "baseline_pre_fase8.json"
+
+# Donde el generador deja el manifiesto con los hashes de las 7 tablas.
+RAW_MANIFEST = Path("data/raw/manifest.json")
+
 # Top-5 de la ablacion con relevancia binaria de SKU, para que el verificador de
 # diagnostico la compare con los baselines de categoria sobre las mismas queries.
 SKU_PREDICTIONS_FILENAME = "recommendations_test_sku.parquet"
@@ -1021,6 +1031,37 @@ Se ponen juntas solo como orden de magnitud, con estas diferencias de planteamie
 """
 
 
+def dataset_fingerprint(manifest: Path = RAW_MANIFEST) -> dict[str, str] | None:
+    """Hashes de las 7 tablas del dataset en uso, segun el manifiesto del generador."""
+    if not Path(manifest).is_file():
+        return None
+    return json.loads(Path(manifest).read_text(encoding="utf-8"))["sha256"]
+
+
+def same_dataset(snapshot: dict, manifest: Path = RAW_MANIFEST) -> bool:
+    """Si un snapshot congelado se midio sobre el dataset en uso.
+
+    Los snapshots anteriores a la Fase 8 no guardaban la huella del dataset: todos se
+    congelaron sobre el de la Fase 7a, cuya huella si guarda `baseline_pre_fase8.json`.
+    """
+    current = dataset_fingerprint(manifest)
+    frozen = snapshot.get("dataset_sha256")
+    if frozen is None:
+        path = Path("reports/recommender") / PRE_FASE8_FILENAME
+        if path.is_file():
+            frozen = json.loads(path.read_text(encoding="utf-8")).get("dataset_sha256")
+    return current is not None and frozen == current
+
+
+def _load_same_dataset_snapshot(cfg: RecommenderConfig, name: str) -> dict | None:
+    """Un snapshot de `reports_dir`, solo si se midio sobre el dataset en uso."""
+    path = Path(cfg.reports_dir) / name
+    if not path.is_file():
+        return None
+    snap = json.loads(path.read_text(encoding="utf-8"))
+    return snap if same_dataset(snap) else None
+
+
 def _baseline_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
     """Comparacion con la Fase 3 original, si la referencia congelada esta disponible."""
     path = Path(cfg.reports_dir) / BASELINE_FILENAME
@@ -1075,6 +1116,91 @@ def _baseline_section(cfg: RecommenderConfig, result: dict[str, object], k: int)
     )
 
 
+def _pre_fase8_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
+    """Mismo codigo, dataset de la Fase 8 frente al de la Fase 7a (punto A5, M1 y M2).
+
+    Se escribe solo cuando el dataset en uso ya no es el congelado en
+    `baseline_pre_fase8.json`. Son queries distintas: la comparacion es de nivel.
+    """
+    path = Path(cfg.reports_dir) / PRE_FASE8_FILENAME
+    if not path.is_file():
+        return ""
+    snap = json.loads(path.read_text(encoding="utf-8"))
+    if same_dataset(snap):
+        return ""
+    old_sku = pd.DataFrame(snap["metrics"]["summary"]).set_index("grupo")
+    old_cat = pd.DataFrame(snap["metrics"]["by_category"]).set_index("grupo")
+    new_sku = result["summary"].set_index("grupo")  # type: ignore[union-attr]
+    new_cat = result["by_category"].set_index("grupo")  # type: ignore[union-attr]
+
+    metrics = [
+        (f"ndcg_graded@{k}", old_cat, new_cat, "NDCG@{k} graduada"),
+        (f"cat_hit_rate@{k}", old_cat, new_cat, "cat_hit_rate@{k}"),
+        (f"sku_hit_rate@{k}", old_cat, new_cat, "sku_hit_rate@{k}"),
+        (f"ndcg@{k}", old_sku, new_sku, "NDCG@{k} SKU"),
+        (f"recall@{k}", old_sku, new_sku, "Recall@{k}"),
+        (f"precision@{k}", old_sku, new_sku, "Precision@{k}"),
+        (f"f1@{k}", old_sku, new_sku, "F1@{k}"),
+        ("n_target_medio", old_sku, new_sku, "Productos por adivinar (media)"),
+    ]
+    lines = [
+        "| Metrica | Fase 7 (dataset 7a) | Fase 8 | Cambio |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for column, old, new, label in metrics:
+        a, b = float(old.loc["total", column]), float(new.loc["total", column])
+        change = f"{(b - a) * 100:+.2f} pp" if "rate" in column else f"{b / a:.2f}x"
+        lines.append(f"| {label.format(k=k)} | {a:.4f} | {b:.4f} | {change} |")
+
+    profile_lines = [
+        f"| Grupo | n_queries 7a | Fase 8 | cat_hit_rate@{k} 7a | Fase 8 | sku_hit_rate@{k} 7a "
+        f"| Fase 8 | NDCG@{k} graduada 7a | Fase 8 | Productos por adivinar 7a | Fase 8 |",
+        "| --- |" + " ---: |" * 10,
+    ]
+    for group in new_cat.index:
+        if group not in old_cat.index:
+            continue
+        cells = [
+            int(old_cat.loc[group, "n_queries"]),
+            int(new_cat.loc[group, "n_queries"]),
+            *(
+                f"{float(frame.loc[group, col]):.4f}"
+                for col in (f"cat_hit_rate@{k}", f"sku_hit_rate@{k}", f"ndcg_graded@{k}")
+                for frame in (old_cat, new_cat)
+            ),
+            f"{float(old_sku.loc[group, 'n_target_medio']):.2f}",
+            f"{float(new_sku.loc[group, 'n_target_medio']):.2f}",
+        ]
+        profile_lines.append(f"| {group} | " + " | ".join(str(c) for c in cells) + " |")
+
+    return "\n".join(
+        [
+            "## Frente al dataset anterior a la Fase 8",
+            "",
+            "La Fase 8 regenera el dataset con misiones de compra, tamano de cesta con cola "
+            "larga, sustitucion entre categorias, segunda referencia en las categorias de "
+            "exploracion y propension a la marca blanca (`DATA_SPEC.md`, \"Estructura de "
+            "la cesta\"). Mismo codigo, mismas ventanas y mismo numero de queries de test; "
+            "cambia el dato. Las cifras de antes estan congeladas en "
+            f"`{Path(cfg.reports_dir).as_posix()}/{PRE_FASE8_FILENAME}` "
+            f"({snap['congelado']}, commit `{(snap['commit'] or '?')[:7]}`), y el informe "
+            "completo de entonces, con sus comparaciones antes/despues de los puntos A1, A2 "
+            "y A4, en `snapshots/pre-fase-8/reports/recommender/metrics.md`.",
+            "",
+            *lines,
+            "",
+            "Son cestas distintas de datasets distintos, asi que no hay contraste pareado. "
+            "Tampoco se puede leer el cambio como mejor o peor modelo: el target cambia de "
+            "tamano y de estructura. Lo que dice cuanto del techo alcanza cada sistema en "
+            "cada dataset esta en la seccion de diagnostico.",
+            "",
+            "### Por perfil",
+            "",
+            *profile_lines,
+        ]
+    )
+
+
 def _rerank_label(rules: RerankConfig) -> str:
     parts = []
     if rules.max_per_category is not None:
@@ -1085,11 +1211,14 @@ def _rerank_label(rules: RerankConfig) -> str:
 
 
 def _asof_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
-    """Antes/despues del punto A1: historial personal as-of el dia de cada cesta."""
-    path = Path(cfg.reports_dir) / PRE_A1_FILENAME
-    if not path.is_file():
+    """Antes/despues del punto A1: historial personal as-of el dia de cada cesta.
+
+    Solo si el snapshot se midio sobre el dataset en uso: desde la Fase 8 no lo es, y la
+    comparacion queda en `snapshots/pre-fase-8/reports/recommender/metrics.md`.
+    """
+    snap = _load_same_dataset_snapshot(cfg, PRE_A1_FILENAME)
+    if snap is None:
         return ""
-    snap = json.loads(path.read_text(encoding="utf-8"))
     old_sku = pd.DataFrame(snap["metrics"]["summary"]).set_index("grupo")
     old_cat = pd.DataFrame(snap["metrics"]["by_category"]).set_index("grupo")
     new_sku = result["summary"].set_index("grupo")  # type: ignore[union-attr]
@@ -1166,8 +1295,7 @@ def _objective_section(cfg: RecommenderConfig, result: dict[str, object], k: int
         f"| cat_precision@{k} | sku_precision@{k} |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    path = Path(cfg.reports_dir) / PRE_A4_FILENAME
-    snap = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    snap = _load_same_dataset_snapshot(cfg, PRE_A4_FILENAME)
     if snap is not None:
         cat = snap["metrics"]["by_category"][0]
         sku = snap["metrics"]["summary"][0]
@@ -1318,9 +1446,8 @@ def _cart_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> 
         )
 
     frozen = ""
-    path = Path(cfg.reports_dir) / PRE_A2_FILENAME
-    if path.is_file():
-        snap = json.loads(path.read_text(encoding="utf-8"))
+    snap = _load_same_dataset_snapshot(cfg, PRE_A2_FILENAME)
+    if snap is not None:
         old_cat = snap["metrics"]["by_category"][0]
         old = snap["metrics"]["summary"][0]
         frozen = (
@@ -1338,7 +1465,7 @@ def _cart_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> 
         [
             "## Carrito y diversidad (punto A2)",
             "",
-            f"Con una linea por categoria en cada cesta, un hueco del top-{k} se *regala* si "
+            f"Con (casi siempre) una linea por categoria en cada cesta, un hueco del top-{k} se *regala* si "
             "su categoria ya esta en el carrito (no puede acertar) o ya salio mas arriba en "
             "la lista (de las dos, como mucho acierta una). Dos piezas atacan el problema: "
             "tres features de carrito (`cat_in_cart`, `dept_n_in_cart`, "
@@ -1793,6 +1920,8 @@ referencia concreta fuera otra.
 {_cart_section(cfg, result, k)}
 
 {_kaggle_section(summary, k)}
+
+{_pre_fase8_section(cfg, result, k)}
 
 {_baseline_section(cfg, result, k)}
 

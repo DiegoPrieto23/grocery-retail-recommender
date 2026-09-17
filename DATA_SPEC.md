@@ -115,6 +115,159 @@ tamaño del surtido.
 - **Uplift de promoción**: multiplicar la probabilidad base de compra de un producto por un
   factor >1 mientras `promotion_id` esté activa.
 
+### Estructura de la cesta: qué co-ocurrencia se busca y por qué (Fase 8)
+
+Esta sección se escribió **antes** de tocar el generador de la Fase 8 (puntos A5, M1 y M2
+de `docs/diagnostico-fase7.md`). Fija contra qué se calibra: el realismo de una cesta de
+supermercado, **no** la métrica del recomendador. Si el modelo mejora o empeora con el
+dataset nuevo, es un resultado, no un objetivo.
+
+**Punto de partida (dataset de la Fase 7a).** Una cesta era un muestreo casi independiente
+de categorías condicionado al cliente: solo 40 de los 3.780 pares ordenados de
+`affinity_category` tenían lift > 1,5, y todos venían de los 10 pares de la tabla de
+abajo o de los grupos bebé y mascota, que salen de los *gates* de hogar y no de la cesta.
+El tamaño era una Poisson recortada (media 5,1 líneas, coeficiente de variación 0,42,
+p99 = 11, máximo 19), con una sola línea por categoría. Cifras congeladas en
+`snapshots/pre-fase-8/reports/etl/verify_dataset.json`.
+
+**Cómo es una cesta real de gran consumo.** Tres rasgos que el dataset no tenía:
+
+1. **Las visitas tienen una misión.** Conviven la compra grande semanal (20-40 categorías),
+   la reposición rápida de frescos (pan, leche, fruta: 1-3 artículos), el desayuno, la
+   limpieza del hogar, la cena o el aperitivo, la compra del bebé y la fiesta o barbacoa
+   de temporada. La misión explica la mayor parte de la co-ocurrencia: el café va con la
+   leche porque las dos son desayuno, no por una regla par a par.
+2. **El tamaño tiene cola larga.** En los datasets públicos de referencia (Instacart, por
+   ejemplo, con ~10 productos por pedido de media y pedidos de más de 50) la desviación
+   típica del tamaño es del orden de la media, no de su raíz cuadrada como en una Poisson.
+3. **Hay sustitutos, no solo complementos.** Quien lleva pollo para la cena lleva menos
+   ternera; quien carga agua lleva menos refrescos. Un buen recomendador de cesta tiene
+   que poder aprender esa señal negativa.
+
+**Un matiz de medida que condiciona el objetivo.** El lift crudo de `affinity_category`
+mezcla la afinidad con el **tamaño**: en una compra de 30 categorías aparece casi todo, así
+que con una distribución de tamaño realista *cualquier* par co-ocurre más que por azar.
+Con un coeficiente de variación `cv`, el lift de dos categorías poco frecuentes y sin
+ninguna relación ronda `1 + cv²` (≈ 1,5-1,8 con `cv` entre 0,7 y 0,9). Por eso se miden
+dos cosas en `verify_dataset.py` (sección `coocurrencia_de_categorias`):
+
+- el **lift crudo**, idéntico al de `affinity_category`, que es lo que ve el recomendador;
+- el **lift controlado por tamaño**: co-ocurrencia observada frente a la esperada si,
+  dentro de cada banda de tamaño, las categorías fueran independientes, dividido por la
+  mediana de todos los pares (sortear sin reemplazo un número fijo de categorías ya
+  introduce una ligera dependencia negativa). Un 1 es "lo normal para una cesta de ese
+  tamaño". Es el que dice si hay estructura de verdad.
+
+**Objetivos.** Rangos, no puntos: se da por bueno cualquier valor dentro.
+
+| Qué | Antes (7a) | Objetivo | Por qué |
+| --- | ---: | ---: | --- |
+| Líneas por cesta: media | 5,1 | 7-10 | Orden de magnitud de los datasets públicos, con la compra en tienda (más pequeña) mezclada |
+| Líneas por cesta: mediana | 5 | 4-7 | La mayoría de visitas son pequeñas |
+| Líneas por cesta: coeficiente de variación | 0,42 | 0,75-1,10 | Cola larga: desviación del orden de la media |
+| Líneas por cesta: p99 | 11 | 30-50 | Compras semanales grandes |
+| Cestas de más de 20 líneas | 0 % | 4-12 % | La compra grande es una minoría de las visitas |
+| Cestas de 1 a 3 líneas | 24,6 % | 25-40 % | La reposición rápida es la visita más frecuente |
+| Pares con lift **controlado** > 1,5 | 38 | 150-450 (4-12 %) | Misiones (desayuno, limpieza, cena, bebé, fiesta) y complementos. Por encima del 12 %, las cestas serían plantillas |
+| Pares con lift **crudo** > 1,5 | 40 | muchos más (cientos o miles) | Inevitable con cola larga de tamaño: no es un objetivo en sí, se reporta para que se lea con el matiz de arriba |
+| Mediana del lift crudo | 1,00 | se reporta (ver nota) | El efecto tamaño: no es un objetivo |
+| Complementos declarados: lift crudo | 1,8-13 | ≥ 1,8 (bebé y mascota pueden pasar de 10 por el *gate*) | Receta o rutina: se compran juntos varias veces más que por azar |
+| Complementos declarados: lift controlado | 1,6-10,7 | ≥ 1,4 | Que la relación sobreviva al quitar el tamaño |
+| Sustitutos declarados: lift controlado frente al mismo generador sin grupos | — | ≤ 0,85 en todos los pares | Llevar uno resta al otro, sin llegar a excluirlo |
+| Sustitutos que no comparten misión: lift controlado | 0,87-0,91 (sin grupos) | < 1 | Sin una misión que los junte, se ve la señal negativa directamente |
+| Categorías de exploración con dos referencias en la misma cesta | 0 % | 5-15 % | Dos yogures o dos frutas distintas son normales en la cesta real; en las de hábito, no |
+| Categorías de hábito con dos referencias | 0 % | 0 % | La fidelidad de marca de la 7a no se toca |
+| Cuota de marca blanca: p10-p90 entre clientes | 0,17-0,33 | claramente más ancho (p. ej. 0,10-0,45) | Hay hogares que buscan precio y hogares que no |
+
+**Qué se revisó al medir, y por qué.** Tres cosas de esta sección cambiaron después de la
+primera calibración, y ninguna para acercar una métrica del modelo:
+
+- *El estimador del lift controlado.* La primera versión ponderaba cada banda de tamaño por
+  sus co-ocurrencias (tipo Mantel-Haenszel). Así, casi todo el peso caía en las compras
+  semanales, que es justo donde no hay estructura: en cestas de 3-12 categorías el par
+  café-cereales tenía lift 2-3, y el estimador lo dejaba en 1,0. Ahora cada banda pesa por
+  sus cestas, y las cestas de una sola categoría (que no dicen nada de pares) quedan fuera.
+- *La mediana del lift crudo.* Se había fijado en 1,1-1,6 pensando en categorías de
+  frecuencia media. Con misiones, las categorías de acopio (sal, harina, limpiacristales)
+  aparecen casi solo en la compra semanal, y su lift crudo con cualquier otra de acopio
+  sube a 3-6 sin que haya una relación entre ellas. Eso también pasa en una cesta real,
+  así que la mediana cruda (≈ 2,5) se reporta y no se persigue.
+- *Los sustitutos que comparten misión.* Lavavajillas y lejía están en el núcleo de la
+  misión de limpieza; pizza y precocinados, en el de la cena. La misión los junta más de
+  lo que el grupo los separa, y su lift controlado queda por encima de 1 aunque el grupo
+  les reste. El objetivo pasa a medirse contra el mismo generador sin grupos (lo comprueba
+  `test_la_sustitucion_resta_frente_a_no_tenerla`), y el "< 1" se exige a los que no
+  comparten misión.
+
+Lo que **no** debe moverse (sección "Lo que el generador ya hace bien" del diagnóstico):
+identidad y cadencia de visita del cliente, ciclo de reposición (la correlación de rangos
+de `ciclos_reposicion` debe seguir por encima de 0,95), fidelidad de marca (cuota de la
+favorita en hábito dentro de 0,75-0,85), embudo de sesión, estacionalidad, churn
+progresivo y reproducibilidad byte a byte.
+
+### Misiones de compra (detalle)
+
+Cada cesta tiene una **misión latente** que el dataset no publica (solo la conoce el
+generador y, para el techo teórico, el oráculo). La misión decide dos cosas: el **perfil de
+categorías** (un multiplicador sobre el peso de cada categoría) y la **distribución del
+tamaño**. Todo lo demás se mantiene: el peso de partida de cada categoría sigue siendo
+afinidad del cliente × estacionalidad × ciclo de reposición, con los *gates* de hogar, y la
+misión solo lo reescala.
+
+| Misión | Categorías núcleo (multiplicador) | Resto | Categorías distintas: 1 + BN(media, r) | Peso base |
+| --- | --- | ---: | --- | ---: |
+| `compra_semanal` | Todas; despensa, droguería e higiene ×1,3 (se hace acopio); caprichos ×0,8 | ×1,0 | media 15, r = 4 | 0,12 |
+| `reposicion` | Pan, leche ×3; fruta, verdura ×2,5; huevos, yogur ×2; agua, embutido ×1,5 | ×0,20 | media 2,5, r = 2 | 0,36 |
+| `desayuno` | Leche, café, cereales ×3; galletas, zumos ×2,5; yogur, pan, azúcar ×2; fruta, huevos ×1,2 | ×0,15 | media 3,2, r = 3 | 0,10 |
+| `limpieza_hogar` | Detergente, suavizante, lavavajillas, lejía, limpiacristales, bolsas ×3; papel higiénico ×2,5; gel, champú, acondicionador, pasta de dientes, desodorante ×2; higiene femenina ×1,5 | ×0,15 | media 3,5, r = 3 | 0,09 |
+| `cena_aperitivo` | Pizza, precocinados, snacks, cerveza ×3; vino, queso, embutido, refrescos, palomitas ×2,5; pan, helados ×2; conservas de pescado ×1,5 | ×0,20 | media 4,0, r = 3 | 0,15 |
+| `bebe` | Pañales, toallitas, leche infantil, potitos ×4; fruta, yogur ×1,5; leche, gel ×1,2 | ×0,20 | media 3,0, r = 3 | 0,22 si hay bebé; 0 si no |
+| `fiesta` | Cerveza, snacks ×3,5; ternera, pollo, refrescos, cava, turrón, marisco ×3; vino ×2,5; agua, pan, embutido, queso, helados ×2 | ×0,20 | media 7, r = 3 | 0,02; ×3 de junio a septiembre (barbacoa), ×4 en diciembre |
+
+**Probabilidad de cada misión por cliente.** Parte del peso base y se ajusta con el hogar
+(la compra semanal pesa más cuanto más grande es el hogar, `0,5 + 0,2 × miembros`; la
+reposición, menos, `1,3 − 0,1 × miembros`), con el canal (online ×1,5 en la compra
+semanal: el pedido a domicilio es la compra grande) y con los *gates* (sin bebé no hay
+misión `bebe`). Encima, cada cliente tiene su propio reparto, sorteado con una Dirichlet
+de concentración 20 alrededor de ese perfil: hay hogares de compra semanal y hogares de
+ir cada día a por pan. En cada visita se aplican además el día de la semana (viernes y
+sábado ×1,6 para la compra semanal) y el mes (la fiesta). Las cestas anónimas usan el
+reparto medio de la población.
+
+**Tamaño.** El número de categorías distintas es `1 + BinomialNegativa(media × f, r)`, con
+`f` el mismo factor de antes (hogar × rampa de churn) y un tope de **50 categorías**
+(antes, 20 líneas). La binomial negativa de cada misión y la mezcla entre misiones dan la
+cola larga. Los parámetros exactos viven en `data_generation/catalog.py` (`MISSIONS`).
+
+### Sustitución entre categorías (detalle)
+
+Al entrar en la cesta una categoría de un grupo, el peso del resto de categorías del grupo
+se multiplica por el factor (menor que 1). Actúa igual que los complementos, pero hacia
+abajo, y en las dos direcciones.
+
+| Grupo | Categorías | Factor | Motivo |
+| --- | --- | ---: | --- |
+| Bebida fría | Agua, Refrescos | 0,35 | Se carga una de las dos |
+| Proteína principal | Carne de pollo, Carne de ternera, Pescado blanco | 0,30 | Una para la comida o la cena de ese día |
+| Limpieza de cocina | Lavavajillas, Lejía y limpiadores | 0,25 | Reposición alterna del armario de limpieza |
+| Capricho dulce | Galletas, Chocolate y huevos de Pascua | 0,35 | Un capricho por visita |
+| Cena congelada | Pizza congelada, Precocinados congelados | 0,30 | Una solución rápida por noche |
+| Picoteo | Snacks y aperitivos, Palomitas de microondas | 0,35 | Uno para la noche de sofá |
+| Alcohol de mesa | Cerveza, Vino | 0,35 | Una bebida para la comida |
+
+### Varias referencias por categoría y marca blanca (detalle)
+
+- **Segunda referencia.** En las categorías de la banda de exploración (lealtad 0,25-0,40),
+  cuando la categoría sale, con probabilidad **0,12** entra además una segunda referencia
+  distinta de la misma categoría (dos yogures, dos frutas). No consume un hueco de
+  categoría: el número de categorías distintas sigue siendo el de la misión. En las de
+  hábito sigue habiendo una sola línea.
+- **Propensión a la marca blanca.** Cada cliente tiene un multiplicador `ρ ~ LogNormal(0;
+  0,8)` sobre el peso de las referencias de marca blanca. Se aplica en la parte de la
+  elección que reparte la popularidad: en la primera compra de la categoría (la que fija la
+  referencia preferida) y en el hueco `1 - lealtad`. La fidelidad de marca no cambia: la
+  referencia preferida sigue llevándose su cuota. Las cestas anónimas usan `ρ = 1`.
+
 ### Afinidad de cesta (detalle)
 
 Al construir cada `basket_items`, si ya hay un producto de la categoría "disparadora" en la
@@ -134,6 +287,45 @@ co-compra del recomendador.
 | Detergente                | Suavizante                 | 3.5x            | rutina de lavado             |
 | Champú                    | Acondicionador              | 3.0x            | rutina de higiene            |
 | Palomitas de microondas   | Refrescos                   | 2.0x            | noche de peli                |
+
+**Ampliación de la Fase 8** (punto A5): veinte pares más, en los cuatro grupos que pedía el
+diagnóstico.
+
+| Grupo | Categoría disparadora | Categoría asociada | Lift objetivo | Motivo |
+| --- | --- | --- | ---: | --- |
+| Desayuno | Café | Leche | 2.0x | café con leche |
+| Desayuno | Galletas | Leche | 2.0x | desayuno y merienda |
+| Desayuno | Cereales | Yogur | 2.0x | desayuno |
+| Desayuno | Pan | Aceite de oliva | 2.0x | tostada |
+| Higiene | Gel de ducha | Champú | 2.2x | rutina de ducha |
+| Higiene | Pasta de dientes | Desodorante | 2.0x | neceser |
+| Higiene | Papel higiénico | Lejía y limpiadores | 2.0x | limpieza del baño |
+| Mascota | Comida para gato | Arena para gato | 3.0x | mismo animal |
+| Mascota | Comida para perro | Bolsas de basura | 2.0x | paseo del perro |
+| Receta | Pasta | Queso | 2.0x | pasta gratinada |
+| Receta | Arroz | Marisco | 2.5x | paella |
+| Receta | Legumbres | Embutido y fiambre | 2.0x | cocido y fabada |
+| Receta | Carne de pollo | Verdura | 2.0x | plato de diario |
+| Receta | Pescado blanco | Verdura | 2.0x | plato de diario |
+| Receta | Harina | Huevos | 2.5x | repostería |
+| Receta | Harina | Azúcar y edulcorante | 2.5x | repostería |
+| Receta | Aceite de oliva | Sal y especias | 2.2x | despensa de cocina |
+| Aperitivo y fiesta | Pizza congelada | Refrescos | 2.0x | cena rápida |
+| Aperitivo y fiesta | Cava y espumosos | Turrón y mazapán | 2.5x | Navidad |
+| Aperitivo y fiesta | Carne de ternera | Cerveza | 2.0x | barbacoa |
+
+La tabla completa vive en `catalog.COMPLEMENT_PAIRS` (los 10 primeros siguen también en
+`catalog.AFFINITY_PAIRS`, que es la que comprueba el informe del ETL). Una categoría puede
+disparar varias asociadas (harina → huevos y azúcar). El multiplicador que aplica el
+generador no cambia respecto a la Fase 7a: `1 + (objetivo − 1) × 3,8`
+(`AFFINITY_CALIBRATION`).
+
+Desde la Fase 8, "lift objetivo" es la **fuerza nominal** del par, no el lift crudo que se
+va a medir. Con misiones y cola larga de tamaño, el lift crudo sale por encima en las
+categorías poco frecuentes que se concentran en la compra semanal, y por debajo en las
+muy frecuentes (pan, leche), que ya están en media cesta. Lo que se exige a cada par es el
+lift **controlado** por tamaño (tabla de objetivos de arriba), y
+`python -m data_generation.verify_dataset` reporta los dos.
 
 ### Fidelidad de marca (detalle)
 
@@ -239,15 +431,22 @@ Las sesiones que no convierten solo dejan vistas y algún `add_to_cart` suelto.
 
 ## Volumen de referencia (ajustable)
 
-| Tabla            | Filas aprox. |
+Los de la ejecución con `seed = 42` y `scale = 1.0`, que es la que hay en `data/raw`.
+
+| Tabla            | Filas |
 | ------------------ | -------------- |
 | `customers`         | 20.000         |
 | `products`           | 496            |
 | `promotions`         | 300            |
-| `baskets`            | 300.000        |
-| `basket_items`       | ~1.500.000     |
+| `baskets`            | 600.174        |
+| `basket_items`       | 4.357.007      |
 | `sessions`           | 150.000        |
-| `session_events`     | ~900.000       |
+| `session_events`     | 1.106.225      |
+
+`baskets` son 600.000 y no las 300.000 que decía esta tabla hasta la Fase 8 (punto B3 del
+diagnóstico): con 20.000 clientes, 300.000 cestas son ~15 compras por cliente en dos años
+—una visita cada ~73 días—, y a esa cadencia los ciclos de reposición no son observables.
+`basket_items` pasa de 3,1 a 4,4 millones con las misiones de compra de la Fase 8.
 
 ## Tablas de `data/processed/` (Fase 2)
 

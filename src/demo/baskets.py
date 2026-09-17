@@ -28,8 +28,8 @@ en pandas se arriesgaria a divergir en silencio del split que se evaluo.
 
 El carrito no es el prefijo: es el prefijo **mas lo abandonado**
 ----------------------------------------------------------------
-`cart.parquet` tiene 20.748 filas y la suma de `prefix_size` es 20.528. La diferencia son
-**220 lineas abandonadas** repartidas en 171 cestas (0,95 %): productos que el cliente
+`cart.parquet` tiene 29.927 filas y la suma de `prefix_size` es 29.644. La diferencia son
+**283 lineas abandonadas** repartidas en 183 cestas (1,02 %): productos que el cliente
 anadio al carrito y luego quito, asi que nunca llegaron al ticket. El generador los produce
 a proposito desde que se arreglo la contaminacion de la señal de sesion (Fase 3), y el
 recomendador los excluye del pool de candidatos porque en ese instante estaban en el

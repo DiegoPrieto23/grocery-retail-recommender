@@ -708,10 +708,11 @@ def wasted_slot_metrics(
 ) -> pd.DataFrame:
     """Huecos "regalados" del top-k: los que por construccion casi no pueden acertar.
 
-    Con una linea por categoria en cada cesta (regla del generador), un hueco se regala si
-    su categoria:
+    Con (casi siempre) una linea por categoria en cada cesta, un hueco se regala si su
+    categoria:
 
-    - ya esta en el prefijo del ticket (`en_carrito`): nunca puede acertar;
+    - ya esta en el prefijo del ticket (`en_carrito`): solo acierta si la categoria es de
+      exploracion y lleva una segunda referencia al otro lado del corte (Fase 8);
     - ya aparecio mas arriba en la misma lista (`repetida`): de las dos, como mucho una
       acierta. Se cuenta a partir de la segunda aparicion, y solo si no es ya `en_carrito`,
       para que las dos columnas sumen `regalados`.
@@ -921,7 +922,7 @@ def popularity_baseline(scored: pd.DataFrame) -> pd.Series:
 # Reglas comunes, para que las cifras sean comparables entre si:
 #
 # - Ninguno recomienda una categoria que ya esta en el carrito. Por construccion del
-#   generador (una linea por categoria) esos huecos no pueden acertar. El LambdaRank lo
+#   generador (casi siempre una linea por categoria) esos huecos casi nunca aciertan. El LambdaRank lo
 #   hace con `RerankConfig.exclude_cart_categories` (punto A2).
 # - Los baselines de categoria eligen 5 categorias distintas y una referencia en cada
 #   una; los de producto pueden repetir categoria.

@@ -48,17 +48,68 @@ class _Timer:
 
 
 def _expected_affinity_pairs() -> list[tuple[str, str, float]]:
-    """Los 10 pares de `DATA_SPEC.md`, para verificar que estan en el dato.
+    """Los complementos de `DATA_SPEC.md`, para verificar que estan en el dato.
 
-    Se leen del catalogo del generador, que es la fuente de verdad de esa tabla. Es la
-    unica dependencia del ETL con la Fase 1, y es de verificacion, no de transformacion:
-    si el generador no esta disponible, el informe simplemente se omite.
+    Se leen del catalogo del generador, que es la fuente de verdad de esa tabla: los 10
+    pares originales y, desde la Fase 8, la ampliacion (`COMPLEMENT_PAIRS`). Es la unica
+    dependencia del ETL con la Fase 1, y es de verificacion, no de transformacion: si el
+    generador no esta disponible, el informe simplemente se omite.
     """
     try:
-        from data_generation.catalog import AFFINITY_PAIRS
+        from data_generation import catalog
     except Exception:  # noqa: BLE001 - el ETL debe funcionar sin el generador
         return []
-    return [(a, b, float(lift)) for a, b, lift in AFFINITY_PAIRS]
+    pairs = getattr(catalog, "COMPLEMENT_PAIRS", None)
+    if pairs is None:
+        return [(a, b, float(lift)) for a, b, lift in catalog.AFFINITY_PAIRS]
+    return [(a, b, float(lift)) for a, b, lift, _ in pairs]
+
+
+# Umbrales de lift del resumen global de `affinity_category` (punto A5 del diagnostico:
+# antes de la Fase 8 solo 40 pares ordenados pasaban de 1,5).
+LIFT_THRESHOLDS = (1.2, 1.5, 3.0)
+
+
+def affinity_structure_lines(affinity_category: DataFrame, top: int = 20) -> list[str]:
+    """Resumen global de `affinity_category`: cuantos pares superan cada umbral de lift.
+
+    Es el lift crudo, el mismo que consume el recomendador. Con cestas de tamano muy
+    variable, el lift crudo sube para casi cualquier par (en una compra semanal esta casi
+    todo); el lift controlado por tamano, que separa las dos cosas, lo calcula
+    `python -m data_generation.verify_dataset` (`coocurrencia_de_categorias`).
+    """
+    pdf = affinity_category.select("antecedent", "consequent", "lift", "support").toPandas()
+    n = len(pdf)
+    lines = [
+        "## Estructura global de `affinity_category`",
+        "",
+        f"Pares ordenados con soporte suficiente: **{n:,}**.".replace(",", "."),
+        "",
+        "| Umbral | Pares con lift por encima | % |",
+        "| --- | ---: | ---: |",
+    ]
+    for t in LIFT_THRESHOLDS:
+        k = int((pdf["lift"] > t).sum())
+        lines.append(f"| lift > {t:.1f} | {k:,} | {k / max(n, 1):.1%} |".replace(",", "."))
+    k = int((pdf["lift"] < 0.8).sum())
+    lines.append(f"| lift < 0.8 | {k:,} | {k / max(n, 1):.1%} |".replace(",", "."))
+    lines += [
+        "",
+        f"Mediana del lift: {pdf['lift'].median():.2f}. El lift crudo mezcla la afinidad con "
+        "el tamano de la cesta; el controlado por tamano esta en "
+        "`python -m data_generation.verify_dataset` (seccion `coocurrencia_de_categorias`).",
+        "",
+        f"### Los {top} pares de mas lift",
+        "",
+        "| Antecedente | Consecuente | Lift | Soporte |",
+        "| --- | --- | ---: | ---: |",
+    ]
+    best = pdf.sort_values(["lift", "antecedent", "consequent"], ascending=[False, True, True])
+    for r in best.head(top).itertuples():
+        lines.append(
+            f"| {r.antecedent} | {r.consequent} | {r.lift:.2f} | {100 * r.support:.2f} % |"
+        )
+    return lines
 
 
 def build_features(
@@ -87,6 +138,7 @@ def _write_reports(
     trust_raw: TrustReport,
     trust_clean: TrustReport,
     expected_pairs: DataFrame | None,
+    affinity_category: DataFrame | None = None,
 ) -> None:
     """Vuelca los informes de la fase en Markdown y JSON."""
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -110,25 +162,38 @@ def _write_reports(
     )
 
     if expected_pairs is not None:
-        rows = expected_pairs.collect()
-        lines = [
-            "# Afinidad de cesta: pares esperados de DATA_SPEC.md",
-            "",
-            "| Disparadora | Asociada | Lift objetivo | Lift medido | Soporte | Confianza | Medido/objetivo |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
-        ]
-        for r in rows:
-            lift = "n/d" if r["lift"] is None else f"{r['lift']:.2f}"
-            sup = "n/d" if r["support"] is None else f"{100 * r['support']:.2f} %"
-            conf = "n/d" if r["confidence"] is None else f"{100 * r['confidence']:.2f} %"
-            ratio = "n/d" if r["ratio_vs_target"] is None else f"{r['ratio_vs_target']:.2f}x"
-            lines.append(
-                f"| {r['antecedent']} | {r['consequent']} | {r['target_lift']:.1f} | "
-                f"{lift} | {sup} | {conf} | {ratio} |"
-            )
-        (reports_dir / "affinity_expected_pairs.md").write_text(
-            "\n".join(lines) + "\n", encoding="utf-8"
+        write_affinity_report(reports_dir, expected_pairs, affinity_category)
+
+
+def write_affinity_report(
+    reports_dir: Path, expected_pairs: DataFrame, affinity_category: DataFrame | None
+) -> None:
+    """`affinity_expected_pairs.md`: los complementos de DATA_SPEC.md y la estructura global."""
+    rows = expected_pairs.collect()
+    lines = [
+        "# Afinidad de cesta: pares esperados de DATA_SPEC.md",
+        "",
+        "Generado por `python -m src.etl.run_etl`. Desde la Fase 8, \"lift objetivo\" es la "
+        "fuerza nominal del par y el lift medido es el crudo de `affinity_category`, que "
+        "sube con el tamano de la cesta (ver `DATA_SPEC.md`, \"Afinidad de cesta\").",
+        "",
+        "| Disparadora | Asociada | Lift objetivo | Lift medido | Soporte | Confianza | Medido/objetivo |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for r in rows:
+        lift = "n/d" if r["lift"] is None else f"{r['lift']:.2f}"
+        sup = "n/d" if r["support"] is None else f"{100 * r['support']:.2f} %"
+        conf = "n/d" if r["confidence"] is None else f"{100 * r['confidence']:.2f} %"
+        ratio = "n/d" if r["ratio_vs_target"] is None else f"{r['ratio_vs_target']:.2f}x"
+        lines.append(
+            f"| {r['antecedent']} | {r['consequent']} | {r['target_lift']:.1f} | "
+            f"{lift} | {sup} | {conf} | {ratio} |"
         )
+    if affinity_category is not None:
+        lines += ["", *affinity_structure_lines(affinity_category)]
+    (reports_dir / "affinity_expected_pairs.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
 
 
 def run(
@@ -171,7 +236,14 @@ def run(
         write_processed(features, out_dir, engine=engine)
         timer.step(f"Escritura en {out_dir}")
 
-    _write_reports(reports_dir, cleaning, trust_raw, trust_clean, expected)
+    _write_reports(
+        reports_dir,
+        cleaning,
+        trust_raw,
+        trust_clean,
+        expected,
+        features["affinity_category"],
+    )
     timer.step(f"Informes en {reports_dir}")
 
     return {

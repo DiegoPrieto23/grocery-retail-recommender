@@ -334,12 +334,33 @@ def _policy_summary(comparison: list[dict]) -> tuple[float, float, float]:
     return policy["valor_total"], policy["valor_total"] - best_trivial, policy["pct_accion"]
 
 
-def _baseline_section(cfg: NBAConfig, result: dict[str, object]) -> str:
-    """Comparacion con la Fase 4 original, si la referencia congelada esta disponible."""
-    path = Path(cfg.reports_dir) / BASELINE_FILENAME
+def _baseline_section(
+    cfg: NBAConfig,
+    result: dict[str, object],
+    *,
+    filename: str = BASELINE_FILENAME,
+    old_label: str = "Fase 4",
+    new_label: str = "Fase 7d",
+    title: str = "Frente a la Fase 4 original",
+    intro: str = (
+        "La Fase 4 se entreno sobre el dataset anterior a la Fase 7a (1.500 productos, sin "
+        "fidelidad de marca)."
+    ),
+) -> str:
+    """Comparacion con una referencia congelada, si esta disponible.
+
+    Sirve para la Fase 4 original (`baseline_fase4.json`, que es el `metrics.json` tal
+    cual) y para el dataset anterior a la Fase 8 (`baseline_pre_fase8.json`, que lo
+    envuelve en `metrics` junto con la huella del dataset).
+    """
+    path = Path(cfg.reports_dir) / filename
     if not path.is_file():
         return ""
     base = json.loads(path.read_text(encoding="utf-8"))
+    if "metrics" in base:
+        if base.get("dataset_sha256") == _dataset_fingerprint():
+            return ""  # todavia es el dataset en uso: no hay nada que comparar
+        base = base["metrics"]
     comparison: pd.DataFrame = result["comparison"]  # type: ignore[assignment]
     old_value, old_gap, old_pct = _policy_summary(base["comparison"])
     new_value, new_gap, new_pct = _policy_summary(comparison.to_dict(orient="records"))
@@ -377,23 +398,48 @@ def _baseline_section(cfg: NBAConfig, result: dict[str, object]) -> str:
 
     return "\n".join(
         [
-            "## Frente a la Fase 4 original",
+            f"## {title}",
             "",
-            "La Fase 4 se entreno sobre el dataset anterior a la Fase 7a (1.500 productos, sin "
-            "fidelidad de marca). Sus cifras estan congeladas en "
-            f"`{Path(cfg.reports_dir).as_posix()}/{BASELINE_FILENAME}`. Mismo codigo, mismos "
+            f"{intro} Sus cifras estan congeladas en "
+            f"`{Path(cfg.reports_dir).as_posix()}/{filename}`. Mismo codigo, mismos "
             "cortes y mismos supuestos; cambia el dato.",
             "",
-            "| Metrica | Fase 4 (dataset viejo) | Fase 7d (dataset nuevo) |",
+            f"| Metrica | {old_label} (dataset viejo) | {new_label} (dataset nuevo) |",
             "| --- | ---: | ---: |",
             *metric_lines,
             "",
-            "### Barrido de `churn_reduction`",
+            f"### Barrido de `churn_reduction` ({old_label} frente a {new_label})",
             "",
-            "| reduccion_churn | valor Fase 4 | valor Fase 7d | cupones Fase 4 | cupones Fase 7d |",
+            f"| reduccion_churn | valor {old_label} | valor {new_label} | cupones {old_label} "
+            f"| cupones {new_label} |",
             "| ---: | ---: | ---: | ---: | ---: |",
             *sweep_lines,
         ]
+    )
+
+
+PRE_FASE8_FILENAME = "baseline_pre_fase8.json"
+
+
+def _dataset_fingerprint(manifest: Path = Path("data/raw/manifest.json")) -> dict | None:
+    """Hashes de las 7 tablas del dataset en uso (ver `recommender.pipeline`)."""
+    if not manifest.is_file():
+        return None
+    return json.loads(manifest.read_text(encoding="utf-8"))["sha256"]
+
+
+def _pre_fase8_section(cfg: NBAConfig, result: dict[str, object]) -> str:
+    return _baseline_section(
+        cfg,
+        result,
+        filename=PRE_FASE8_FILENAME,
+        old_label="Fase 7d",
+        new_label="Fase 8",
+        title="Frente al dataset anterior a la Fase 8",
+        intro=(
+            "La Fase 8 regenera el dataset con misiones de compra, cestas con cola larga, "
+            "sustitucion entre categorias y propension a la marca blanca."
+        ),
     )
 
 
@@ -526,6 +572,8 @@ el cupon no retiene a nadie.
 
 Lo que **no** es un supuesto es el reparto: con los efectos fijados, toda la diferencia
 entre la politica y "actuar siempre" viene de acertar a quien, y eso es merito del modelo.
+
+{_pre_fase8_section(cfg, result)}
 
 {_baseline_section(cfg, result)}
 

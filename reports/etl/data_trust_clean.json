@@ -550,7 +550,7 @@
       "dimension": "completeness",
       "name": "basket_id_not_null",
       "description": "`basket_id` informada",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -560,7 +560,7 @@
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -570,7 +570,7 @@
       "dimension": "completeness",
       "name": "quantity_not_null",
       "description": "`quantity` informada",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -580,7 +580,7 @@
       "dimension": "completeness",
       "name": "unit_price_paid_not_null",
       "description": "`unit_price_paid` informada",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -590,7 +590,7 @@
       "dimension": "uniqueness",
       "name": "no_duplicate_rows",
       "description": "Sin filas duplicadas exactas",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -600,7 +600,7 @@
       "dimension": "uniqueness",
       "name": "basket_product_unique",
       "description": "Una sola linea por cesta y producto",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -610,7 +610,7 @@
       "dimension": "validity",
       "name": "quantity_positive",
       "description": "`quantity` mayor que 0",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -620,7 +620,7 @@
       "dimension": "validity",
       "name": "unit_price_paid_positive",
       "description": "`unit_price_paid` mayor que 0",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -630,7 +630,7 @@
       "dimension": "consistency",
       "name": "promo_active_on_basket_date",
       "description": "La promocion aplicada estaba vigente el dia de la cesta",
-      "rows_total": 155937,
+      "rows_total": 208961,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -640,7 +640,7 @@
       "dimension": "integrity",
       "name": "basket_id_fk",
       "description": "`basket_id` existe en `basket_id`",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -650,7 +650,7 @@
       "dimension": "integrity",
       "name": "product_id_fk",
       "description": "`product_id` existe en `product_id`",
-      "rows_total": 3057825,
+      "rows_total": 4292495,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -660,7 +660,7 @@
       "dimension": "integrity",
       "name": "promotion_id_fk",
       "description": "`promotion_id` existe en `promotion_id`",
-      "rows_total": 155937,
+      "rows_total": 208961,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -740,7 +740,7 @@
       "dimension": "integrity",
       "name": "customer_id_fk",
       "description": "`customer_id` existe en `customer_id`",
-      "rows_total": 115340,
+      "rows_total": 115350,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -760,7 +760,7 @@
       "dimension": "completeness",
       "name": "session_id_not_null",
       "description": "`session_id` informada",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -770,7 +770,7 @@
       "dimension": "completeness",
       "name": "product_id_not_null",
       "description": "`product_id` informada",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -780,7 +780,7 @@
       "dimension": "completeness",
       "name": "event_type_not_null",
       "description": "`event_type` informada",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -790,7 +790,7 @@
       "dimension": "completeness",
       "name": "event_timestamp_not_null",
       "description": "`event_timestamp` informada",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -800,7 +800,7 @@
       "dimension": "uniqueness",
       "name": "no_duplicate_rows",
       "description": "Sin filas duplicadas exactas",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -810,7 +810,7 @@
       "dimension": "validity",
       "name": "event_type_domain",
       "description": "`event_type` en view/add_to_cart",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -820,7 +820,7 @@
       "dimension": "consistency",
       "name": "event_after_session_start",
       "description": "El evento no es anterior al inicio de su sesion",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -830,7 +830,7 @@
       "dimension": "integrity",
       "name": "session_id_fk",
       "description": "`session_id` existe en `session_id`",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true
@@ -840,7 +840,7 @@
       "dimension": "integrity",
       "name": "product_id_fk",
       "description": "`product_id` existe en `product_id`",
-      "rows_total": 897595,
+      "rows_total": 1106140,
       "rows_failed": 0,
       "pass_rate": 1.0,
       "passed": true

@@ -1,0 +1,134 @@
+{
+  "supuestos": {
+    "incrementalidad": 0.1,
+    "margen_por_departamento": {
+      "Frescos": 0.18,
+      "Bebe": 0.2,
+      "Congelados": 0.22,
+      "Bebidas": 0.24,
+      "Despensa": 0.25,
+      "Mascotas": 0.3,
+      "Drogueria": 0.35,
+      "Higiene": 0.35
+    },
+    "margen_por_defecto": 0.25,
+    "oleadas_nba_ano": 12
+  },
+  "medido": {
+    "meses": 24,
+    "cestas": 600174,
+    "cestas_mes": 25007.25,
+    "cestas_online": 327624,
+    "cestas_online_mes": 13651.0,
+    "lineas": 3057825,
+    "importe_medio_linea": 5.622490306018171,
+    "lineas_por_cesta": 5.094897479730878,
+    "clientes_con_compras": 19225,
+    "venta_por_departamento": {
+      "Bebe": 696514.94,
+      "Bebidas": 1596789.21,
+      "Congelados": 1499834.82,
+      "Despensa": 3541890.78,
+      "Drogueria": 1381564.19,
+      "Frescos": 5774435.61,
+      "Higiene": 1779820.23,
+      "Mascotas": 921741.64
+    },
+    "margen_bruto_mezclado": 0.24198645224362572
+  },
+  "cross_sell": {
+    "simulado": {
+      "cestas_online_mes": 13651.0,
+      "hit_rate_modelo": 0.5415555555555556,
+      "hit_rate_baseline": 0.27005555555555555,
+      "delta_hit_rate": 0.2715,
+      "mejora_relativa": 1.0053486936844271,
+      "incrementalidad": 0.1,
+      "cestas_con_acierto_nuevo_mes": 3706.2465,
+      "unidades_extra_mes": 370.62465000000003,
+      "venta_extra_mes": 2083.8335017963777,
+      "margen_extra_mes": 504.25947616611654,
+      "margen_extra_ano": 6051.113713993398
+    },
+    "por_100000_cestas_online_mes": {
+      "cestas_online_mes": 100000,
+      "hit_rate_modelo": 0.5415555555555556,
+      "hit_rate_baseline": 0.27005555555555555,
+      "delta_hit_rate": 0.2715,
+      "mejora_relativa": 1.0053486936844271,
+      "incrementalidad": 0.1,
+      "cestas_con_acierto_nuevo_mes": 27150.000000000004,
+      "unidades_extra_mes": 2715.0000000000005,
+      "venta_extra_mes": 15265.061180839337,
+      "margen_extra_mes": 3693.937998433203,
+      "margen_extra_ano": 44327.25598119844
+    },
+    "barrido_incrementalidad": [
+      {
+        "incrementalidad": 0.02,
+        "unidades_extra_mes": 543.0000000000001,
+        "venta_extra_mes": 3053.0122361678673,
+        "margen_extra_mes": 738.7875996866405,
+        "margen_extra_ano": 8865.451196239686
+      },
+      {
+        "incrementalidad": 0.05,
+        "unidades_extra_mes": 1357.5000000000002,
+        "venta_extra_mes": 7632.530590419668,
+        "margen_extra_mes": 1846.9689992166016,
+        "margen_extra_ano": 22163.62799059922
+      },
+      {
+        "incrementalidad": 0.1,
+        "unidades_extra_mes": 2715.0000000000005,
+        "venta_extra_mes": 15265.061180839337,
+        "margen_extra_mes": 3693.937998433203,
+        "margen_extra_ano": 44327.25598119844
+      },
+      {
+        "incrementalidad": 0.2,
+        "unidades_extra_mes": 5430.000000000001,
+        "venta_extra_mes": 30530.122361678674,
+        "margen_extra_mes": 7387.875996866406,
+        "margen_extra_ano": 88654.51196239688
+      },
+      {
+        "incrementalidad": 0.3,
+        "unidades_extra_mes": 8145.000000000001,
+        "venta_extra_mes": 45795.183542518,
+        "margen_extra_mes": 11081.813995299608,
+        "margen_extra_ano": 132981.7679435953
+      }
+    ]
+  },
+  "nba": {
+    "simulado": {
+      "clientes": 18729,
+      "valor_politica_oleada": 3937.560431361225,
+      "valor_mejor_trivial_oleada": 907.0725020823386,
+      "valor_suelo_oleada": 1188.634170427661,
+      "uplift_vs_trivial_oleada": 3030.4879292788864,
+      "valor_por_cliente_oleada": 0.2102386903391118,
+      "oleadas_ano": 12,
+      "valor_ano": 47250.7251763347,
+      "valor_suelo_ano": 14263.610045131933
+    },
+    "por_100000_clientes": {
+      "clientes": 100000,
+      "valor_politica_oleada": 21023.869033911178,
+      "valor_mejor_trivial_oleada": 4843.144332758495,
+      "valor_suelo_oleada": 6346.490311429659,
+      "uplift_vs_trivial_oleada": 16180.724701152683,
+      "valor_por_cliente_oleada": 0.21023869033911177,
+      "oleadas_ano": 12,
+      "valor_ano": 252286.42840693414,
+      "valor_suelo_ano": 76157.8837371559
+    }
+  },
+  "total_por_referencia": {
+    "margen_cross_sell_mes": 3693.937998433203,
+    "valor_nba_mes": 21023.869033911178,
+    "total_mes": 24717.807032344383,
+    "total_ano": 296613.6843881326
+  }
+}

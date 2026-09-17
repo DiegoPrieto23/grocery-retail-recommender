@@ -163,9 +163,10 @@ class RankerConfig:
 class RerankConfig:
     """Reglas que se aplican sobre el orden del ranker antes de cortar el top-k (punto A2).
 
-    Por construccion del generador una cesta lleva una sola linea por categoria, asi que
-    un segundo producto de la misma categoria en el top-k, o uno de una categoria que ya
-    esta en el carrito, casi nunca puede acertar: son huecos regalados.
+    Por construccion del generador una cesta lleva casi siempre una sola linea por
+    categoria (desde la Fase 8, las de exploracion llevan dos en ~12 % de las veces), asi
+    que un segundo producto de la misma categoria en el top-k, o uno de una categoria que
+    ya esta en el carrito, casi nunca puede acertar: son huecos regalados.
 
     - `max_per_category`: cuantas referencias de una misma categoria caben en el top-k
       (cuota). `None` desactiva la regla.

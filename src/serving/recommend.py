@@ -722,10 +722,18 @@ def _add_session(
 # Puntuacion
 # --------------------------------------------------------------------------------------
 def score_matrix(matrix: pd.DataFrame, bundle: ServingBundle) -> pd.DataFrame:
-    """Puntua con el booster y devuelve la matriz con la columna `score`."""
+    """Puntua con el booster y devuelve la matriz con la columna `score`.
+
+    Las features se pasan en **float32**, igual que en el entrenamiento y en la evaluacion
+    (`ranker.collect_for_ranking` las castea en Spark). No es cosmetico: un valor que en
+    float64 cae un epsilon por encima del umbral de un corte del arbol puede caer por
+    debajo al redondear a float32, y la hoja -- y con ella el score -- cambia. Con el
+    dataset de la Fase 8 eso pasaba en 1 de cada 10.000 filas y lo detectaba
+    `tests/test_serving_parity.py`.
+    """
     if matrix.empty:
         return matrix.assign(score=pd.Series(dtype="float64"))
-    features = matrix[list(FEATURE_COLUMNS)].copy()
+    features = matrix[list(FEATURE_COLUMNS)].astype("float32")
     for column in CATEGORICAL_FEATURES:
         features[column] = features[column].astype("int32")
     return matrix.assign(score=bundle.booster.predict(features))

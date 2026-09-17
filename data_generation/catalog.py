@@ -173,6 +173,10 @@ DEPARTMENTS: tuple[str, ...] = (
 # --------------------------------------------------------------------------------------
 # Si ya hay un producto de la categoria disparadora en la cesta, la probabilidad de anadir
 # un producto de la categoria asociada se multiplica por el lift indicado.
+#
+# Los 10 pares originales de la Fase 1. Se conservan con este nombre porque son la tabla
+# historica que verifican el ETL y los tests; la tabla completa desde la Fase 8 es
+# COMPLEMENT_PAIRS, que los incluye.
 AFFINITY_PAIRS: tuple[tuple[str, str, float], ...] = (
     ("Cerveza", "Snacks y aperitivos", 3.0),
     ("Pasta", "Salsa de tomate", 2.5),
@@ -185,6 +189,238 @@ AFFINITY_PAIRS: tuple[tuple[str, str, float], ...] = (
     ("Champu", "Acondicionador", 3.0),
     ("Palomitas de microondas", "Refrescos", 2.0),
 )
+
+_AFFINITY_MOTIVES = (
+    "consumo social",
+    "receta directa",
+    "cesta de bebe",
+    "habito de desayuno",
+    "bocadillo",
+    "desayuno",
+    "maridaje",
+    "rutina de lavado",
+    "rutina de higiene",
+    "noche de peli",
+)
+
+# Tabla completa de complementos (Fase 8, punto A5): (disparadora, asociada, lift
+# objetivo, motivo). Los grupos nuevos cubren desayuno, higiene, mascota y recetas. El
+# lift objetivo es el lift crudo que se quiere medir en `affinity_category`, igual que en
+# la tabla original. Una categoria puede disparar varias asociadas.
+COMPLEMENT_PAIRS: tuple[tuple[str, str, float, str], ...] = (
+    *((t, a, lift, m) for (t, a, lift), m in zip(AFFINITY_PAIRS, _AFFINITY_MOTIVES)),
+    # Desayuno
+    ("Cafe", "Leche", 2.0, "cafe con leche"),
+    ("Galletas", "Leche", 2.0, "desayuno y merienda"),
+    ("Cereales", "Yogur", 2.0, "desayuno"),
+    ("Pan", "Aceite de oliva", 2.0, "tostada"),
+    # Higiene
+    ("Gel de ducha", "Champu", 2.2, "rutina de ducha"),
+    ("Pasta de dientes", "Desodorante", 2.0, "neceser"),
+    ("Papel higienico", "Lejia y limpiadores", 2.0, "limpieza del bano"),
+    # Mascota
+    ("Comida para gato", "Arena para gato", 3.0, "mismo animal"),
+    ("Comida para perro", "Bolsas de basura", 2.0, "paseo del perro"),
+    # Recetas
+    ("Pasta", "Queso", 2.0, "pasta gratinada"),
+    ("Arroz", "Marisco", 2.5, "paella"),
+    ("Legumbres", "Embutido y fiambre", 2.0, "cocido y fabada"),
+    ("Carne de pollo", "Verdura", 2.0, "plato de diario"),
+    ("Harina", "Huevos", 2.5, "reposteria"),
+    ("Harina", "Azucar y edulcorante", 2.5, "reposteria"),
+    ("Aceite de oliva", "Sal y especias", 2.2, "despensa de cocina"),
+    ("Pescado blanco", "Verdura", 2.0, "plato de diario"),
+    # Aperitivo y fiesta
+    ("Pizza congelada", "Refrescos", 2.0, "cena rapida"),
+    ("Cava y espumosos", "Turron y mazapan", 2.5, "Navidad"),
+    ("Carne de ternera", "Cerveza", 2.0, "barbacoa"),
+)
+
+
+# --------------------------------------------------------------------------------------
+# Sustitucion entre categorias (DATA_SPEC.md, "Sustitucion entre categorias (detalle)")
+# --------------------------------------------------------------------------------------
+# Al entrar una categoria del grupo, el peso del resto de categorias del grupo se
+# multiplica por el factor. (nombre, categorias, factor).
+SUBSTITUTION_GROUPS: tuple[tuple[str, tuple[str, ...], float], ...] = (
+    ("Bebida fria", ("Agua", "Refrescos"), 0.35),
+    ("Proteina principal", ("Carne de pollo", "Carne de ternera", "Pescado blanco"), 0.30),
+    ("Limpieza de cocina", ("Lavavajillas", "Lejia y limpiadores"), 0.25),
+    ("Capricho dulce", ("Galletas", "Chocolate y huevos de Pascua"), 0.35),
+    ("Cena congelada", ("Pizza congelada", "Precocinados congelados"), 0.30),
+    ("Picoteo", ("Snacks y aperitivos", "Palomitas de microondas"), 0.35),
+    ("Alcohol de mesa", ("Cerveza", "Vino"), 0.35),
+)
+
+
+# --------------------------------------------------------------------------------------
+# Misiones de compra (DATA_SPEC.md, "Misiones de compra (detalle)")
+# --------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Mission:
+    """Motivo latente de una visita: que categorias se llevan y cuantas.
+
+    Attributes:
+        name: Identificador de la mision.
+        base_share: Peso de partida de la mision antes de ajustarlo por cliente, dia y mes.
+        size_mean: Media de categorias distintas *ademas de la primera* (la cesta tiene
+            `1 + BinomialNegativa(size_mean x factor, size_dispersion)`).
+        size_dispersion: Parametro `r` de la binomial negativa: cuanto mas bajo, mas cola.
+        core: Multiplicador del peso de las categorias nucleo de la mision.
+        leak: Multiplicador del resto de categorias. Nunca 0: en una visita a por pan
+            tambien cae alguna otra cosa.
+        month_factor: Multiplicador de `base_share` por mes (los que no aparecen, 1).
+    """
+
+    name: str
+    base_share: float
+    size_mean: float
+    size_dispersion: float
+    core: tuple[tuple[str, float], ...]
+    leak: float
+    month_factor: tuple[tuple[int, float], ...] = ()
+
+
+_STOCK_UP_DEPARTMENTS = ("Despensa", "Drogueria", "Higiene")
+_TREATS = (
+    "Snacks y aperitivos",
+    "Chocolate y huevos de Pascua",
+    "Helados",
+    "Palomitas de microondas",
+    "Galletas",
+)
+
+MISSIONS: tuple[Mission, ...] = (
+    Mission(
+        "compra_semanal",
+        base_share=0.12,
+        size_mean=15.0,
+        size_dispersion=4.0,
+        core=(),  # se rellena abajo: todas las categorias, con acopio y caprichos
+        leak=1.0,
+    ),
+    Mission(
+        "reposicion",
+        base_share=0.36,
+        size_mean=2.5,
+        size_dispersion=2.0,
+        core=(
+            ("Pan", 3.0), ("Leche", 3.0), ("Fruta", 2.5), ("Verdura", 2.5),
+            ("Huevos", 2.0), ("Yogur", 2.0), ("Agua", 1.5), ("Embutido y fiambre", 1.5),
+        ),
+        leak=0.2,
+    ),
+    Mission(
+        "desayuno",
+        base_share=0.10,
+        size_mean=3.2,
+        size_dispersion=3.0,
+        core=(
+            ("Leche", 3.0), ("Cafe", 3.0), ("Cereales", 3.0), ("Galletas", 2.5),
+            ("Zumos", 2.5), ("Yogur", 2.0), ("Pan", 2.0), ("Azucar y edulcorante", 2.0),
+            ("Fruta", 1.2), ("Huevos", 1.2),
+        ),
+        leak=0.15,
+    ),
+    Mission(
+        "limpieza_hogar",
+        base_share=0.09,
+        size_mean=3.5,
+        size_dispersion=3.0,
+        core=(
+            ("Detergente", 3.0), ("Suavizante", 3.0), ("Lavavajillas", 3.0),
+            ("Lejia y limpiadores", 3.0), ("Limpiacristales", 3.0), ("Bolsas de basura", 3.0),
+            ("Papel higienico", 2.5), ("Gel de ducha", 2.0), ("Champu", 2.0),
+            ("Acondicionador", 2.0), ("Pasta de dientes", 2.0), ("Desodorante", 2.0),
+            ("Higiene femenina", 1.5),
+        ),
+        leak=0.15,
+    ),
+    Mission(
+        "cena_aperitivo",
+        base_share=0.15,
+        size_mean=4.0,
+        size_dispersion=3.0,
+        core=(
+            ("Pizza congelada", 3.0), ("Precocinados congelados", 3.0),
+            ("Snacks y aperitivos", 3.0), ("Cerveza", 3.0), ("Vino", 2.5), ("Queso", 2.5),
+            ("Embutido y fiambre", 2.5), ("Refrescos", 2.5),
+            ("Palomitas de microondas", 2.5), ("Pan", 2.0), ("Helados", 2.0),
+            ("Conservas de pescado", 1.5),
+        ),
+        leak=0.2,
+    ),
+    Mission(
+        "bebe",
+        base_share=0.22,  # solo en hogares con bebe
+        size_mean=3.0,
+        size_dispersion=3.0,
+        core=(
+            ("Panales", 4.0), ("Toallitas humedas", 4.0), ("Leche infantil", 4.0),
+            ("Potitos", 4.0), ("Fruta", 1.5), ("Yogur", 1.5), ("Leche", 1.2),
+            ("Gel de ducha", 1.2),
+        ),
+        leak=0.2,
+    ),
+    Mission(
+        "fiesta",
+        base_share=0.02,
+        size_mean=7.0,
+        size_dispersion=3.0,
+        core=(
+            ("Cerveza", 3.5), ("Snacks y aperitivos", 3.5), ("Carne de ternera", 3.0),
+            ("Carne de pollo", 3.0), ("Refrescos", 3.0), ("Cava y espumosos", 3.0),
+            ("Turron y mazapan", 3.0), ("Marisco", 3.0), ("Vino", 2.5), ("Agua", 2.0),
+            ("Pan", 2.0), ("Embutido y fiambre", 2.0), ("Queso", 2.0), ("Helados", 2.0),
+        ),
+        leak=0.2,
+        month_factor=((6, 3.0), (7, 3.0), (8, 3.0), (9, 3.0), (12, 4.0)),
+    ),
+)
+
+MISSION_NAMES: tuple[str, ...] = tuple(m.name for m in MISSIONS)
+
+# Ajustes de la probabilidad de mision (ver `mission_affinity` en el generador).
+MISSION_DIRICHLET_CONCENTRATION = 20.0
+WEEKLY_SHOP_WEEKEND_FACTOR = 1.6  # viernes y sabado
+WEEKLY_SHOP_ONLINE_FACTOR = 1.5  # app y web
+
+# Tope de categorias distintas por cesta (antes: 20 lineas, con una por categoria).
+MAX_CATEGORIES_PER_BASKET = 50
+
+
+def mission_profiles() -> "list[list[float]]":
+    """Matriz mision x categoria con el multiplicador de cada categoria en cada mision."""
+    idx = category_index()
+    rows = []
+    for mission in MISSIONS:
+        row = [mission.leak] * len(CATEGORIES)
+        if mission.name == "compra_semanal":
+            for i, c in enumerate(CATEGORIES):
+                if c.department in _STOCK_UP_DEPARTMENTS:
+                    row[i] = 1.3
+                if c.name in _TREATS:
+                    row[i] = 0.8
+        for name, mult in mission.core:
+            row[idx[name]] = mult
+        rows.append(row)
+    return rows
+
+
+# --------------------------------------------------------------------------------------
+# Varias referencias por categoria y marca blanca (Fase 8, punto M2)
+# --------------------------------------------------------------------------------------
+# Probabilidad de que, al salir una categoria de la banda de exploracion, entre ademas una
+# segunda referencia distinta de la misma categoria. En las de habito es 0.
+SECOND_REFERENCE_PROB = 0.12
+
+# Dispersion del multiplicador de marca blanca por cliente: rho ~ LogNormal(0, sigma).
+PRIVATE_LABEL_PROPENSITY_SIGMA = 0.8
+
+
+def second_reference_prob(category: "Category") -> float:
+    """Probabilidad de segunda referencia en la cesta para una categoria."""
+    return SECOND_REFERENCE_PROB if loyalty_band(category) == "exploracion" else 0.0
 
 
 # --------------------------------------------------------------------------------------
@@ -213,14 +449,38 @@ SEASONALITY: tuple[tuple[str, tuple[int, ...], float], ...] = (
 #
 #     multiplicador aplicado = 1 + (lift objetivo - 1) * AFFINITY_CALIBRATION
 #
-# El valor esta ajustado empiricamente para que el lift medido por
-# `data_generation/verify_dataset.py` aterrice en el objetivo de la tabla.
+# El valor se ajusto empiricamente en la Fase 1 para que el lift medido por
+# `data_generation/verify_dataset.py` aterrizara en el objetivo de la tabla. Desde la
+# Fase 8 no se toca: con misiones y cola larga de tamano, el lift crudo ya no depende solo
+# del par, y el objetivo pasa a ser la fuerza nominal del par (DATA_SPEC.md, "Afinidad
+# de cesta").
 AFFINITY_CALIBRATION = 3.8
 
 
 def applied_affinity_lift(target_lift: float) -> float:
     """Multiplicador interno que hay que aplicar para observar `target_lift` en la cesta."""
     return 1.0 + (target_lift - 1.0) * AFFINITY_CALIBRATION
+
+
+def interaction_matrix() -> "list[list[float]]":
+    """Matriz categoria x categoria que se aplica al peso cuando sale una categoria.
+
+    Fila = categoria que acaba de entrar en la cesta; columna = categoria afectada. Recoge
+    los complementos (`applied_affinity_lift`, mayor que 1) y los sustitutos (factor del
+    grupo, menor que 1). Es lo unico que el generador hace entre sorteo y sorteo, y lo que
+    reproduce el oraculo del recomendador.
+    """
+    idx = category_index()
+    n = len(CATEGORIES)
+    m = [[1.0] * n for _ in range(n)]
+    for trigger, associated, lift, _motive in COMPLEMENT_PAIRS:
+        m[idx[trigger]][idx[associated]] *= applied_affinity_lift(lift)
+    for _name, members, factor in SUBSTITUTION_GROUPS:
+        for a in members:
+            for b in members:
+                if a != b:
+                    m[idx[a]][idx[b]] *= factor
+    return m
 
 
 # --------------------------------------------------------------------------------------
@@ -327,6 +587,32 @@ def validate_catalog() -> None:
                 f"{c.name!r}: loyalty={c.loyalty} fuera de las bandas declaradas "
                 f"{EXPLORATORY_LOYALTY_BAND} (exploracion) y {HABIT_LOYALTY_BAND} (habito)"
             )
+
+    for trigger, associated, lift, _motive in COMPLEMENT_PAIRS:
+        for name in (trigger, associated):
+            if name not in names:
+                raise ValueError(f"COMPLEMENT_PAIRS referencia categoria inexistente: {name!r}")
+        if trigger == associated or lift <= 1.0:
+            raise ValueError(f"Complemento invalido: {trigger!r} -> {associated!r} ({lift})")
+    pairs = [(t, a) for t, a, _, _ in COMPLEMENT_PAIRS]
+    if len(set(pairs)) != len(pairs):
+        raise ValueError("Hay pares repetidos en COMPLEMENT_PAIRS")
+
+    for group, members, factor in SUBSTITUTION_GROUPS:
+        if len(members) < 2 or not 0.0 < factor < 1.0:
+            raise ValueError(f"Grupo de sustitucion invalido: {group!r}")
+        for name in members:
+            if name not in names:
+                raise ValueError(f"SUBSTITUTION_GROUPS referencia categoria inexistente: {name!r}")
+
+    for mission in MISSIONS:
+        if mission.leak <= 0 or mission.size_mean <= 0 or mission.size_dispersion <= 0:
+            raise ValueError(f"Mision {mission.name!r}: leak, media y dispersion deben ser > 0")
+        for name, mult in mission.core:
+            if name not in names or mult <= 0:
+                raise ValueError(f"Mision {mission.name!r}: categoria o peso invalido {name!r}")
+    if len(set(MISSION_NAMES)) != len(MISSIONS):
+        raise ValueError("Hay misiones con el mismo nombre")
 
     for name, months, _mult in SEASONALITY:
         if name not in names:

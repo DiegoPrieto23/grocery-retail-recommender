@@ -78,8 +78,8 @@ como "devoluciones mal codificadas", que admite dos lecturas: o son devoluciones
 apuntadas donde no toca, o son ventas normales a las que se les invirtió el signo.
 
 **Evidencia.** Una devolución real tiene enfrente la venta original que anula. De las
-12.314 líneas negativas, sólo 386 tienen una línea positiva del mismo producto en la misma
-cesta — y esas 386 se explican solas por el mecanismo de duplicados (ver abajo). El 97 %
+17.253 líneas negativas, sólo 518 tienen una línea positiva del mismo producto en la misma
+cesta — y esas 518 se explican solas por el mecanismo de duplicados (ver abajo). El 97 %
 restante no anula nada: son ventas mal firmadas.
 
 **Regla.** Se corrige el signo y se marca en `quantity_sign_corrected`. Descartarlas
@@ -119,7 +119,7 @@ con una cualquiera: el flag saldría distinto en cada ejecución.
 
 ### `baskets` — el importe se recalcula
 
-**Problema.** `total_amount` no cuadra con la suma de sus líneas en el 9,4 % de los
+**Problema.** `total_amount` no cuadra con la suma de sus líneas en el 12,2 % de los
 tickets, por tres motivos a la vez: líneas duplicadas, cantidades negativas y un 0,2 % de
 importes multiplicados por 20-60x (los outliers inyectados).
 
@@ -128,13 +128,20 @@ limpias**, tal y como pide `DATA_SPEC.md`. El importe original se guarda en
 `total_amount_raw`.
 
 **Por qué recalcular en vez de filtrar outliers.** Un filtro por IQR sobre `total_amount`,
-incluso con la valla de valores extremos (`Q3 + 3·IQR` sobre el crudo), marca 3.477 cestas
-(0,58 %) cuando los outliers inyectados son 1.192 (0,2 %): dos de cada tres serían cestas
-grandes perfectamente legítimas. Con la valla habitual de `1,5·IQR` serían 20.018. El recálculo no necesita adivinar,
-porque el dato correcto está en el detalle del ticket.
+incluso con la valla de valores extremos (`Q3 + 3·IQR` sobre el crudo), marca **21.318
+cestas (3,55 %)** cuando los outliers inyectados son 1.208 (0,2 %): 17 de cada 18 serían
+cestas grandes perfectamente legítimas. Con la valla habitual de `1,5·IQR` serían 53.444
+(8,9 %). El recálculo no necesita adivinar, porque el dato correcto está en el detalle del
+ticket.
 
-**Y sale redondo:** después de limpiar las líneas, quedan exactamente **1.192 cestas**
-(0,199 %) cuya cabecera no cuadra con su detalle — justo los outliers inyectados, ni una
+Desde la Fase 8 el argumento es mucho más fuerte que antes: con el tamaño de cesta de cola
+larga (compras semanales de 30-50 líneas conviviendo con reposiciones de 1-3), la
+distribución del importe tiene una cola legítima enorme, y la valla marcaba 3.477 cestas
+(0,58 %) sobre el dataset anterior frente a estas 21.318. Un umbral estadístico sobre el
+importe no distingue "ticket inflado por un error" de "compra grande del sábado".
+
+**Y sale redondo:** después de limpiar las líneas, quedan exactamente **1.208 cestas**
+(0,201 %) cuya cabecera no cuadra con su detalle — justo los outliers inyectados, ni una
 más. El resto de descuadres los causaban los duplicados y los signos. Se marcan en
 `total_amount_is_outlier` con la regla "la cabecera supera 1,5x el importe recalculado";
 como el multiplicador inyectado es de 20-60x, cualquier corte entre 1,5 y 10 aísla el mismo

@@ -87,6 +87,30 @@ es más pequeño con carrito (2,9 frente a 5,0 productos).
   escrito qué lift se busca y por qué, igual que en la Fase 7a, para no fabricar un
   dataset hecho a medida del modelo.
 
+**Estado (Sesión 6, Fase 8). Hecho.** Siete misiones latentes (`catalog.MISSIONS`: compra
+semanal, reposición, desayuno, limpieza e higiene, cena o aperitivo, bebé y fiesta
+estacional), cada una con su perfil de categorías y su distribución de tamaño; la
+probabilidad de cada misión depende del hogar, del canal, del *gate* de bebé, del día de la
+semana y del mes, y cada cliente tiene su propio reparto (Dirichlet de concentración 20).
+La tabla de complementarios pasa de 10 a **30 pares** (desayuno, higiene, mascota y
+recetas). Los objetivos de co-ocurrencia se escribieron en `DATA_SPEC.md` ("Estructura de
+la cesta: qué co-ocurrencia se busca y por qué") **antes** de tocar el código, y se
+calibraron contra ellos.
+
+Medido sobre el dataset regenerado (`python -m data_generation.verify_dataset`, sección
+`coocurrencia_de_categorias`, congelado en `reports/etl/verify_dataset.json`):
+
+| | Fase 7a | Fase 8 |
+| --- | ---: | ---: |
+| Pares con lift crudo > 1,5 | 40 | **3.372** |
+| Pares con lift controlado por tamaño > 1,5 | 42 | **404** |
+| Mediana del lift crudo | 1,00 | 2,45 |
+
+El lift crudo se dispara porque con cestas de tamaño muy variable *cualquier* par co-ocurre
+más de lo que dicta el azar (en una compra semanal está casi todo). Por eso el objetivo se
+fijó sobre el **lift controlado por tamaño**, que compara cada par dentro de su banda de
+tamaño: ahí se ve la estructura real, 404 pares frente a 42.
+
 ### M1 · La distribución del tamaño de cesta no tiene cola larga — **MEDIA**
 
 **Problema.** El número de líneas es `1 + Poisson(4 · f_hogar · spend)`, recortado a 20.
@@ -103,6 +127,21 @@ luce más.
 **Acción recomendada.** Usar una binomial negativa o una mezcla por misión (punto A5) y
 subir el tope de 20. Validar la forma en `verify_dataset.py`: cuantiles, coeficiente de
 variación y porcentaje de cestas de más de 20 líneas.
+
+**Estado (Sesión 6, Fase 8). Hecho.** El número de categorías de una cesta es
+`1 + BinomialNegativa(media de la misión × factor de hogar y churn, r)`, con tope de 50
+categorías en vez de 20 líneas. `verify_dataset.basket_size` valida la forma:
+
+| | Fase 7a | Fase 8 |
+| --- | ---: | ---: |
+| Líneas por cesta: media | 5,08 | **7,13** |
+| Coeficiente de variación | 0,42 | **1,04** |
+| p50 / p90 / p99 / máximo | 5 / 8 / 11 / 19 | **5 / 17 / 36 / 58** |
+| Cestas de 1 a 3 líneas | 24,6 % | **37,9 %** |
+| Cestas de más de 20 líneas | 0,00 % | **6,6 %** |
+
+Conviven la reposición de 1-3 artículos y la compra semanal de 30-50, que es lo que se
+buscaba.
 
 ### M2 · Sustitución y complementariedad pobres a nivel de producto — **MEDIA**
 
@@ -126,6 +165,24 @@ recomendador de cesta debería aprender.
 de los demás) y permitir con baja probabilidad una segunda referencia en las categorías
 de exploración. Añadir también una propensión a la marca blanca por cliente. Todo ello
 documentado en `DATA_SPEC.md`.
+
+**Estado (Sesión 6, Fase 8). Hecho.** Siete grupos de sustitución
+(`catalog.SUBSTITUTION_GROUPS`: agua/refrescos, pollo/ternera/pescado, lavavajillas/lejía,
+galletas/chocolate, pizza/precocinados, snacks/palomitas y cerveza/vino): al entrar uno, el
+peso del resto del grupo se multiplica por 0,25-0,35. Una segunda referencia distinta entra
+con probabilidad 0,12 en las categorías de la banda de exploración, y nunca en las de
+hábito (**11,9 %** de las categorías de exploración de una cesta acaban con dos
+referencias; el 27,1 % de las cestas tiene alguna). Cada cliente tiene un multiplicador de
+marca blanca `LogNormal(0; 0,8)`: la cuota de marca blanca por cliente pasa de un rango
+p10-p90 de 0,17-0,33 a **0,12-0,44**, con una varianza entre clientes 11 veces la que
+daría el azar (antes 2,2).
+
+Los sustitutos que **no** comparten misión bajan directamente (agua → refrescos, lift
+controlado **0,43**; pollo → pescado **0,47**; chocolate → galletas **0,45**). Los que sí
+la comparten (lavavajillas y lejía están los dos en el núcleo de la misión de limpieza)
+siguen por encima de 1, porque la misión los junta más de lo que el grupo los separa; lo
+que se verifica en ese caso es el contrafactual: el mismo generador sin grupos los deja
+entre 1,8 y 3,2 veces más juntos (`test_la_sustitucion_resta_frente_a_no_tenerla`).
 
 ### Lo que el generador ya hace bien (no tocar sin motivo)
 
@@ -165,6 +222,31 @@ aparte fuera de `data/raw`. Con él se calcula un **oráculo bayesiano**: el top
 categorías por probabilidad real, excluyendo las del prefijo. Hay que reportar el
 porcentaje del techo que alcanza cada sistema. Como el sorteo es secuencial, un
 Monte Carlo sobre esos pesos da el techo esperado.
+
+### Nota de la Fase 8 (Sesión 6)
+
+Los puntos A5, M1 y M2 se implementaron regenerando el dataset, así que **todas las cifras
+de este documento son las del dataset anterior** salvo donde dice "Estado (Sesión 6)". El
+estado completo de entonces está congelado en `snapshots/pre-fase-8/`, y las comparaciones
+antes/después de A1, A2 y A4 viven ahí: los informes vivos solo las pintan cuando el
+snapshot corresponde al dataset en uso.
+
+Lo que la regeneración cambió en los puntos ya cerrados:
+
+- **A3 (baselines).** El mejor baseline ya no es "frecuencia personal × `due_for_repurchase`"
+  (74,9 %) sino las **reglas de asociación** (75,9 % de `cat_hit_rate@5`, el 90,6 % del
+  techo frente al 78,0 % de antes). El LambdaRank les saca +3,61 pp [+3,04, +4,17].
+- **A6 (techo).** El oráculo se reescribió: la carrera de relojes exponenciales no admite
+  sustitutos ni misiones latentes, así que ahora es un muestreo secuencial por importancia
+  (`src/recommender/oracle.py`). Techo de categoría 0,7816 → **0,8382**, y el LambdaRank
+  pasa del 91,9 % al **94,9 %** de ese techo.
+- **A2 (huecos regalados).** Con cestas más grandes, un sistema sin re-ranking regalaría el
+  **31,1 %** de los huecos (antes, 18,2 %): la regla vale más que antes, no menos.
+- **M3 (cortes).** Los cortes por cesta son mucho más informativos: un corte al 25 % de una
+  compra semanal deja 15 productos por adivinar, y el `cat_hit_rate@5` va del 95,1 % al
+  66,4 % según se llena el carrito.
+
+---
 
 ### A3 · Faltan baselines fuertes, y a nivel de categoría el modelo no los supera — **ALTA**
 

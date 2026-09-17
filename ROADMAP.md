@@ -795,6 +795,221 @@ arrancando la demo. Con esto, y con el `README.md` ya actualizado (ver la nota d
       excepciones de Streamlit, 0 errores de JavaScript, las fotos de las tarjetas casan
       con la categoría del producto
 
+## Fase 8 — Estructura de la cesta: misiones, cola larga y sustitución
+
+Puntos **A5**, **M1** y **M2** de `docs/diagnostico-fase7.md`. El diagnóstico dejó claro que
+el generador casi no ponía estructura *dentro* de la cesta: solo 40 de los 3.780 pares de
+categorías tenían lift > 1,5, el tamaño era una Poisson recortada a 20 líneas y cada cesta
+llevaba exactamente una línea por categoría. Con eso, "dado lo que llevo, qué viene
+después" tenía poco que aprender. Como cada regeneración obliga a rehacer las Fases 2-6,
+los tres cambios van juntos en una sola pasada.
+
+Antes de tocar nada se congeló el estado completo en `snapshots/pre-fase-8/` (dataset,
+`data/processed`, oráculo, bundle de la demo, modelos, predicciones e informes), con un
+`MANIFEST.json` de hashes, y las métricas en `baseline_pre_fase8.json` del recomendador,
+del NBA y del impacto. Los tres guardan además los hashes de las 7 tablas del dataset con
+las que se midieron: los informes solo pintan las comparaciones antes/después de A1, A2 y
+A4 cuando el snapshot corresponde al dataset en uso, para no comparar cifras de datasets
+distintos sin darse cuenta.
+
+### 8a — Generador
+
+Hecha. Todo lo que se reporta aquí lo recalcula `python -m data_generation.verify_dataset`
+(secciones `tamano_de_cesta`, `lineas_por_categoria`, `coocurrencia_de_categorias` y
+`propension_marca_blanca`, volcadas en `reports/etl/verify_dataset.json`) y lo fijan seis
+tests nuevos en `tests/test_generate_dataset.py`. El dataset regenerado tiene **nuevos
+`sha256` en `baskets`, `basket_items`, `sessions` y `session_events`**; `products`,
+`customers` y `promotions` salen idénticos, así que la Fase 6a (fotos y catálogo visual)
+no hubo que rehacerla.
+
+- [x] **Misiones de compra como variable latente** (A5)
+      · `catalog.MISSIONS`: 7 misiones (compra semanal, reposición, desayuno, limpieza e
+      higiene, cena o aperitivo, bebé, fiesta estacional), cada una con su perfil de
+      categorías y su distribución de tamaño · la probabilidad de cada misión depende del
+      hogar, del canal, del *gate* de bebé, del día de la semana y del mes, y cada cliente
+      tiene su propio reparto (Dirichlet de concentración 20) · las cestas anónimas usan el
+      reparto medio de la población
+- [x] **Tabla de complementarios ampliada** (A5)
+      · de 10 a **30 pares** (`catalog.COMPLEMENT_PAIRS`): desayuno, higiene, comida de
+      mascota y recetas · una categoría puede disparar varias asociadas
+      (harina → huevos y azúcar) · el multiplicador aplicado no cambia (`AFFINITY_CALIBRATION
+      = 3,8`)
+- [x] **Objetivos escritos antes de tocar el código**
+      · `DATA_SPEC.md`, sección "Estructura de la cesta: qué co-ocurrencia se busca y por
+      qué", con el punto de partida, cómo es una cesta real, los rangos objetivo y lo que
+      no debe moverse · tres objetivos se revisaron **después** de medir (el estimador del
+      lift controlado, la mediana del lift crudo y los sustitutos que comparten misión), y
+      queda escrito por qué en esa misma sección
+- [x] **Tamaño de cesta con cola larga** (M1)
+      · `1 + BinomialNegativa(media de la misión × factor de hogar y churn, r)`, tope de 50
+      categorías en vez de 20 líneas
+
+      | | Fase 7a | Fase 8 | Objetivo |
+      | --- | ---: | ---: | :---: |
+      | Líneas por cesta: media | 5,08 | **7,13** | 7-10 |
+      | Coeficiente de variación | 0,42 | **1,04** | 0,75-1,10 |
+      | p50 / p90 / p99 / máximo | 5 / 8 / 11 / 19 | **5 / 17 / 36 / 58** | p99 30-50 |
+      | Cestas de 1 a 3 líneas | 24,6 % | **37,9 %** | 25-40 % |
+      | Cestas de más de 20 líneas | 0,00 % | **6,6 %** | 4-12 % |
+
+- [x] **Sustitución, segunda referencia y marca blanca** (M2)
+      · 7 grupos de sustitución (`catalog.SUBSTITUTION_GROUPS`, factores 0,25-0,35) ·
+      segunda referencia con probabilidad 0,12 en las categorías de exploración
+      (**11,9 %** de las categorías de exploración de una cesta acaban con dos referencias,
+      0 % en las de hábito) · propensión a marca blanca por cliente `LogNormal(0; 0,8)`:
+      cuota p10-p90 entre clientes **0,12-0,44** (antes 0,17-0,33), con una varianza entre
+      clientes 11 veces la del azar (antes 2,2)
+      · los sustitutos que no comparten misión bajan directamente (agua → refrescos, lift
+      controlado **0,43**; pollo → pescado **0,47**); los que sí la comparten se verifican
+      contra el contrafactual: el mismo generador sin grupos los deja entre 1,8 y 3,2 veces
+      más juntos (`test_la_sustitucion_resta_frente_a_no_tenerla`)
+- [x] **Estructura de la cesta medida** (A5)
+
+      | | Fase 7a | Fase 8 | Objetivo |
+      | --- | ---: | ---: | :---: |
+      | Pares con lift crudo > 1,5 (de 3.782) | 40 | **3.372** | muchos más de 40 |
+      | Pares con lift controlado por tamaño > 1,5 | 42 | **404** | 150-450 |
+      | Mediana del lift crudo | 1,00 | **2,45** | se reporta |
+
+      El lift crudo se dispara porque con cestas de tamaño muy variable *cualquier* par
+      co-ocurre más que por azar: en una compra semanal está casi todo. Por eso el objetivo
+      se fijó sobre el lift **controlado por tamaño** (cada par dentro de su banda de
+      tamaño, ponderando bandas por número de cestas), que es el que dice si hay estructura
+      de verdad. Los dos los publica `reports/etl/affinity_expected_pairs.md` (crudo, desde
+      `affinity_category`) y `verify_dataset` (controlado).
+- [x] **Reproducibilidad byte a byte**
+      · dos ejecuciones completas con `seed = 42` dan los mismos `sha256` en las 7 tablas
+      (`basket_items` `7317aff5…`, `products` `5c180e8a…`) · el registrador del oráculo
+      sigue sin cambiar ni un byte: `export_oracle` valida los hashes contra
+      `data/raw/manifest.json` antes de escribir
+- [x] **Lo que no se ha tocado**
+      · identidad y cadencia del cliente, ciclo de reposición (correlación de rangos
+      spec/observado **0,985**, antes 0,992), fidelidad de marca (cuota de la referencia
+      favorita en hábito **0,839**, dentro de la banda declarada 0,75-0,85), embudo de
+      sesión, estacionalidad y churn progresivo (ratio de frecuencia 0,79 en los que
+      abandonan frente a 0,985 en los activos) · el uplift de promoción observado baja de
+      1,97 a **1,88**: las cestas grandes diluyen el efecto, igual que en la realidad
+
+### 8b — Rehacer la Fase 2 (ETL) sobre el dataset nuevo
+
+Hecha. Se re-ejecuta entera con `python -m src.etl.run_etl` (6 min en local). No hizo falta
+tocar la lógica: el cambio de la 8a no altera el esquema.
+
+- [x] Limpieza, Data Trust Score, RFM, `due_for_repurchase` y afinidad sobre el dataset
+      regenerado
+      · **Data Trust Score 91,38 (C) → 100,00 (A)** (antes 91,42 → 100,00), con las mismas
+      9 de 79 comprobaciones fallando en el crudo · `basket_items` 4.357.007 → 4.292.495
+      tras quitar 64.512 duplicados (1,48 %); 17.253 cantidades negativas corregidas
+      (0,40 %) · `baskets` 1.208 importes recalculados · `affinity_category` **3.782 pares**
+      (antes 3.780: ahora todos los pares llegan al soporte mínimo)
+- [x] **Un hallazgo del ETL que la cola larga hace más fuerte.** La valla de valores
+      extremos sobre `total_amount` (`Q3 + 3·IQR`) pasa de marcar 3.477 cestas (0,58 %) a
+      **21.318 (3,55 %)**, con 1.208 outliers inyectados: 17 de cada 18 serían compras
+      grandes legítimas. Es el argumento de `docs/CLEANING.md` para recalcular el importe
+      desde el detalle en vez de filtrar por umbral, y ahora se ve mucho mejor
+- [x] Publicar el lift medido en `affinity_category`
+      · `reports/etl/affinity_expected_pairs.md` trae los **30 complementos declarados** y
+      una sección nueva de **estructura global**: 3.372 de 3.782 pares ordenados (89,2 %)
+      con lift > 1,5, 1.282 por encima de 3, mediana 2,45 · el matiz del tamaño de cesta y
+      el lift controlado están en `verify_dataset` y en `DATA_SPEC.md`
+
+### 8c — Rehacer la Fase 3 (recomendador)
+
+Hecha. `python -m src.recommender.pipeline` (33 min) y
+`python -m src.recommender.verify_recommender_diagnostics` (6 min, con
+`python -m data_generation.export_oracle` antes, 14 min). Todas las cifras salen de
+`reports/recommender/metrics.md`.
+
+- [x] Reentrenar candidatos y ranker sobre el dataset nuevo
+      · mismo código y mismas ventanas · LambdaRank de **168 árboles** (antes 70), NDCG@5
+      graduada de validación **0,3377** (antes 0,2503) · pool de 141,4 candidatos por cesta
+      con `pool_recall` **77,8 % → 82,5 %**
+- [x] Comparar contra el snapshot pre-Fase 8
+
+      | Métrica | Fase 7 (dataset 7a) | Fase 8 | Cambio |
+      | --- | ---: | ---: | ---: |
+      | NDCG@5 graduada | 0,2148 | **0,3015** | ×1,40 |
+      | `cat_hit_rate@5` | 0,7181 | **0,7954** | +7,73 pp |
+      | `sku_hit_rate@5` | 0,5416 | **0,6157** | +7,41 pp |
+      | F1@5 | 0,1649 | **0,2165** | ×1,31 |
+      | Productos por adivinar (media) | 3,93 | 5,55 | ×1,41 |
+
+      **Cuidado al leerlo:** son cestas distintas de datasets distintos y el target es más
+      grande, así que una parte de la subida es mecánica. Lo que sí es comparable es el
+      **% del techo teórico**, y ahí el LambdaRank pasa del **91,9 % al 94,9 %** en
+      categoría (y del 91,5 % al 92,2 % en SKU).
+- [x] Comprobar que la estructura nueva es aprendible desde la cesta (objetivo de A5)
+      · el perfil 2 (cliente nuevo **con carrito**), que era el peor con diferencia, pasa
+      de **0,4466 a 0,7088** de `cat_hit_rate@5`, y el perfil 4 (recurrente con carrito) de
+      0,6648 a 0,7932 · el baseline de **reglas de asociación** —el que solo mira lo que
+      hay en el carrito— pasa del **78,0 % al 90,6 % del techo**, y se convierte en el mejor
+      baseline: antes la co-ocurrencia no enseñaba nada
+- [x] Techo teórico con el oráculo rehecho
+      · el sorteo ya no es una carrera de relojes con pares disparadora → asociada, así que
+      `src/recommender/oracle.py` pasa a **muestreo secuencial por importancia**: replica el
+      sorteo paso a paso (misión latente incluida, con su posterior) forzando que el carrito
+      quede dentro · lo valida un test contra una simulación por fuerza bruta del generador
+      (7 casos: sustitutos, cadenas y tope de tamaño) y, sobre el dataset real, la
+      comprobación de que el techo realizado coincide con el esperado (máx |z| = 2,26 en
+      20 contrastes)
+      · techo `cat_hit_rate@5` **0,8382** (antes 0,7816); LambdaRank **+3,61 pp
+      [+3,04, +4,17]** sobre el mejor baseline, p < 0,001
+- [x] Evaluación robusta sobre el dataset nuevo
+      · cortes por cesta: 12.947 queries de 1.800 cestas (`cuts.md`) · cold-start
+      sobremuestreado: 3.140 cestas / 5.802 queries, `cat_hit_rate@5` **0,5289 → 0,7192**
+- [x] **Un fallo de paridad de paso.** `tests/test_serving_parity.py` empezó a fallar por
+      0,033 de score en **1 de cada 10.000** filas, con el top-5 idéntico. Las 63 features
+      eran iguales hasta el último decimal: lo que cambiaba era el tipo. El pipeline
+      castea la matriz a `float32` en Spark (`ranker.collect_for_ranking`) y el serving
+      puntuaba en `float64`, así que un valor un epsilon por encima del umbral de un corte
+      caía al otro lado al redondear. Con más árboles (168) y más datos acabó por aflorar.
+      Arreglado en `serving.score_matrix`, que ahora pasa las features en `float32`
+
+### 8d — Rehacer la Fase 4 (NBA)
+
+Hecha. `python -m src.nba.pipeline` (6,5 min). La comparación la recalcula el propio
+pipeline en la sección "Frente al dataset anterior a la Fase 8" de
+`reports/nba/metrics.md`, contra `reports/nba/baseline_pre_fase8.json`.
+
+- [x] Reentrenar los dos modelos de propensión y recalcular la política
+      · churn con **44 árboles** (antes 17), compra en categoría con 93 (antes 97) · mismas
+      cestas y mismos cortes: la Fase 8 cambia *qué* lleva cada cesta, no cuándo compra
+      cada cliente, así que el maestro (18.729 clientes en test) no se mueve
+- [x] Comprobar que las conclusiones se mantienen
+
+      | Métrica | Fase 7d | Fase 8 |
+      | --- | ---: | ---: |
+      | Churn 4 semanas: AUC / PR-AUC | 0,8527 / 0,8550 | **0,8532 / 0,8576** |
+      | Compra categoría 7 días: AUC / PR-AUC | 0,7630 / 0,2185 | **0,7591 / 0,2479** |
+      | Tasa base de compra en categoría | 0,0619 | **0,0755** |
+      | Política frente a no actuar | 3.938 € | **3.842 €** |
+      | Clientes con acción | 75,2 % | **74,6 %** |
+
+      Las conclusiones aguantan. Dos matices que sí cambian y tienen explicación: la tasa
+      base de compra en categoría sube (más categorías por cesta ⇒ más pares positivos), lo
+      que empuja la PR-AUC arriba y el AUC ligeramente abajo; y "cupón a todos" empeora de
+      −1.591 € a **−3.745 €**, porque con más compras hay más cupones redimidos y el
+      descuento sigue siendo mayor que el margen que persigue. La política de valor
+      esperado, que es la que decide a quién, apenas se mueve.
+
+### 8e — Impacto, hallazgos y demo
+
+- [x] `python -m src.impact.pipeline` → `IMPACT.md` y `reports/impact/impact.json`
+      · **279.114 €/año** por cada 100.000 clientes y 100.000 cestas online al mes (antes
+      286.612 €)
+      · **El cross-sell baja de 44.327 € a 32.964 €/año aunque el recomendador acierta
+      más**, y es la lectura más interesante de la fase: el impacto se mide como
+      *incremental sobre la popularidad*, y en un dataset con estructura la popularidad
+      también acierta mucho más (`hit_rate` de SKU **0,270 → 0,408**). El acierto absoluto
+      del modelo sube (0,542 → 0,616) y la distancia se estrecha. Con datos más realistas,
+      el mérito atribuible al ranker es menor de lo que parecía
+- [x] `python -m src.eda.findings` → informe de hallazgos y 8 figuras regeneradas
+- [x] Demo (Fases 6a y 6b) · `products.csv` sale **idéntico** (el generador no toca el
+      catálogo), así que las 60 fotos, `visual_groups.csv` e `image_credits.csv` siguen
+      valiendo y no hubo ni una llamada a Pexels · la demo lee el bundle nuevo
+      (`python -m src.serving.export_bundle`) y las cifras de referencia de
+      `reports/recommender/metrics.json`
+
 ## Fuera de alcance (por ahora)
 
 - Dashboard en Power BI (Tarea 4 de `CHALLENGE.md`) — el foco pasa a la demo de la Fase 6;

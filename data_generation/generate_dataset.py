@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,6 +51,8 @@ _STREAM_NAMES = (
     "basket_items",
     "sessions",
     "quality",
+    # Fase 8: misiones de compra, tamano de cesta, segunda referencia y marca blanca.
+    "missions",
 )
 
 
@@ -489,6 +492,78 @@ def _build_customer_preferences(
     return aff.astype(np.float32), cycle.astype(np.float32)
 
 
+def _build_mission_preferences(
+    customers: pd.DataFrame, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Reparto de misiones de compra de cada cliente y su propension a la marca blanca.
+
+    El reparto parte del peso base de cada mision (`catalog.MISSIONS`), se ajusta con el
+    hogar, el canal y el gate de bebe (DATA_SPEC.md, "Misiones de compra") y se perturba
+    por cliente con una Dirichlet centrada en ese perfil: hay hogares de compra semanal y
+    hogares de ir cada dia a por pan.
+
+    Returns:
+        `(pref, anon_pref, pl_rho)`: (clientes, misiones) con el reparto de cada cliente,
+        (misiones,) con el reparto medio para las cestas anonimas, y (clientes,) con el
+        multiplicador de marca blanca.
+    """
+    n = len(customers)
+    names = cat.MISSION_NAMES
+    col = {name: i for i, name in enumerate(names)}
+    base = np.array([m.base_share for m in cat.MISSIONS])
+
+    hh = customers["household_size_est"].to_numpy().astype(float)
+    online = np.isin(customers["preferred_channel"].to_numpy(), ("app", "web"))
+    has_baby = customers["_has_baby"].to_numpy()
+
+    shape = np.tile(base, (n, 1))
+    shape[:, col["compra_semanal"]] *= (0.5 + 0.2 * hh) * np.where(
+        online, cat.WEEKLY_SHOP_ONLINE_FACTOR, 1.0
+    )
+    shape[:, col["reposicion"]] *= 1.3 - 0.1 * hh
+    shape[:, col["bebe"]] *= has_baby
+    shape /= shape.sum(axis=1, keepdims=True)
+
+    # Dirichlet por cliente. Una mision con peso 0 (bebe sin bebe) se queda en 0: la
+    # Gamma de forma 0 no existe, asi que se sortea con forma positiva y se anula.
+    alpha = np.maximum(shape * cat.MISSION_DIRICHLET_CONCENTRATION, 1e-12)
+    gamma = rng.gamma(alpha) * (shape > 0)
+    pref = gamma / gamma.sum(axis=1, keepdims=True)
+
+    anon = base.copy()
+    anon[col["bebe"]] *= cat.GATE_PREVALENCE["baby"]
+    anon /= anon.sum()
+
+    pl_rho = rng.lognormal(0.0, cat.PRIVATE_LABEL_PROPENSITY_SIGMA, n)
+    return pref, anon, pl_rho
+
+
+def _mission_calendar(cal: Calendar) -> np.ndarray:
+    """Multiplicador de cada mision por dia del periodo (dia de la semana y mes)."""
+    col = {name: i for i, name in enumerate(cat.MISSION_NAMES)}
+    out = np.ones((cal.n_days, len(cat.MISSIONS)))
+    weekend = np.isin(cal.dow, (4, 5))  # viernes y sabado
+    out[weekend, col["compra_semanal"]] *= cat.WEEKLY_SHOP_WEEKEND_FACTOR
+    for i, mission in enumerate(cat.MISSIONS):
+        for month, factor in mission.month_factor:
+            out[cal.month == month, i] *= factor
+    return out
+
+
+def _category_draw_count(
+    mission: np.ndarray, size_factor: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
+    """Categorias distintas de cada cesta: `1 + BinomialNegativa(media x f, r)`, con tope.
+
+    La mezcla de misiones, cada una con su binomial negativa, es lo que da la cola larga
+    (punto M1). `size_counts_pmf` es la misma distribucion, para el oraculo.
+    """
+    means = np.array([m.size_mean for m in cat.MISSIONS])[mission] * size_factor
+    r = np.array([m.size_dispersion for m in cat.MISSIONS])[mission]
+    extra = rng.negative_binomial(r, r / (r + np.maximum(means, 1e-9)))
+    return np.minimum(1 + extra, cat.MAX_CATEGORIES_PER_BASKET)
+
+
 def _seasonal_matrix() -> np.ndarray:
     """Multiplicador estacional por (mes, categoria), con los valores de DATA_SPEC.md."""
     idx = cat.category_index()
@@ -541,8 +616,23 @@ def _apply_promo_uplift(
     return pw, promo_of
 
 
+def _base_product_weights(
+    pop: np.ndarray, is_pl: np.ndarray, idxs: np.ndarray, pl_rho: float
+) -> np.ndarray:
+    """Popularidad de las referencias de una categoria, con la propension a marca blanca.
+
+    `pl_rho` multiplica el peso de las referencias de marca blanca (punto M2): es la parte
+    de la eleccion que reparte la popularidad, asi que actua en la primera compra y en el
+    hueco no fiel, nunca sobre la cuota de la referencia preferida.
+    """
+    pw = pop[idxs].astype(np.float64)
+    if pl_rho != 1.0:
+        pw = np.where(is_pl[idxs], pw * pl_rho, pw)
+    return pw
+
+
 def _product_choice_weights(
-    pop: np.ndarray,
+    base: np.ndarray,
     idxs: np.ndarray,
     pref_i: int,
     loyalty_j: float,
@@ -550,12 +640,11 @@ def _product_choice_weights(
 ) -> tuple[np.ndarray, dict[int, int]]:
     """Pesos de cada referencia de una categoria: fidelidad de marca y luego promocion.
 
-    Es el camino "lento" de la eleccion de producto de `_generate_baskets_and_items` (el
-    rapido, sin habito ni promocion, usa directamente la popularidad). Vive aparte para
-    que `OracleRecorder` calcule la probabilidad real de cada SKU con la misma cuenta
-    que usa el sorteo.
+    `base` es la popularidad de las referencias de la categoria (`_base_product_weights`).
+    Vive aparte para que `OracleRecorder` calcule la probabilidad real de cada SKU con la
+    misma cuenta que usa el sorteo.
     """
-    pw = pop[idxs].astype(np.float64)
+    pw = base.astype(np.float64, copy=True)
     if pref_i >= 0:
         local = int(np.searchsorted(idxs, pref_i))
         rest = pw.sum() - pw[local]
@@ -567,15 +656,36 @@ def _product_choice_weights(
     return pw, {}
 
 
+def product_inclusion_probs(pw: np.ndarray, second_prob: float) -> np.ndarray:
+    """P(cada referencia esta en la cesta | su categoria sale), con segunda referencia.
+
+    La primera referencia sale con probabilidad `p_i`; con `second_prob` entra una
+    segunda distinta, sorteada entre el resto con los mismos pesos:
+    `P(x) = p_x + second_prob * sum_{i != x} p_i * p_x / (1 - p_i)`.
+    """
+    p = pw / pw.sum()
+    if second_prob <= 0:
+        return p
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(p < 1.0, p / (1.0 - p), 0.0)
+    second = p * (ratio.sum() - ratio)
+    return p + second_prob * second
+
+
 @dataclass
 class OracleRecorder:
     """Registra, sin consumir aleatoriedad, la probabilidad real de cada cesta (punto A6).
 
     Para cada cesta con `day >= from_day` guarda el vector de pesos de categoria **justo
-    antes del primer sorteo** (afinidad x estacionalidad x ciclo de reposicion, con los
-    gates ya aplicados) y, por categoria, la referencia mas probable y su probabilidad si
-    esa categoria sale. Es la informacion privilegiada del generador: con ella se calcula
-    el oraculo bayesiano, el techo teorico contra el que se mide el recomendador
+    antes de aplicar la mision** (afinidad x estacionalidad x ciclo de reposicion, con los
+    gates ya aplicados), la probabilidad de cada mision en esa visita, el factor de tamano
+    y, por categoria, la referencia mas probable de estar en la cesta y esa probabilidad
+    si la categoria sale (contando la segunda referencia de la Fase 8). Los perfiles de
+    mision, su tamano y la matriz de complementos y sustitutos son constantes del
+    catalogo: los escribe el manifiesto del exportador.
+
+    Es la informacion privilegiada del generador: con ella se calcula el oraculo
+    bayesiano, el techo teorico contra el que se mide el recomendador
     (`src/recommender/oracle.py`).
 
     No toca ningun generador aleatorio ni el estado del bucle, asi que el dataset sale
@@ -586,6 +696,8 @@ class OracleRecorder:
     from_day: int
     basket_index: list[int] = field(default_factory=list)
     weights: list[np.ndarray] = field(default_factory=list)
+    mission_probs: list[np.ndarray] = field(default_factory=list)
+    size_factor: list[float] = field(default_factory=list)
     best_product: list[np.ndarray] = field(default_factory=list)
     best_prob: list[np.ndarray] = field(default_factory=list)
 
@@ -593,10 +705,13 @@ class OracleRecorder:
         self,
         b: int,
         w: np.ndarray,
+        mission_probs: np.ndarray,
+        size_factor: float,
         ci: int,
         preferred: np.ndarray,
         loyalty: np.ndarray,
-        pop: np.ndarray,
+        second_prob: np.ndarray,
+        category_base: Callable[[int], np.ndarray],
         cat_products: list[np.ndarray],
         day_promos: dict[int, list[tuple[int, int]]],
     ) -> None:
@@ -606,12 +721,17 @@ class OracleRecorder:
         for j in np.flatnonzero(w > 0):
             idxs = cat_products[j]
             pref_i = int(preferred[ci, j]) if ci >= 0 else -1
-            pw, _ = _product_choice_weights(pop, idxs, pref_i, loyalty[j], day_promos.get(j))
-            top = int(np.argmax(pw))
+            pw, _ = _product_choice_weights(
+                category_base(j), idxs, pref_i, loyalty[j], day_promos.get(j)
+            )
+            inclusion = product_inclusion_probs(pw, float(second_prob[j]))
+            top = int(np.argmax(inclusion))
             best[j] = idxs[top]
-            prob[j] = pw[top] / pw.sum()
+            prob[j] = inclusion[top]
         self.basket_index.append(b)
         self.weights.append(w.astype(np.float64))
+        self.mission_probs.append(mission_probs.astype(np.float64))
+        self.size_factor.append(float(size_factor))
         self.best_product.append(best)
         self.best_prob.append(prob)
 
@@ -624,12 +744,13 @@ def _generate_baskets_and_items(
     promotions: pd.DataFrame,
     rng_dates: np.random.Generator,
     rng_items: np.random.Generator,
+    rng_missions: np.random.Generator,
     oracle: OracleRecorder | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray]:
     """Construye `baskets` y `basket_items` aplicando todas las reglas de negocio.
 
     Para cada cesta se parte del peso base de cada categoria y se le aplican, en este
-    orden, los cuatro patrones de DATA_SPEC.md:
+    orden, los patrones de DATA_SPEC.md:
 
     1. **Estacionalidad**: multiplicador del mes en curso (turron en diciembre, helados
        en verano...).
@@ -637,15 +758,23 @@ def _generate_baskets_and_items(
        gates de hogar ya aplicados.
     3. **Ciclo de reposicion**: la categoria pierde peso justo despues de comprarla y lo
        recupera segun se acerca a `typical_repurchase_days`, ajustado al hogar.
-    4. **Afinidad de cesta**: al entrar un producto de una categoria disparadora, la
-       categoria asociada ve su peso multiplicado por el lift de la tabla.
+    4. **Mision de compra** (Fase 8): cada visita tiene una mision latente (compra
+       semanal, reposicion, desayuno...) que reescala el peso de cada categoria y decide
+       cuantas categorias distintas lleva la cesta (binomial negativa por mision).
+    5. **Complementos y sustitutos**: al entrar una categoria, su fila de
+       `catalog.interaction_matrix()` multiplica el peso del resto: por encima de 1 en
+       las asociadas (cerveza -> snacks), por debajo en las de su grupo de sustitucion
+       (pollo -> ternera).
 
-    Elegida la categoria, el producto concreto sale de dos efectos que se componen: la
-    **fidelidad de marca** (la primera compra del cliente en la categoria le fija una
-    referencia preferida, que las siguientes repiten con probabilidad `Category.loyalty`)
-    y el **uplift de promocion** (un producto con promocion activa ese dia se lleva
-    `PROMO_UPLIFT` veces su cuota). El orden importa: la promocion se aplica sobre la
-    cuota ya repartida por habito, de modo que solo puede llevarse la parte no fiel.
+    Elegida la categoria, el producto concreto sale de cuatro efectos que se componen: la
+    **propension a marca blanca** del cliente (reescala la popularidad), la **fidelidad
+    de marca** (la primera compra del cliente en la categoria le fija una referencia
+    preferida, que las siguientes repiten con probabilidad `Category.loyalty`), el
+    **uplift de promocion** (un producto con promocion activa ese dia se lleva
+    `PROMO_UPLIFT` veces su cuota) y, en las categorias de exploracion, una posible
+    **segunda referencia** distinta que no consume hueco de categoria. La promocion se
+    aplica sobre la cuota ya repartida por habito, de modo que solo puede llevarse la
+    parte no fiel.
 
     Las cestas se procesan en orden cronologico porque el punto 3 depende de la compra
     anterior del mismo cliente.
@@ -682,12 +811,25 @@ def _generate_baskets_and_items(
 
     last_day = np.full((len(customers), n_cat), -1, dtype=np.int32)
 
-    # --- Afinidad de cesta: disparadora -> (asociada, lift) ---
-    cidx = cat.category_index()
-    affinity_map = {
-        cidx[t]: (cidx[a], cat.applied_affinity_lift(lift))
-        for t, a, lift in cat.AFFINITY_PAIRS
-    }
+    # --- Complementos y sustitutos: fila = categoria que entra ---
+    interaction = np.array(cat.interaction_matrix(), dtype=np.float64)
+
+    # --- Misiones: reparto por cliente, ajuste por dia, mision y tamano de cada cesta ---
+    mission_pref, anon_pref, pl_rho = _build_mission_preferences(customers, rng_missions)
+    profiles = np.array(cat.mission_profiles(), dtype=np.float64)
+    identified = cust_idx >= 0
+    safe_cust = np.maximum(cust_idx, 0)
+    mission_p = np.where(identified[:, None], mission_pref[safe_cust], anon_pref[None, :])
+    mission_p = mission_p * _mission_calendar(cal)[day]
+    mission_p /= mission_p.sum(axis=1, keepdims=True)
+    mission_cum = np.cumsum(mission_p, axis=1)
+    mission = (rng_missions.random(n_baskets)[:, None] > mission_cum[:, :-1]).sum(axis=1)
+
+    household = customers["household_size_est"].to_numpy()
+    hh_size_factor = np.where(identified, 0.70 + 0.12 * household[safe_cust], 0.60)
+    size_factor = hh_size_factor * spend
+    n_items = _category_draw_count(mission, size_factor, rng_missions)
+    total_slots = int(n_items.sum())
 
     # --- Promociones activas por dia y categoria ---
     promo_prod = promotions["_product_idx"].to_numpy()
@@ -701,14 +843,10 @@ def _generate_baskets_and_items(
                 (int(promo_prod[p]), p)
             )
 
-    # --- Surtido por categoria, con su cumsum de popularidad precomputado ---
+    # --- Surtido por categoria ---
     pop = products["popularity"].to_numpy()
-    cat_products: list[np.ndarray] = []
-    cat_cumw: list[np.ndarray] = []
-    for ci in range(n_cat):
-        idxs = np.where(prod_cat == ci)[0]
-        cat_products.append(idxs)
-        cat_cumw.append(np.cumsum(pop[idxs]))
+    is_pl = products["is_private_label"].to_numpy().astype(bool)
+    cat_products: list[np.ndarray] = [np.where(prod_cat == ci)[0] for ci in range(n_cat)]
 
     # --- Fidelidad de marca: referencia preferida por cliente y categoria ---
     # -1 = el cliente aun no ha comprado nunca en esa categoria. Su primera compra fija
@@ -716,29 +854,28 @@ def _generate_baskets_and_items(
     # `Category.loyalty` (alta en categorias de habito, baja en las exploratorias).
     preferred = np.full((len(customers), n_cat), -1, dtype=np.int32)
     loyalty = np.array([c.loyalty for c in cat.CATEGORIES], dtype=np.float64)
+    second_prob = np.array([cat.second_reference_prob(c) for c in cat.CATEGORIES])
 
-    # --- Numero de lineas por cesta ---
-    household = customers["household_size_est"].to_numpy()
-    hh_size_factor = np.where(cust_idx >= 0, 0.70 + 0.12 * household[cust_idx], 0.60)
-    lam = 4.0 * hh_size_factor * spend
-    n_items = 1 + rng_items.poisson(np.maximum(lam, 0.2))
-    np.clip(n_items, 1, 20, out=n_items)
-    total_slots = int(n_items.sum())
-
-    # Aleatoriedad en bloque: mas rapido y, sobre todo, de consumo determinista.
+    # Aleatoriedad en bloque: mas rapido y, sobre todo, de consumo determinista. Un sorteo
+    # de cada tipo por hueco de categoria; la segunda referencia usa los suyos.
     u_cat = rng_items.random(total_slots)
     u_prod = rng_items.random(total_slots)
-    qty_draw = rng_items.choice([1, 2, 3, 4], size=total_slots, p=[0.62, 0.24, 0.10, 0.04])
+    u_second = rng_missions.random(total_slots)
+    u_prod2 = rng_missions.random(total_slots)
 
-    out_basket = np.empty(total_slots, dtype=np.int64)
-    out_prod = np.empty(total_slots, dtype=np.int64)
-    out_promo = np.full(total_slots, -1, dtype=np.int64)
+    # Las segundas referencias no consumen hueco: el buffer crece si hiciera falta.
+    capacity = total_slots + total_slots // 4 + 16
+    out_basket = np.empty(capacity, dtype=np.int64)
+    out_prod = np.empty(capacity, dtype=np.int64)
+    out_promo = np.full(capacity, -1, dtype=np.int64)
+    line = 0
     slot = 0
 
-    picked_buf = np.empty(20, dtype=np.int64)
+    picked_buf = np.empty(cat.MAX_CATEGORIES_PER_BASKET, dtype=np.int64)
     for b in range(n_baskets):
         ci = int(cust_idx[b])
         d = int(day[b])
+        rho = 1.0 if ci < 0 else float(pl_rho[ci])
         w = anon_aff.copy() if ci < 0 else aff[ci].astype(np.float64)
         w *= season[cal.month[d]]
 
@@ -751,8 +888,22 @@ def _generate_baskets_and_items(
 
         day_promos = promos_by_day[d]
         if oracle is not None and d >= oracle.from_day:
-            oracle.record(b, w, ci, preferred, loyalty, pop, cat_products, day_promos)
+            oracle.record(
+                b,
+                w,
+                mission_p[b],
+                float(size_factor[b]),
+                ci,
+                preferred,
+                loyalty,
+                second_prob,
+                lambda j, rho=rho: _base_product_weights(pop, is_pl, cat_products[j], rho),
+                cat_products,
+                day_promos,
+            )
+        w *= profiles[mission[b]]
         k = int(n_items[b])
+        slot_end = slot + k
         n_picked = 0
         for _ in range(k):
             cum = np.cumsum(w)
@@ -762,49 +913,64 @@ def _generate_baskets_and_items(
             j = int(np.searchsorted(cum, u_cat[slot] * total))
             j = min(j, n_cat - 1)
 
-            # Producto dentro de la categoria. Tres efectos, en este orden:
-            #   1. fidelidad de marca: la referencia preferida del cliente se lleva una
-            #      cuota fija `loyalty[j]` de la eleccion;
-            #   2. popularidad: el resto del surtido se reparte por su cola larga;
+            # Producto dentro de la categoria. Cuatro efectos, en este orden:
+            #   1. popularidad, reescalada por la propension a marca blanca del cliente;
+            #   2. fidelidad de marca: la referencia preferida del cliente se lleva una
+            #      cuota fija `loyalty[j]` de la eleccion y el resto se reparte por (1);
             #   3. uplift de promocion: se aplica encima, asi una promocion de la
             #      competencia solo puede llevarse la parte no fiel de la categoria --
-            #      que es exactamente lo que hace una promocion en gran consumo.
+            #      que es exactamente lo que hace una promocion en gran consumo;
+            #   4. segunda referencia: en las categorias de exploracion, con
+            #      probabilidad `second_prob[j]`, entra otra distinta con los mismos pesos.
             idxs = cat_products[j]
-            active = day_promos.get(j)
             pref_i = int(preferred[ci, j]) if ci >= 0 else -1
-
-            if pref_i < 0 and active is None:
-                # Camino rapido: ni habito que respetar ni promocion que aplicar.
-                pcum = cat_cumw[j]
-                promo_of = {}
-            else:
-                pw, promo_of = _product_choice_weights(pop, idxs, pref_i, loyalty[j], active)
-                pcum = np.cumsum(pw)
-            pi = int(np.searchsorted(pcum, u_prod[slot] * pcum[-1]))
-            prod_i = int(idxs[min(pi, idxs.size - 1)])
+            pw, promo_of = _product_choice_weights(
+                _base_product_weights(pop, is_pl, idxs, rho),
+                idxs,
+                pref_i,
+                loyalty[j],
+                day_promos.get(j),
+            )
+            pcum = np.cumsum(pw)
+            pi = min(int(np.searchsorted(pcum, u_prod[slot] * pcum[-1])), idxs.size - 1)
+            prod_i = int(idxs[pi])
             if ci >= 0 and pref_i < 0:
                 preferred[ci, j] = prod_i
 
-            out_basket[slot] = b
-            out_prod[slot] = prod_i
-            if prod_i in promo_of:
-                out_promo[slot] = promo_of[prod_i]
+            picks = [prod_i]
+            if u_second[slot] < second_prob[j]:
+                pw2 = pw.copy()
+                pw2[pi] = 0.0
+                pcum2 = np.cumsum(pw2)
+                pi2 = min(int(np.searchsorted(pcum2, u_prod2[slot] * pcum2[-1])), idxs.size - 1)
+                picks.append(int(idxs[pi2]))
             slot += 1
+
+            if line + len(picks) > out_basket.size:
+                grow = out_basket.size // 2
+                out_basket = np.concatenate([out_basket, np.empty(grow, dtype=np.int64)])
+                out_prod = np.concatenate([out_prod, np.empty(grow, dtype=np.int64)])
+                out_promo = np.concatenate([out_promo, np.full(grow, -1, dtype=np.int64)])
+            for chosen in picks:
+                out_basket[line] = b
+                out_prod[line] = chosen
+                if chosen in promo_of:
+                    out_promo[line] = promo_of[chosen]
+                line += 1
 
             picked_buf[n_picked] = j
             n_picked += 1
-            w[j] = 0.0  # una sola linea por categoria y cesta
-            assoc = affinity_map.get(j)
-            if assoc is not None:
-                w[assoc[0]] *= assoc[1]
+            w[j] = 0.0  # la categoria ya esta en la cesta
+            w *= interaction[j]
 
+        slot = slot_end
         if ci >= 0 and n_picked:
             last_day[ci, picked_buf[:n_picked]] = d
 
-    out_basket = out_basket[:slot]
-    out_prod = out_prod[:slot]
-    out_promo = out_promo[:slot]
-    qty = qty_draw[:slot].astype(np.int64)
+    out_basket = out_basket[:line]
+    out_prod = out_prod[:line]
+    out_promo = out_promo[:line]
+    qty = rng_items.choice([1, 2, 3, 4], size=line, p=[0.62, 0.24, 0.10, 0.04]).astype(np.int64)
 
     # --- Precio pagado segun el tipo de promocion ---
     unit_price = products["unit_price"].to_numpy()
@@ -821,7 +987,7 @@ def _generate_baskets_and_items(
         )
         price_paid[has_promo] = paid
         # En un 2x1 el cliente se lleva un numero par de unidades.
-        two_for_one = np.zeros(slot, dtype=bool)
+        two_for_one = np.zeros(line, dtype=bool)
         two_for_one[np.where(has_promo)[0][ptype == "2x1"]] = True
         qty = np.where(two_for_one, np.maximum(2, (qty // 2) * 2), qty)
 
@@ -1382,8 +1548,14 @@ def _write_data_dictionary(
         "Ver `DATA_SPEC.md` para los valores exactos. En resumen:",
         "",
         "- **Ciclos de reposicion** por cliente y categoria, escalados por el tamano del hogar.",
-        f"- **{len(cat.AFFINITY_PAIRS)} pares de afinidad de cesta** (cerveza→snacks, "
-        "panales→toallitas...).",
+        f"- **{len(cat.MISSIONS)} misiones de compra** latentes (compra semanal, reposicion, "
+        "desayuno...), cada una con su mezcla de categorias y su tamano (binomial negativa, "
+        f"tope de {cat.MAX_CATEGORIES_PER_BASKET} categorias).",
+        f"- **{len(cat.COMPLEMENT_PAIRS)} pares de complementos** (cerveza→snacks, "
+        f"panales→toallitas...) y **{len(cat.SUBSTITUTION_GROUPS)} grupos de sustitucion** "
+        "(agua/refrescos, pollo/ternera/pescado...).",
+        "- **Segunda referencia** en las categorias de exploracion y **propension a la marca "
+        "blanca** por cliente.",
         f"- **Estacionalidad** en {len(cat.SEASONALITY)} categorias (Navidad, verano, Cuaresma).",
         f"- **Uplift de promocion** de {cat.PROMO_UPLIFT}x sobre el producto promocionado.",
         "- **Churn progresivo**: caida gradual de frecuencia y ticket en las 6-8 semanas previas.",
@@ -1438,6 +1610,7 @@ def generate(
         promotions,
         rngs["basket_dates"],
         rngs["basket_items"],
+        rngs["missions"],
         oracle=oracle,
     )
     sessions, session_events = _generate_sessions(

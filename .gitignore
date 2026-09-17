@@ -37,3 +37,9 @@ data/serving/
 # Oraculo del recomendador (punto A6): probabilidades reales que solo conoce el generador.
 # Lo regenera `python -m data_generation.export_oracle`; nunca junto a data/raw.
 data/oracle/
+
+# Snapshots de artefactos (Fase 8): los datos, modelos y predicciones pesan cientos de MB y
+# se regeneran; en git solo van el README, el MANIFEST.json con sus hashes y los informes.
+snapshots/*/data/
+snapshots/*/models/
+snapshots/*/predictions/

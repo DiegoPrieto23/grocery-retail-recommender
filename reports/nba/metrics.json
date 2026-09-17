@@ -12,16 +12,16 @@
   "churn_metrics": {
     "n": 18729,
     "base_rate": 0.47594639329382243,
-    "auc": 0.8526697287752523,
-    "pr_auc": 0.8550476383535752,
-    "lift_top_decile": 2.0663020586703746
+    "auc": 0.8532377134950362,
+    "pr_auc": 0.8576186911964617,
+    "lift_top_decile": 2.0831286226660617
   },
   "purchase_metrics": {
-    "n": 370300,
-    "base_rate": 0.06189305968133946,
-    "auc": 0.7629940957962502,
-    "pr_auc": 0.2184740832904635,
-    "lift_top_decile": 3.4970984772459532
+    "n": 426285,
+    "base_rate": 0.07546594414534877,
+    "auc": 0.7591425487206986,
+    "pr_auc": 0.24793489759006296,
+    "lift_top_decile": 3.42932216304551
   },
   "agreement_with_churn_label": {
     "n": 18729,
@@ -44,136 +44,136 @@
       "n_clientes": 18729,
       "n_acciones": 15588,
       "pct_accion": 0.8322921672272946,
-      "valor_total": 907.0725020823386,
-      "valor_por_cliente": 0.04843144332758495,
-      "uplift_vs_no_actuar": 907.0725020823386
+      "valor_total": 927.3826081080138,
+      "valor_por_cliente": 0.0495158635329176,
+      "uplift_vs_no_actuar": 927.3826081080138
     },
     {
       "politica": "actuar siempre: enviar_cupon_categoria",
       "n_clientes": 18729,
       "n_acciones": 15588,
       "pct_accion": 0.8322921672272946,
-      "valor_total": -1591.492537912245,
-      "valor_por_cliente": -0.08497477376860725,
-      "uplift_vs_no_actuar": -1591.492537912245
+      "valor_total": -3744.725483150266,
+      "valor_por_cliente": -0.1999426281782405,
+      "uplift_vs_no_actuar": -3744.725483150266
     },
     {
       "politica": "politica de valor esperado",
       "n_clientes": 18729,
-      "n_acciones": 14090,
-      "pct_accion": 0.7523092530300604,
-      "valor_total": 3937.560431361225,
-      "valor_por_cliente": 0.2102386903391118,
-      "uplift_vs_no_actuar": 3937.560431361225
+      "n_acciones": 13980,
+      "pct_accion": 0.7464360083293289,
+      "valor_total": 3841.7953130777105,
+      "valor_por_cliente": 0.2051254905802611,
+      "uplift_vs_no_actuar": 3841.7953130777105
     }
   ],
   "sensitivity": [
     {
       "uplift_cupon": 1.0,
-      "valor_politica": 3865.645315107105,
-      "valor_cupon_a_todos": -430.7736138469106,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.6585509103529286
+      "valor_politica": 3712.6444055157785,
+      "valor_cupon_a_todos": -2115.2238501906586,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.5720540338512468
     },
     {
       "uplift_cupon": 1.1,
-      "valor_politica": 3866.5078065728226,
-      "valor_cupon_a_todos": -762.6141859054146,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.6584975172192856
+      "valor_politica": 3718.310202613779,
+      "valor_cupon_a_todos": -2581.2101706020267,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.5726947514549628
     },
     {
       "uplift_cupon": 1.2,
-      "valor_politica": 3876.7224309201547,
-      "valor_cupon_a_todos": -1094.454757963918,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.6596721661594319
+      "valor_politica": 3743.918889538338,
+      "valor_cupon_a_todos": -3047.196491013394,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.5748838699343265
     },
     {
       "uplift_cupon": 1.35,
-      "valor_politica": 3937.560431361225,
-      "valor_cupon_a_todos": -1591.492537912245,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.6621282503070105
+      "valor_politica": 3841.7953130777105,
+      "valor_cupon_a_todos": -3744.725483150266,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.5842810614554969
     },
     {
       "uplift_cupon": 1.5,
-      "valor_politica": 4067.351131721496,
-      "valor_cupon_a_todos": -2084.2250895515162,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.6660259490629505
+      "valor_politica": 4023.737401027228,
+      "valor_cupon_a_todos": -4433.57248302096,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.597148806663463
     },
     {
       "uplift_cupon": 1.75,
-      "valor_politica": 4382.584638125871,
-      "valor_cupon_a_todos": -2890.989936406955,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.6749426023813337
+      "valor_politica": 4443.615878972567,
+      "valor_cupon_a_todos": -5549.5239521093135,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.6175983768487373
     },
     {
       "uplift_cupon": 2.0,
-      "valor_politica": 4760.552060199978,
-      "valor_cupon_a_todos": -3675.9827242973192,
-      "pct_accion": 0.7523626461637033,
-      "pct_cupon": 0.6847669389716482
+      "valor_politica": 4927.545280871915,
+      "valor_cupon_a_todos": -6631.953418627767,
+      "pct_accion": 0.7465427945966149,
+      "pct_cupon": 0.6345240002135726
     }
   ],
   "sensitivity_retention": [
     {
       "reduccion_churn": 0.0,
-      "valor_politica": 1188.634170427661,
-      "valor_cupon_a_todos": -6357.011580432749,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.0
+      "valor_politica": 1238.868840057072,
+      "valor_cupon_a_todos": -8463.613961484652,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 5.339313364301351e-05
     },
     {
       "reduccion_churn": 0.02,
-      "valor_politica": 1188.9808917119133,
-      "valor_cupon_a_todos": -5403.907771928649,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.0010144695392172566
+      "valor_politica": 1239.3503217335963,
+      "valor_cupon_a_todos": -7519.836265817775,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.0010678626728602703
     },
     {
       "reduccion_churn": 0.05,
-      "valor_politica": 1706.1674864527372,
-      "valor_cupon_a_todos": -3974.252059172497,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.4367024400662075
+      "valor_politica": 1766.8557287030999,
+      "valor_cupon_a_todos": -6104.169722317459,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.31838325591328953
     },
     {
       "reduccion_churn": 0.1,
-      "valor_politica": 3937.560431361225,
-      "valor_cupon_a_todos": -1591.492537912245,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.6621282503070105
+      "valor_politica": 3841.7953130777105,
+      "valor_cupon_a_todos": -3744.725483150266,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.5842810614554969
     },
     {
       "reduccion_churn": 0.15,
-      "valor_politica": 6290.768259677197,
-      "valor_cupon_a_todos": 791.2669833480063,
-      "pct_accion": 0.7523092530300604,
-      "pct_cupon": 0.7029739975439159
+      "valor_politica": 6137.966724846875,
+      "valor_cupon_a_todos": -1385.2812439830736,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.6497944364354744
     },
     {
       "reduccion_churn": 0.2,
-      "valor_politica": 8661.581385124782,
-      "valor_cupon_a_todos": 3174.026504608259,
-      "pct_accion": 0.7528431843664904,
-      "pct_cupon": 0.7204869453788243
+      "valor_politica": 8468.880835550104,
+      "valor_cupon_a_todos": 974.1629951841202,
+      "pct_accion": 0.7464360083293289,
+      "pct_cupon": 0.6765977895242672
     }
   ],
   "action_mix": [
     {
       "action": "enviar_cupon_categoria",
-      "cuota": 0.6621282503070105
+      "cuota": 0.5842810614554969
     },
     {
       "action": "ninguna_accion",
-      "cuota": 0.24769074696993967
+      "cuota": 0.2535639916706712
     },
     {
       "action": "recomendar_producto",
-      "cuota": 0.09018100272304981
+      "cuota": 0.16215494687383203
     }
   ],
   "assumptions": {

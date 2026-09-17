@@ -8,12 +8,12 @@ mano: se recalcula ejecutando ese comando.
 | | |
 | --- | --- |
 | Fuentes de candidatos (ranker) | cestas anteriores a 2025-09-01 |
-| Queries de entrenamiento | 2025-09-01 a 2025-11-01 (11,936 cestas con algun candidato relevante en el pool; 11,611 con el SKU exacto) |
+| Queries de entrenamiento | 2025-09-01 a 2025-11-01 (11,906 cestas con algun candidato relevante en el pool; 11,594 con el SKU exacto) |
 | Fuentes de candidatos (test) | cestas anteriores a 2025-11-01 |
 | Queries de test | desde 2025-11-01 (18,000 cestas) |
-| Ranker | LightGBM `lambdarank`, 70 arboles |
+| Ranker | LightGBM `lambdarank`, 168 arboles |
 | Objetivo | NDCG@5 con relevancia graduada: 2 SKU exacto, 1 misma categoria (`label_gain` = [0.0, 1.0, 3.0]) |
-| NDCG@5 graduada de validacion | 0.2503 |
+| NDCG@5 graduada de validacion | 0.3377 |
 
 El split es temporal **y por cesta**: ninguna cesta se reparte entre train y test, y las
 fuentes de candidatos se reajustan para cada ventana con solo el pasado de esa ventana.
@@ -27,13 +27,13 @@ junto a `cat_hit_rate@5` (lo que ensena la demo) y `sku_hit_rate@5`.
 
 | grupo | n_queries | ndcg_graded@5 | cat_hit_rate@5 | sku_hit_rate@5 |
 | --- | --- | --- | --- | --- |
-| total | 18000 | 0.2148 [0.2120, 0.2177] | 0.7181 [0.7114, 0.7248] | 0.5416 [0.5348, 0.5491] |
-| 1 - nuevo, carrito vacio | 521 | 0.1520 [0.1366, 0.1666] | 0.5969 [0.5528, 0.6392] | 0.4031 [0.3589, 0.4434] |
-| 2 - nuevo, con articulos | 421 | 0.1110 [0.0943, 0.1278] | 0.4466 [0.3967, 0.4964] | 0.2257 [0.1853, 0.2637] |
-| 3 - recurrente, carrito vacio | 8713 | 0.2393 [0.2350, 0.2436] | 0.7895 [0.7809, 0.7984] | 0.6186 [0.6085, 0.6284] |
-| 4 - recurrente, con articulos | 8345 | 0.1984 [0.1940, 0.2029] | 0.6648 [0.6556, 0.6749] | 0.4857 [0.4751, 0.4963] |
+| total | 18000 | 0.3015 [0.2981, 0.3052] | 0.7954 [0.7898, 0.8011] | 0.6157 [0.6088, 0.6228] |
+| 1 - nuevo, carrito vacio | 554 | 0.2330 [0.2161, 0.2523] | 0.7112 [0.6751, 0.7473] | 0.4892 [0.4495, 0.5307] |
+| 2 - nuevo, con articulos | 388 | 0.2172 [0.1957, 0.2392] | 0.7088 [0.6623, 0.7552] | 0.4304 [0.3840, 0.4794] |
+| 3 - recurrente, carrito vacio | 9460 | 0.3148 [0.3099, 0.3200] | 0.8057 [0.7980, 0.8139] | 0.6420 [0.6327, 0.6520] |
+| 4 - recurrente, con articulos | 7598 | 0.2942 [0.2885, 0.2990] | 0.7932 [0.7843, 0.8028] | 0.6016 [0.5904, 0.6123] |
 
-Entre corchetes, el intervalo de confianza al 95%: bootstrap percentil con 1,000 remuestreos de cestas (semilla 42; `evaluate.bootstrap_means`). En el grupo mas pequeno (2 - nuevo, con articulos, n = 421) el intervalo de cat_hit_rate@5 mide 10.0 puntos: las diferencias entre perfiles pequenos se leen con eso delante. Los perfiles 1 y 2, con muchas mas queries, estan en "Cold-start sobremuestreado".
+Entre corchetes, el intervalo de confianza al 95%: bootstrap percentil con 1,000 remuestreos de cestas (semilla 42; `evaluate.bootstrap_means`). En el grupo mas pequeno (2 - nuevo, con articulos, n = 388) el intervalo de cat_hit_rate@5 mide 9.3 puntos: las diferencias entre perfiles pequenos se leen con eso delante. Los perfiles 1 y 2, con muchas mas queries, estan en "Cold-start sobremuestreado".
 
 El acierto segun cuantas lineas lleva ya el carrito (varios cortes por cesta, punto M3) esta en [`cuts.md`](cuts.md).
 
@@ -43,24 +43,23 @@ Hasta el punto A4 el LambdaRank optimizaba la NDCG@5 con relevancia binaria de S
 
 | Variante | NDCG@5 graduada | cat_hit_rate@5 | sku_hit_rate@5 | NDCG@5 SKU | cat_precision@5 | sku_precision@5 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Modelo en disco antes de A4 (congelado) | — | 0.6743 | 0.5488 | 0.2028 | 0.2021 | 0.1482 |
-| Relevancia binaria de SKU (objetivo anterior) | 0.2083 | 0.6775 | 0.5510 | 0.2048 | 0.2036 | 0.1491 |
-| Relevancia graduada, sin ranking personal | 0.2149 | 0.7192 | 0.5403 | 0.2012 | 0.2270 | 0.1454 |
-| **Relevancia graduada + ranking personal (servido)** | **0.2148** | **0.7181** | **0.5416** | **0.2006** | **0.2267** | **0.1451** |
+| Relevancia binaria de SKU (objetivo anterior) | 0.2970 | 0.7758 | 0.6226 | 0.2874 | 0.3074 | 0.2063 |
+| Relevancia graduada, sin ranking personal | 0.3014 | 0.7941 | 0.6147 | 0.2818 | 0.3266 | 0.2009 |
+| **Relevancia graduada + ranking personal (servido)** | **0.3015** | **0.7954** | **0.6157** | **0.2815** | **0.3269** | **0.2008** |
 
-Cambiar solo el objetivo (fila de relevancia binaria a graduada sin ranking) mueve cat_hit_rate@5 **+4.17 pp** y sku_hit_rate@5 **-1.07 pp**. Anadir el ranking personal mueve cat_hit_rate@5 **-0.11 pp** y sku_hit_rate@5 **+0.13 pp**. En conjunto, frente al objetivo anterior: cat_hit_rate@5 **+4.06 pp**, sku_hit_rate@5 **-0.94 pp**.
+Cambiar solo el objetivo (fila de relevancia binaria a graduada sin ranking) mueve cat_hit_rate@5 **+1.83 pp** y sku_hit_rate@5 **-0.79 pp**. Anadir el ranking personal mueve cat_hit_rate@5 **+0.13 pp** y sku_hit_rate@5 **+0.09 pp**. En conjunto, frente al objetivo anterior: cat_hit_rate@5 **+1.97 pp**, sku_hit_rate@5 **-0.69 pp**.
 
-La fila congelada es el modelo que habia en disco antes de este cambio (`reports/recommender/baseline_pre_a4.json`, 2026-09-17, commit `e0411d4`), que no media la NDCG graduada. La fila "relevancia binaria" lo reentrena con el codigo actual, que ya incluye el ranking personal entre sus features, asi que puede diferir un poco.
+
 
 ### Por perfil: relevancia binaria de SKU frente a la graduada servida
 
 | Grupo | cat_hit_rate@5 SKU | graduada | cambio | sku_hit_rate@5 SKU | graduada | cambio | NDCG@5 graduada SKU | graduada |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| total | 0.6775 | 0.7181 | +4.06 pp | 0.5510 | 0.5416 | -0.94 pp | 0.2083 | 0.2148 |
-| 1 - nuevo, carrito vacio | 0.5777 | 0.5969 | +1.92 pp | 0.3916 | 0.4031 | +1.15 pp | 0.1485 | 0.1520 |
-| 2 - nuevo, con articulos | 0.4418 | 0.4466 | +0.48 pp | 0.2257 | 0.2257 | +0.00 pp | 0.1065 | 0.1110 |
-| 3 - recurrente, carrito vacio | 0.7490 | 0.7895 | +4.05 pp | 0.6309 | 0.6186 | -1.23 pp | 0.2328 | 0.2393 |
-| 4 - recurrente, con articulos | 0.6210 | 0.6648 | +4.39 pp | 0.4939 | 0.4857 | -0.83 pp | 0.1915 | 0.1984 |
+| total | 0.7758 | 0.7954 | +1.97 pp | 0.6226 | 0.6157 | -0.69 pp | 0.2970 | 0.3015 |
+| 1 - nuevo, carrito vacio | 0.7040 | 0.7112 | +0.72 pp | 0.4928 | 0.4892 | -0.36 pp | 0.2353 | 0.2330 |
+| 2 - nuevo, con articulos | 0.6907 | 0.7088 | +1.80 pp | 0.4149 | 0.4304 | +1.55 pp | 0.2147 | 0.2172 |
+| 3 - recurrente, carrito vacio | 0.7838 | 0.8057 | +2.19 pp | 0.6479 | 0.6420 | -0.59 pp | 0.3095 | 0.3148 |
+| 4 - recurrente, con articulos | 0.7753 | 0.7932 | +1.79 pp | 0.6112 | 0.6016 | -0.96 pp | 0.2901 | 0.2942 |
 
 ### Importancia del ranking personal de categorias
 
@@ -68,9 +67,9 @@ Puesto entre todas las features del modelo servido (ganancia).
 
 | Feature | Puesto por ganancia | Ganancia | % de la ganancia total | Splits |
 | --- | ---: | ---: | ---: | ---: |
-| `cat_freq_share` | 6 de 60 | 9261 | 4.2% | 266 |
-| `cat_due_rank` | 9 de 60 | 6607 | 3.0% | 83 |
-| `cat_freq_rank` | 10 de 60 | 5230 | 2.4% | 88 |
+| `cat_freq_share` | 5 de 60 | 14732 | 4.4% | 616 |
+| `cat_due_rank` | 7 de 60 | 7658 | 2.3% | 224 |
+| `cat_freq_rank` | 16 de 60 | 4175 | 1.3% | 169 |
 
 La comparacion con los baselines de categoria y con el techo teorico esta en la seccion de diagnostico, al final (`verify_recommender_diagnostics`).
 
@@ -81,11 +80,11 @@ intervalo de confianza.
 
 | grupo | n_queries | ndcg@5 | recall@5 | precision@5 | f1@5 | f1@5_por_cesta | hit_rate@5 | n_target_medio |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| total | 18000 | 0.2006 [0.1975, 0.2039] | 0.1910 [0.1878, 0.1944] | 0.1451 [0.1429, 0.1473] | 0.1649 [0.1624, 0.1674] | 0.1552 [0.1529, 0.1576] | 0.5416 [0.5348, 0.5491] | 3.9327 |
-| 1 - nuevo, carrito vacio | 521 | 0.1317 [0.1153, 0.1479] | 0.1175 [0.1026, 0.1331] | 0.0990 [0.0871, 0.1106] | 0.1075 [0.0944, 0.1200] | 0.1008 [0.0885, 0.1119] | 0.4031 [0.3589, 0.4434] | 4.1651 |
-| 2 - nuevo, con articulos | 421 | 0.0994 [0.0796, 0.1199] | 0.1062 [0.0859, 0.1278] | 0.0532 [0.0432, 0.0632] | 0.0709 [0.0572, 0.0846] | 0.0689 [0.0556, 0.0825] | 0.2257 [0.1853, 0.2637] | 2.3444 |
-| 3 - recurrente, carrito vacio | 8713 | 0.2136 [0.2091, 0.2181] | 0.1801 [0.1764, 0.1840] | 0.1756 [0.1719, 0.1790] | 0.1778 [0.1742, 0.1814] | 0.1687 [0.1654, 0.1720] | 0.6186 [0.6085, 0.6284] | 5.0319 |
-| 4 - recurrente, con articulos | 8345 | 0.1965 [0.1912, 0.2018] | 0.2112 [0.2057, 0.2168] | 0.1209 [0.1178, 0.1239] | 0.1538 [0.1499, 0.1577] | 0.1489 [0.1452, 0.1526] | 0.4857 [0.4751, 0.4963] | 2.8506 |
+| total | 18000 | 0.2815 [0.2777, 0.2857] | 0.2350 [0.2309, 0.2393] | 0.2008 [0.1980, 0.2040] | 0.2165 [0.2137, 0.2196] | 0.1807 [0.1782, 0.1832] | 0.6157 [0.6088, 0.6228] | 5.5474 |
+| 1 - nuevo, carrito vacio | 554 | 0.2122 [0.1912, 0.2341] | 0.1810 [0.1601, 0.2044] | 0.1386 [0.1260, 0.1538] | 0.1570 [0.1427, 0.1725] | 0.1285 [0.1166, 0.1413] | 0.4892 [0.4495, 0.5307] | 5.0162 |
+| 2 - nuevo, con articulos | 388 | 0.1965 [0.1712, 0.2221] | 0.1898 [0.1630, 0.2172] | 0.1134 [0.0990, 0.1289] | 0.1420 [0.1245, 0.1596] | 0.1265 [0.1109, 0.1425] | 0.4304 [0.3840, 0.4794] | 3.3608 |
+| 3 - recurrente, carrito vacio | 9460 | 0.2899 [0.2844, 0.2958] | 0.2246 [0.2194, 0.2301] | 0.2171 [0.2131, 0.2215] | 0.2208 [0.2168, 0.2252] | 0.1794 [0.1763, 0.1830] | 0.6420 [0.6327, 0.6520] | 6.7346 |
+| 4 - recurrente, con articulos | 7598 | 0.2804 [0.2741, 0.2867] | 0.2542 [0.2481, 0.2609] | 0.1894 [0.1845, 0.1937] | 0.2171 [0.2122, 0.2216] | 0.1888 [0.1846, 0.1926] | 0.6016 [0.5904, 0.6123] | 4.2197 |
 
 ## Comparacion
 
@@ -94,10 +93,10 @@ ranker de la de la primera etapa.
 
 | Sistema | NDCG@5 | Recall@5 | Precision@5 | F1@5 | hit_rate@5 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Popularidad reciente x estacionalidad (sin aprendizaje) | 0.0881 | 0.0793 | 0.0618 | 0.0695 | 0.2701 |
-| LambdaRank sin senal de sesion | 0.1938 | 0.1854 | 0.1422 | 0.1610 | 0.5343 |
-| LambdaRank con relevancia binaria de SKU (objetivo anterior) | 0.2048 | 0.1952 | 0.1491 | 0.1691 | 0.5510 |
-| **LambdaRank completo** | **0.2006** | **0.1910** | **0.1451** | **0.1649** | **0.5416** |
+| Popularidad reciente x estacionalidad (sin aprendizaje) | 0.1565 | 0.1273 | 0.1088 | 0.1173 | 0.4082 |
+| LambdaRank sin senal de sesion | 0.2753 | 0.2301 | 0.1967 | 0.2121 | 0.6096 |
+| LambdaRank con relevancia binaria de SKU (objetivo anterior) | 0.2874 | 0.2379 | 0.2063 | 0.2210 | 0.6226 |
+| **LambdaRank completo** | **0.2815** | **0.2350** | **0.2008** | **0.2165** | **0.6157** |
 
 ### Diferencias con intervalo de confianza (bootstrap pareado)
 
@@ -105,21 +104,21 @@ Diferencia = LambdaRank servido - el otro sistema, sobre las mismas queries y co
 
 | Frente a | ndcg_graded@5: diferencia [IC 95 %] | p | cat_hit_rate@5: diferencia [IC 95 %] | p | sku_hit_rate@5: diferencia [IC 95 %] | p | ndcg@5: diferencia [IC 95 %] | p |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Popularidad reciente x estacionalidad (mismo pool) | +0.0944 [+0.0916, +0.0972] | < 0.001 | +13.56 pp [+12.81, +14.37] | < 0.001 | +27.15 pp [+26.28, +28.04] | < 0.001 | +0.1125 [+0.1091, +0.1158] | < 0.001 |
-| LambdaRank sin senal de sesion | +0.0056 [+0.0045, +0.0068] | < 0.001 | +0.36 pp [+0.01, +0.69] | 0.046 | +0.73 pp [+0.36, +1.08] | 0.002 | +0.0069 [+0.0055, +0.0084] | < 0.001 |
-| LambdaRank sin features de carrito | +0.0009 [-0.0002, +0.0018] | 0.089 | +0.47 pp [+0.11, +0.80] | 0.017 | +0.03 pp [-0.38, +0.39] | 0.876 | -0.0005 [-0.0017, +0.0007] | 0.402 |
-| LambdaRank con relevancia binaria de SKU | +0.0065 [+0.0053, +0.0079] | < 0.001 | +4.06 pp [+3.60, +4.53] | < 0.001 | -0.94 pp [-1.41, -0.49] | < 0.001 | -0.0041 [-0.0057, -0.0025] | < 0.001 |
-| LambdaRank sin ranking personal de categorias | -0.0001 [-0.0014, +0.0010] | 0.817 | -0.11 pp [-0.48, +0.26] | 0.571 | +0.13 pp [-0.28, +0.49] | 0.545 | -0.0005 [-0.0020, +0.0007] | 0.435 |
+| Popularidad reciente x estacionalidad (mismo pool) | +0.0927 [+0.0900, +0.0956] | < 0.001 | +7.10 pp [+6.49, +7.67] | < 0.001 | +20.74 pp [+20.06, +21.58] | < 0.001 | +0.1250 [+0.1212, +0.1288] | < 0.001 |
+| LambdaRank sin senal de sesion | +0.0050 [+0.0038, +0.0063] | < 0.001 | +0.42 pp [+0.16, +0.68] | 0.008 | +0.61 pp [+0.28, +0.96] | 0.002 | +0.0062 [+0.0046, +0.0078] | < 0.001 |
+| LambdaRank sin features de carrito | +0.0024 [+0.0013, +0.0036] | < 0.001 | +0.51 pp [+0.19, +0.82] | 0.003 | +0.43 pp [+0.09, +0.77] | 0.011 | +0.0007 [-0.0007, +0.0023] | 0.386 |
+| LambdaRank con relevancia binaria de SKU | +0.0045 [+0.0031, +0.0059] | < 0.001 | +1.97 pp [+1.59, +2.37] | < 0.001 | -0.69 pp [-1.08, -0.27] | 0.002 | -0.0059 [-0.0077, -0.0041] | < 0.001 |
+| LambdaRank sin ranking personal de categorias | +0.0000 [-0.0011, +0.0012] | 0.939 | +0.13 pp [-0.14, +0.41] | 0.342 | +0.09 pp [-0.25, +0.43] | 0.597 | -0.0003 [-0.0017, +0.0012] | 0.715 |
 
 ### Por perfil, sin senal de sesion
 
 | grupo | n_queries | ndcg@5 | recall@5 | precision@5 | f1@5 | f1@5_por_cesta | hit_rate@5 | n_target_medio |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| total | 18000 | 0.1938 | 0.1854 | 0.1422 | 0.1610 | 0.1515 | 0.5343 | 3.9327 |
-| 1 - nuevo, carrito vacio | 521 | 0.1339 | 0.1195 | 0.1010 | 0.1094 | 0.1026 | 0.4088 | 4.1651 |
-| 2 - nuevo, con articulos | 421 | 0.0868 | 0.0915 | 0.0466 | 0.0617 | 0.0601 | 0.2090 | 2.3444 |
-| 3 - recurrente, carrito vacio | 8713 | 0.2147 | 0.1813 | 0.1765 | 0.1789 | 0.1697 | 0.6225 | 5.0319 |
-| 4 - recurrente, con articulos | 8345 | 0.1810 | 0.1986 | 0.1138 | 0.1447 | 0.1401 | 0.4664 | 2.8506 |
+| total | 18000 | 0.2753 | 0.2301 | 0.1967 | 0.2121 | 0.1769 | 0.6096 | 5.5474 |
+| 1 - nuevo, carrito vacio | 554 | 0.2077 | 0.1817 | 0.1350 | 0.1549 | 0.1260 | 0.4801 | 5.0162 |
+| 2 - nuevo, con articulos | 388 | 0.1922 | 0.1865 | 0.1119 | 0.1398 | 0.1245 | 0.4253 | 3.3608 |
+| 3 - recurrente, carrito vacio | 9460 | 0.2897 | 0.2241 | 0.2163 | 0.2201 | 0.1789 | 0.6418 | 6.7346 |
+| 4 - recurrente, con articulos | 7598 | 0.2666 | 0.2433 | 0.1811 | 0.2076 | 0.1808 | 0.5883 | 4.2197 |
 
 ## SKU o categoria: donde falla exactamente
 
@@ -129,47 +128,33 @@ referencia concreta fuera otra.
 
 | grupo | n_queries | ndcg_graded@5 | cat_hit_rate@5 | cat_precision@5 | sku_hit_rate@5 | sku_precision@5 |
 | --- | --- | --- | --- | --- | --- | --- |
-| total | 18000 | 0.2148 [0.2120, 0.2177] | 0.7181 [0.7114, 0.7248] | 0.2267 [0.2239, 0.2294] | 0.5416 [0.5348, 0.5491] | 0.1451 [0.1429, 0.1473] |
-| 1 - nuevo, carrito vacio | 521 | 0.1520 [0.1366, 0.1666] | 0.5969 [0.5528, 0.6392] | 0.1781 [0.1620, 0.1939] | 0.4031 [0.3589, 0.4434] | 0.0990 [0.0871, 0.1106] |
-| 2 - nuevo, con articulos | 421 | 0.1110 [0.0943, 0.1278] | 0.4466 [0.3967, 0.4964] | 0.1145 [0.1007, 0.1292] | 0.2257 [0.1853, 0.2637] | 0.0532 [0.0432, 0.0632] |
-| 3 - recurrente, carrito vacio | 8713 | 0.2393 [0.2350, 0.2436] | 0.7895 [0.7809, 0.7984] | 0.2730 [0.2687, 0.2774] | 0.6186 [0.6085, 0.6284] | 0.1756 [0.1719, 0.1790] |
-| 4 - recurrente, con articulos | 8345 | 0.1984 [0.1940, 0.2029] | 0.6648 [0.6556, 0.6749] | 0.1871 [0.1840, 0.1907] | 0.4857 [0.4751, 0.4963] | 0.1209 [0.1178, 0.1239] |
+| total | 18000 | 0.3015 [0.2981, 0.3052] | 0.7954 [0.7898, 0.8011] | 0.3269 [0.3231, 0.3308] | 0.6157 [0.6088, 0.6228] | 0.2008 [0.1980, 0.2040] |
+| 1 - nuevo, carrito vacio | 554 | 0.2330 [0.2161, 0.2523] | 0.7112 [0.6751, 0.7473] | 0.2560 [0.2361, 0.2758] | 0.4892 [0.4495, 0.5307] | 0.1386 [0.1260, 0.1538] |
+| 2 - nuevo, con articulos | 388 | 0.2172 [0.1957, 0.2392] | 0.7088 [0.6623, 0.7552] | 0.2289 [0.2088, 0.2495] | 0.4304 [0.3840, 0.4794] | 0.1134 [0.0990, 0.1289] |
+| 3 - recurrente, carrito vacio | 9460 | 0.3148 [0.3099, 0.3200] | 0.8057 [0.7980, 0.8139] | 0.3545 [0.3489, 0.3604] | 0.6420 [0.6327, 0.6520] | 0.2171 [0.2131, 0.2215] |
+| 4 - recurrente, con articulos | 7598 | 0.2942 [0.2885, 0.2990] | 0.7932 [0.7843, 0.8028] | 0.3026 [0.2971, 0.3077] | 0.6016 [0.5904, 0.6123] | 0.1894 [0.1845, 0.1937] |
 
-El sistema acierta la categoria en el **71.8%** de las cestas y el SKU exacto en el **54.2%**; el cociente entre las dos es **75.4%**. La distancia entre las dos columnas mide cuanto del error esta en *elegir la referencia* y no en *saber que categoria toca*. Desde la Fase 7a el surtido es de 8 referencias por categoria y el cliente repite su referencia preferida con la lealtad de la categoria (`DATA_SPEC.md`, "Fidelidad de marca").
+El sistema acierta la categoria en el **79.5%** de las cestas y el SKU exacto en el **61.6%**; el cociente entre las dos es **77.4%**. La distancia entre las dos columnas mide cuanto del error esta en *elegir la referencia* y no en *saber que categoria toca*. Desde la Fase 7a el surtido es de 8 referencias por categoria y el cliente repite su referencia preferida con la lealtad de la categoria (`DATA_SPEC.md`, "Fidelidad de marca").
 
-## Historial al dia de la cesta (punto A1)
 
-Las features de cliente x producto, cliente x categoria y cliente, y la fuente `hist` con su `due_for_repurchase`, se calculan con todas las cestas del cliente anteriores al dia de cada query (`src/recommender/history.py`), tambien las de dentro de la ventana. ALS, popularidad, afinidades y el perfil siguen congelados al inicio de cada ventana.
-
-"Antes" es el modelo con el historial congelado al inicio de la ventana (`reports/recommender/baseline_pre_a1.json`, 2026-09-17, commit `bd1adc6`), sobre las mismas queries de test.
-
-| Grupo | cat_hit_rate@5 antes | despues | cambio | sku_hit_rate@5 antes | despues | cambio | NDCG@5 antes | despues |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| total | 0.6168 | 0.7181 | +10.13 pp | 0.4947 | 0.5416 | +4.69 pp | 0.1759 | 0.2006 |
-| 1 - nuevo, carrito vacio | 0.5624 | 0.5969 | +3.45 pp | 0.3724 | 0.4031 | +3.07 pp | 0.1204 | 0.1317 |
-| 2 - nuevo, con articulos | 0.4371 | 0.4466 | +0.95 pp | 0.2114 | 0.2257 | +1.43 pp | 0.0851 | 0.0994 |
-| 3 - recurrente, carrito vacio | 0.6848 | 0.7895 | +10.47 pp | 0.5741 | 0.6186 | +4.45 pp | 0.1881 | 0.2136 |
-| 4 - recurrente, con articulos | 0.5583 | 0.6648 | +10.65 pp | 0.4337 | 0.4857 | +5.20 pp | 0.1713 | 0.1965 |
-
-El detalle de los huecos que caian en categorias recien repuestas esta en la seccion de diagnostico (`verify_recommender_diagnostics`).
 
 ## Carrito y diversidad (punto A2)
 
-Con una linea por categoria en cada cesta, un hueco del top-5 se *regala* si su categoria ya esta en el carrito (no puede acertar) o ya salio mas arriba en la lista (de las dos, como mucho acierta una). Dos piezas atacan el problema: tres features de carrito (`cat_in_cart`, `dept_n_in_cart`, `dept_share_in_cart`) y un re-ranking final (`src/recommender/rerank.py`). Reglas servidas: **como maximo 1 referencia(s) por categoria, categorias del carrito relegadas** (`RecommenderConfig.rerank`), las mismas en esta evaluacion, en las tablas de arriba y en la demo.
+Con (casi siempre) una linea por categoria en cada cesta, un hueco del top-5 se *regala* si su categoria ya esta en el carrito (no puede acertar) o ya salio mas arriba en la lista (de las dos, como mucho acierta una). Dos piezas atacan el problema: tres features de carrito (`cat_in_cart`, `dept_n_in_cart`, `dept_share_in_cart`) y un re-ranking final (`src/recommender/rerank.py`). Reglas servidas: **como maximo 1 referencia(s) por categoria, categorias del carrito relegadas** (`RecommenderConfig.rerank`), las mismas en esta evaluacion, en las tablas de arriba y en la demo.
 
 | Variante | cat_hit_rate@5 | sku_hit_rate@5 | NDCG@5 | Huecos regalados | Huecos en cat. del carrito (perfiles 2 y 4) | Listas con carrito afectadas | Listas con cat. repetida | Categorias distintas |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Sin features de carrito, sin re-ranking (antes) | 0.6601 | 0.5233 | 0.1914 | 18.2% | 7.0% | 66.4% | 53.9% | 4.21 |
-| Sin features de carrito + re-ranking servido | 0.7134 | 0.5412 | 0.2011 | 0.0% | 0.0% | 0.0% | 0.0% | 5.00 |
-| Con features de carrito, sin re-ranking | 0.6570 | 0.5237 | 0.1918 | 20.8% | 0.0% | 66.7% | 63.0% | 3.96 |
-| Con features de carrito + 1 por categoria | 0.7182 | 0.5416 | 0.2006 | 0.0% | 0.0% | 0.1% | 0.0% | 5.00 |
-| **Con features de carrito + 1 por categoria + exclusion del carrito** | **0.7181** | **0.5416** | **0.2006** | **0.0%** | **0.0%** | **0.0%** | **0.0%** | **5.00** |
+| Sin features de carrito, sin re-ranking (antes) | 0.7196 | 0.5953 | 0.2634 | 31.1% | 13.5% | 84.8% | 77.9% | 3.65 |
+| Sin features de carrito + re-ranking servido | 0.7903 | 0.6114 | 0.2808 | 0.0% | 0.0% | 0.0% | 0.0% | 5.00 |
+| Con features de carrito, sin re-ranking | 0.7182 | 0.6022 | 0.2670 | 32.8% | 1.4% | 83.6% | 83.6% | 3.38 |
+| Con features de carrito + 1 por categoria | 0.7967 | 0.6159 | 0.2819 | 1.3% | 2.9% | 13.8% | 0.0% | 5.00 |
+| **Con features de carrito + 1 por categoria + exclusion del carrito** | **0.7954** | **0.6157** | **0.2815** | **0.0%** | **0.0%** | **0.0%** | **0.0%** | **5.00** |
 
 Las filas "sin features de carrito" usan un LambdaRank entrenado aparte con las mismas queries y sin esas tres columnas. Los huecos en categorias del carrito se miden contra el prefijo del ticket; la regla de exclusion usa el carrito en el corte, que ademas incluye los `add_to_cart` de sesion.
 
-Frente a la fila "antes" (mismo entrenamiento, sin las tres features ni reglas), el sistema servido (en negrita) cambia cat_hit_rate@5 en **+5.81 pp** y sku_hit_rate@5 en **+1.83 pp**, y los huecos regalados pasan del 18.2% al 0.0%.
+Frente a la fila "antes" (mismo entrenamiento, sin las tres features ni reglas), el sistema servido (en negrita) cambia cat_hit_rate@5 en **+7.59 pp** y sku_hit_rate@5 en **+2.04 pp**, y los huecos regalados pasan del 31.1% al 0.0%.
 
-Referencia congelada del modelo que habia en disco antes de este cambio (`reports/recommender/baseline_pre_diagnostico.json`, 2026-09-17): cat_hit_rate@5 0.6003, sku_hit_rate@5 0.4948, NDCG@5 0.1752. La fila "antes" lo reentrena con el codigo actual y puede diferir un poco: el muestreo de columnas de LightGBM depende del numero de features.
+
 
 ### Huecos regalados del sistema servido, por perfil
 
@@ -186,8 +171,8 @@ Referencia congelada del modelo que habia en disco antes de este cambio (`report
 
 | | F1 |
 | --- | ---: |
-| Este sistema, F1@5 (media armonica de Precision@5 y Recall@5 medios) | 0.1649 |
-| Este sistema, F1@5 por cesta (media del F1 de cada cesta) | 0.1552 |
+| Este sistema, F1@5 (media armonica de Precision@5 y Recall@5 medios) | 0.2165 |
+| Este sistema, F1@5 por cesta (media del F1 de cada cesta) | 0.1807 |
 | Instacart, 1er puesto (aprox.) | 0.41 |
 
 **No es el mismo benchmark y las cifras no se deben leer como una comparacion directa.**
@@ -200,7 +185,7 @@ Se ponen juntas solo como orden de magnitud, con estas diferencias de planteamie
 - **Tamano de la lista.** En Instacart cada pedido recibe un conjunto de **tamano
   variable**, elegido para maximizar el F1 esperado de ese pedido (F1-maximization),
   incluida la opcion de predecir "ninguno". Aqui la lista es **siempre de 5**: con
-  3.9 productos por adivinar de media, la Precision@5 y el
+  5.5 productos por adivinar de media, la Precision@5 y el
   Recall@5 estan acotados por el propio formato, acierte lo que acierte el modelo.
 - **Que se optimiza.** El ranker se entrena con LambdaRank para NDCG@5 graduada (SKU y
   categoria), no para F1.
@@ -210,34 +195,61 @@ Se ponen juntas solo como orden de magnitud, con estas diferencias de planteamie
   segunda fila ("por cesta"), no la de cabecera.
 
 
+## Frente al dataset anterior a la Fase 8
+
+La Fase 8 regenera el dataset con misiones de compra, tamano de cesta con cola larga, sustitucion entre categorias, segunda referencia en las categorias de exploracion y propension a la marca blanca (`DATA_SPEC.md`, "Estructura de la cesta"). Mismo codigo, mismas ventanas y mismo numero de queries de test; cambia el dato. Las cifras de antes estan congeladas en `reports/recommender/baseline_pre_fase8.json` (2026-09-17, commit `0a49c2e`), y el informe completo de entonces, con sus comparaciones antes/despues de los puntos A1, A2 y A4, en `snapshots/pre-fase-8/reports/recommender/metrics.md`.
+
+| Metrica | Fase 7 (dataset 7a) | Fase 8 | Cambio |
+| --- | ---: | ---: | ---: |
+| NDCG@5 graduada | 0.2148 | 0.3015 | 1.40x |
+| cat_hit_rate@5 | 0.7181 | 0.7954 | +7.73 pp |
+| sku_hit_rate@5 | 0.5416 | 0.6157 | +7.41 pp |
+| NDCG@5 SKU | 0.2006 | 0.2815 | 1.40x |
+| Recall@5 | 0.1910 | 0.2350 | 1.23x |
+| Precision@5 | 0.1451 | 0.2008 | 1.38x |
+| F1@5 | 0.1649 | 0.2165 | 1.31x |
+| Productos por adivinar (media) | 3.9327 | 5.5474 | 1.41x |
+
+Son cestas distintas de datasets distintos, asi que no hay contraste pareado. Tampoco se puede leer el cambio como mejor o peor modelo: el target cambia de tamano y de estructura. Lo que dice cuanto del techo alcanza cada sistema en cada dataset esta en la seccion de diagnostico.
+
+### Por perfil
+
+| Grupo | n_queries 7a | Fase 8 | cat_hit_rate@5 7a | Fase 8 | sku_hit_rate@5 7a | Fase 8 | NDCG@5 graduada 7a | Fase 8 | Productos por adivinar 7a | Fase 8 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| total | 18000 | 18000 | 0.7181 | 0.7954 | 0.5416 | 0.6157 | 0.2148 | 0.3015 | 3.93 | 5.55 |
+| 1 - nuevo, carrito vacio | 521 | 554 | 0.5969 | 0.7112 | 0.4031 | 0.4892 | 0.1520 | 0.2330 | 4.17 | 5.02 |
+| 2 - nuevo, con articulos | 421 | 388 | 0.4466 | 0.7088 | 0.2257 | 0.4304 | 0.1110 | 0.2172 | 2.34 | 3.36 |
+| 3 - recurrente, carrito vacio | 8713 | 9460 | 0.7895 | 0.8057 | 0.6186 | 0.6420 | 0.2393 | 0.3148 | 5.03 | 6.73 |
+| 4 - recurrente, con articulos | 8345 | 7598 | 0.6648 | 0.7932 | 0.4857 | 0.6016 | 0.1984 | 0.2942 | 2.85 | 4.22 |
+
 ## Frente a la Fase 3 original
 
 La Fase 3 se entreno sobre el dataset anterior a la Fase 7a (1.500 productos, ~24 referencias por categoria y eleccion de SKU casi aleatoria). Sus cifras estan congeladas en `reports/recommender/baseline_fase3.json`. Mismo codigo, mismas ventanas y mismo numero de queries de test; cambia el dato.
 
 | Metrica | Fase 3 (dataset viejo) | Fase 7c (dataset nuevo) | Cambio |
 | --- | ---: | ---: | ---: |
-| NDCG@5 | 0.0343 | 0.2006 | 5.85x |
-| Recall@5 | 0.0332 | 0.1910 | 5.75x |
-| Precision@5 | 0.0251 | 0.1451 | 5.79x |
-| F1@5 | 0.0286 | 0.1649 | 5.77x |
-| hit_rate@5 (SKU) | 0.1184 | 0.5416 | 4.57x |
-| hit_rate@5 (categoria) | 0.5144 | 0.7181 | 1.40x |
-| SKU / categoria (hit_rate) | 0.2302 | 0.7541 | 3.28x |
-| SKU / categoria (precision) | 0.1371 | 0.6401 | 4.67x |
+| NDCG@5 | 0.0343 | 0.2815 | 8.21x |
+| Recall@5 | 0.0332 | 0.2350 | 7.08x |
+| Precision@5 | 0.0251 | 0.2008 | 8.01x |
+| F1@5 | 0.0286 | 0.2165 | 7.58x |
+| hit_rate@5 (SKU) | 0.1184 | 0.6157 | 5.20x |
+| hit_rate@5 (categoria) | 0.5144 | 0.7954 | 1.55x |
+| SKU / categoria (hit_rate) | 0.2302 | 0.7740 | 3.36x |
+| SKU / categoria (precision) | 0.1371 | 0.6142 | 4.48x |
 
 Un matiz al leerlo: el catalogo pasa de 1.500 a 496 productos, asi que un top-5 al azar tambien acierta mas que antes. El baseline de popularidad de la tabla de comparacion, sobre el mismo pool, es lo que aisla lo que aporta el ranker.
 
 ## Cold-start sobremuestreado (punto M4)
 
-En la muestra de cabecera el cold-start son pocas queries (521 en el perfil 1 y 421 en el perfil 2). Aqui entran **todas** las cestas de la ventana de test sin compras anteriores a 2025-11-01: 3,140 cestas (1,495 anonimas y el resto de 496 clientes nuevos), cada una con los dos cortes de cabecera (carrito vacio y mitad del ticket): 6,092 queries. Las queries de una misma cesta estan correladas, asi que el bootstrap remuestrea cestas.
+En la muestra de cabecera el cold-start son pocas queries (554 en el perfil 1 y 388 en el perfil 2). Aqui entran **todas** las cestas de la ventana de test sin compras anteriores a 2025-11-01: 3,140 cestas (1,495 anonimas y el resto de 496 clientes nuevos), cada una con los dos cortes de cabecera (carrito vacio y mitad del ticket): 5,802 queries. Las queries de una misma cesta estan correladas, asi que el bootstrap remuestrea cestas.
 
 Estos clientes no tienen ninguna cesta antes del inicio del test, asi que no han entrado en ninguna fuente de candidatos (popularidad, afinidades, ALS) ni en el entrenamiento del ranker. Son clientes nunca vistos por ningun modelo. Lo unico que se sabe de ellos es su historial as-of dentro de la propia ventana, igual que en produccion. Mismos modelos y mismas fuentes que la cabecera.
 
 | grupo | n_queries | n_cestas | ndcg_graded@5 | cat_hit_rate@5 | sku_hit_rate@5 | ndcg@5 | recall@5 | n_target_medio |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| perfiles 1 y 2 | 6092 | 3140 | 0.1333 [0.1276, 0.1391] | 0.5289 [0.5133, 0.5440] | 0.3285 [0.3127, 0.3428] | 0.1180 [0.1116, 0.1244] | 0.1147 [0.1082, 0.1210] | 3.3733 |
-| 1 - nuevo, carrito vacio | 3140 | 3140 | 0.1494 [0.1434, 0.1555] | 0.5952 [0.5790, 0.6118] | 0.3876 [0.3704, 0.4038] | 0.1274 [0.1206, 0.1338] | 0.1112 [0.1050, 0.1172] | 4.2309 |
-| 2 - nuevo, con articulos | 2952 | 2952 | 0.1161 [0.1103, 0.1224] | 0.4583 [0.4411, 0.4756] | 0.2656 [0.2503, 0.2818] | 0.1079 [0.1012, 0.1157] | 0.1184 [0.1109, 0.1267] | 2.4610 |
+| perfiles 1 y 2 | 5802 | 3140 | 0.2228 [0.2161, 0.2302] | 0.7192 [0.7057, 0.7332] | 0.4555 [0.4414, 0.4717] | 0.1943 [0.1864, 0.2026] | 0.1700 [0.1624, 0.1780] | 4.5789 |
+| 1 - nuevo, carrito vacio | 3140 | 3140 | 0.2429 [0.2351, 0.2517] | 0.7395 [0.7232, 0.7561] | 0.5054 [0.4876, 0.5233] | 0.2087 [0.2004, 0.2182] | 0.1691 [0.1608, 0.1777] | 5.5634 |
+| 2 - nuevo, con articulos | 2662 | 2662 | 0.1991 [0.1914, 0.2070] | 0.6953 [0.6784, 0.7126] | 0.3967 [0.3779, 0.4155] | 0.1772 [0.1671, 0.1867] | 0.1710 [0.1604, 0.1814] | 3.4177 |
 
 Entre corchetes, el intervalo de confianza al 95%: bootstrap percentil con 1,000 remuestreos de cestas (semilla 42; `evaluate.bootstrap_means`).
 
@@ -249,21 +261,21 @@ Diferencia = LambdaRank servido - el otro sistema (bootstrap pareado por cesta).
 
 | Frente a | ndcg_graded@5: diferencia [IC 95 %] | p | cat_hit_rate@5: diferencia [IC 95 %] | p | sku_hit_rate@5: diferencia [IC 95 %] | p | ndcg@5: diferencia [IC 95 %] | p |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Popularidad reciente x estacionalidad (mismo pool) | +0.0249 [+0.0203, +0.0296] | < 0.001 | +3.18 pp [+1.53, +4.84] | < 0.001 | +8.25 pp [+6.78, +9.87] | < 0.001 | +0.0296 [+0.0248, +0.0346] | < 0.001 |
-| LambdaRank sin senal de sesion | +0.0006 [-0.0008, +0.0020] | 0.416 | +0.03 pp [-0.73, +0.76] | 0.963 | +0.16 pp [-0.45, +0.80] | 0.657 | +0.0009 [-0.0008, +0.0026] | 0.292 |
-| LambdaRank sin features de carrito | -0.0005 [-0.0022, +0.0011] | 0.588 | -0.35 pp [-1.05, +0.38] | 0.388 | -0.19 pp [-0.92, +0.45] | 0.616 | -0.0000 [-0.0019, +0.0017] | 0.995 |
-| LambdaRank con relevancia binaria de SKU | +0.0033 [+0.0011, +0.0057] | 0.005 | +0.19 pp [-0.80, +1.24] | 0.730 | -0.45 pp [-1.31, +0.45] | 0.351 | +0.0007 [-0.0017, +0.0033] | 0.590 |
-| LambdaRank sin ranking personal de categorias | +0.0002 [-0.0019, +0.0022] | 0.875 | -0.10 pp [-0.89, +0.67] | 0.857 | +0.06 pp [-0.67, +0.80] | 0.898 | +0.0007 [-0.0015, +0.0030] | 0.549 |
+| Popularidad reciente x estacionalidad (mismo pool) | +0.0167 [+0.0129, +0.0203] | < 0.001 | +2.07 pp [+1.05, +3.03] | < 0.001 | +3.89 pp [+2.74, +5.00] | < 0.001 | +0.0213 [+0.0165, +0.0261] | < 0.001 |
+| LambdaRank sin senal de sesion | +0.0023 [+0.0005, +0.0042] | 0.018 | -0.06 pp [-0.73, +0.54] | 0.879 | +0.41 pp [-0.25, +1.08] | 0.272 | +0.0037 [+0.0016, +0.0062] | 0.002 |
+| LambdaRank sin features de carrito | -0.0001 [-0.0019, +0.0021] | 0.957 | -0.25 pp [-0.96, +0.38] | 0.465 | +0.73 pp [+0.06, +1.46] | 0.046 | +0.0020 [-0.0003, +0.0047] | 0.113 |
+| LambdaRank con relevancia binaria de SKU | -0.0001 [-0.0023, +0.0021] | 0.912 | +0.25 pp [-0.38, +0.89] | 0.444 | -0.86 pp [-1.50, -0.16] | 0.009 | -0.0039 [-0.0065, -0.0011] | 0.006 |
+| LambdaRank sin ranking personal de categorias | -0.0009 [-0.0028, +0.0010] | 0.347 | +0.03 pp [-0.64, +0.70] | 0.967 | +0.16 pp [-0.57, +0.86] | 0.655 | +0.0008 [-0.0017, +0.0034] | 0.481 |
 
 **2 - nuevo, con articulos.**
 
 | Frente a | ndcg_graded@5: diferencia [IC 95 %] | p | cat_hit_rate@5: diferencia [IC 95 %] | p | sku_hit_rate@5: diferencia [IC 95 %] | p | ndcg@5: diferencia [IC 95 %] | p |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Popularidad reciente x estacionalidad (mismo pool) | +0.0275 [+0.0227, +0.0327] | < 0.001 | +4.23 pp [+2.51, +6.06] | < 0.001 | +7.32 pp [+5.86, +8.88] | < 0.001 | +0.0326 [+0.0267, +0.0386] | < 0.001 |
-| LambdaRank sin senal de sesion | +0.0052 [+0.0029, +0.0077] | < 0.001 | +0.17 pp [-0.68, +1.15] | 0.724 | +1.15 pp [+0.44, +1.96] | 0.005 | +0.0076 [+0.0047, +0.0108] | < 0.001 |
-| LambdaRank sin features de carrito | -0.0003 [-0.0022, +0.0018] | 0.785 | -0.10 pp [-0.98, +0.75] | 0.866 | -0.03 pp [-0.75, +0.75] | 0.963 | -0.0006 [-0.0030, +0.0021] | 0.672 |
-| LambdaRank con relevancia binaria de SKU | +0.0036 [+0.0010, +0.0063] | 0.014 | -0.14 pp [-1.22, +1.02] | 0.847 | -0.64 pp [-1.49, +0.30] | 0.174 | +0.0013 [-0.0019, +0.0050] | 0.456 |
-| LambdaRank sin ranking personal de categorias | +0.0002 [-0.0019, +0.0024] | 0.814 | -0.95 pp [-1.90, +0.00] | 0.058 | +0.17 pp [-0.64, +0.98] | 0.696 | +0.0011 [-0.0017, +0.0040] | 0.449 |
+| Popularidad reciente x estacionalidad (mismo pool) | +0.0274 [+0.0222, +0.0321] | < 0.001 | +5.86 pp [+4.51, +7.36] | < 0.001 | +5.63 pp [+4.21, +7.14] | < 0.001 | +0.0283 [+0.0216, +0.0352] | < 0.001 |
+| LambdaRank sin senal de sesion | +0.0061 [+0.0035, +0.0086] | < 0.001 | +0.49 pp [-0.19, +1.20] | 0.203 | +1.24 pp [+0.30, +2.10] | 0.008 | +0.0082 [+0.0043, +0.0120] | 0.002 |
+| LambdaRank sin features de carrito | +0.0012 [-0.0012, +0.0038] | 0.344 | +0.23 pp [-0.53, +1.09] | 0.613 | +0.23 pp [-0.68, +1.13] | 0.644 | +0.0006 [-0.0034, +0.0044] | 0.772 |
+| LambdaRank con relevancia binaria de SKU | +0.0028 [-0.0003, +0.0057] | 0.078 | +1.84 pp [+0.83, +2.85] | 0.002 | -0.26 pp [-1.28, +0.64] | 0.652 | -0.0003 [-0.0047, +0.0039] | 0.887 |
+| LambdaRank sin ranking personal de categorias | -0.0001 [-0.0026, +0.0022] | 0.948 | +0.04 pp [-0.71, +0.79] | 0.944 | +0.49 pp [-0.30, +1.28] | 0.254 | +0.0017 [-0.0021, +0.0053] | 0.363 |
 
 
 ## Techo de la primera etapa
@@ -273,11 +285,11 @@ no lo puede recuperar.
 
 | grupo | n_queries | pool_recall | pool_size_medio |
 | --- | --- | --- | --- |
-| total | 18000 | 0.7781 | 140.2235 |
-| 1 - nuevo, carrito vacio | 521 | 0.4104 | 63.9060 |
-| 2 - nuevo, con articulos | 421 | 0.5291 | 110.6152 |
-| 3 - recurrente, carrito vacio | 8713 | 0.7786 | 123.3732 |
-| 4 - recurrente, con articulos | 8345 | 0.8132 | 164.0753 |
+| total | 18000 | 0.8245 | 141.3904 |
+| 1 - nuevo, carrito vacio | 554 | 0.5533 | 64.5325 |
+| 2 - nuevo, con articulos | 388 | 0.6256 | 114.9536 |
+| 3 - recurrente, carrito vacio | 9460 | 0.8302 | 124.9186 |
+| 4 - recurrente, con articulos | 7598 | 0.8474 | 168.8530 |
 
 ## Que features usa el ranker
 
@@ -285,43 +297,43 @@ Importancia por ganancia, las 25 primeras.
 
 | feature | gain | split |
 | --- | --- | --- |
-| hist_rank | 59144.3962 | 128 |
-| category_idx | 38312.8745 | 711 |
-| cat_overdue_ratio | 22254.7706 | 380 |
-| cat_days_since | 16600.0462 | 459 |
-| hist_n_baskets | 9521.9184 | 124 |
-| cat_freq_share | 9261.3332 | 266 |
-| sess_secs_since_view | 7856.3732 | 156 |
-| cat_in_cart | 6767.7755 | 125 |
-| cat_due_rank | 6607.3911 | 83 |
-| cat_freq_rank | 5229.8296 | 88 |
-| is_known_customer | 4602.4211 | 45 |
-| aff_lift_max | 4264.1563 | 157 |
-| typical_repurchase_days | 3920.5979 | 124 |
-| cust_n_products | 2642.8706 | 129 |
-| cust_frequency | 2583.9762 | 96 |
-| hist_days_since | 2277.7461 | 85 |
-| cust_recency_days | 1718.1457 | 118 |
-| prod_pop_all | 1525.5423 | 51 |
-| cat_expected_days | 1245.3104 | 111 |
-| cataff_conf_max | 1157.6332 | 64 |
-| cust_avg_ticket | 1132.5926 | 104 |
-| aff_conf_sum | 1100.3845 | 56 |
-| cat_n_purchase_days | 1057.8356 | 65 |
-| hist_units | 973.2104 | 37 |
-| sess_viewed | 853.1224 | 24 |
+| category_idx | 99842.2167 | 1553 |
+| hist_rank | 70311.3716 | 259 |
+| cat_overdue_ratio | 26058.5815 | 869 |
+| cat_days_since | 15257.5715 | 832 |
+| cat_freq_share | 14731.5080 | 616 |
+| hist_n_baskets | 7870.7784 | 137 |
+| cat_due_rank | 7657.6997 | 224 |
+| cat_in_cart | 7624.1887 | 272 |
+| typical_repurchase_days | 6451.1697 | 211 |
+| prefix_size | 5590.9380 | 408 |
+| dept_share_in_cart | 5242.7116 | 334 |
+| cust_recency_days | 4508.7350 | 434 |
+| cust_frequency | 4460.4566 | 317 |
+| sess_secs_since_view | 4285.3377 | 123 |
+| cust_avg_ticket | 4237.5486 | 498 |
+| cat_freq_rank | 4175.3812 | 169 |
+| cat_expected_days | 3841.5515 | 468 |
+| aff_conf_sum | 3728.7056 | 104 |
+| prod_pop_all | 3453.5709 | 71 |
+| dept_n_in_cart | 3429.3057 | 150 |
+| cataff_conf_max | 3133.2299 | 150 |
+| cust_n_products | 3131.8558 | 342 |
+| aff_lift_max | 3092.4995 | 133 |
+| cat_n_purchase_days | 2091.0511 | 232 |
+| hist_units | 1936.7693 | 128 |
 
 <!-- diagnostics:start -->
 ## Diagnostico: baselines independientes del pool y techo teorico
 
-Generado por `python -m src.recommender.verify_recommender_diagnostics` (2026-09-17), sobre las 18,000 queries de test de las predicciones en disco (sha256 de `recommendations_test.parquet`: `ac3f78bdf4fa`). El oraculo necesita antes `python -m data_generation.export_oracle`. Esta seccion no la reescribe el pipeline: si se reentrena, hay que volver a lanzar el verificador. Puntos A3, A4, A6 y M8 de `docs/diagnostico-fase7.md`. La metrica principal es la NDCG@5 graduada (3 por SKU exacto, 1 por categoria; `evaluate.category_metrics`).
+Generado por `python -m src.recommender.verify_recommender_diagnostics` (2026-09-17), sobre las 18,000 queries de test de las predicciones en disco (sha256 de `recommendations_test.parquet`: `4e502725e32a`). El oraculo necesita antes `python -m data_generation.export_oracle`. Esta seccion no la reescribe el pipeline: si se reentrena, hay que volver a lanzar el verificador. Puntos A3, A4, A6 y M8 de `docs/diagnostico-fase7.md`. La metrica principal es la NDCG@5 graduada (3 por SKU exacto, 1 por categoria; `evaluate.category_metrics`).
 
 ### Lectura rapida
 
-- **Mejor baseline en cat_hit_rate@5:** Frecuencia personal x due_for_repurchase + referencia favorita, 0.6789 frente a 0.7181 del LambdaRank: -3.9 pp, el LambdaRank va por delante (LambdaRank - baseline: +3.92 pp [+3.25, +4.59], p < 0.001).
-- **Techo teorico de cat_hit_rate@5:** 0.7816. El LambdaRank alcanza el 91.9% y el mejor baseline el 86.9%.
-- **Techo de sku_hit_rate@5:** 0.5920. El LambdaRank alcanza el 91.5%.
-- **Objetivo del ranker (A4):** con relevancia binaria de SKU, cat_hit_rate@5 0.6775 (-0.1 pp frente al mejor baseline); con la graduada servida, 0.7181 (+3.9 pp). sku_hit_rate@5 pasa de 0.5510 a 0.5416 y la NDCG@5 graduada de 0.2083 a 0.2148.
+- **Mejor baseline en cat_hit_rate@5:** Reglas de asociacion de categoria + referencia lider, 0.7594 frente a 0.7954 del LambdaRank: -3.6 pp, el LambdaRank va por delante (LambdaRank - baseline: +3.61 pp [+3.04, +4.17], p < 0.001).
+- **Techo teorico de cat_hit_rate@5:** 0.8382. El LambdaRank alcanza el 94.9% y el mejor baseline el 90.6%.
+- **Techo de sku_hit_rate@5:** 0.6677. El LambdaRank alcanza el 92.2%.
+- **Objetivo del ranker (A4):** con relevancia binaria de SKU, cat_hit_rate@5 0.7758 (+1.6 pp frente al mejor baseline); con la graduada servida, 0.7954 (+3.6 pp). sku_hit_rate@5 pasa de 0.6226 a 0.6157 y la NDCG@5 graduada de 0.2970 a 0.3015.
 
 ### Todos los sistemas, total
 
@@ -329,21 +341,35 @@ Las columnas "% techo" dividen por el oraculo correspondiente sobre las mismas q
 
 | Sistema | NDCG@5 graduada | cat_hit_rate@5 | % techo | cat_precision@5 | sku_hit_rate@5 | % techo SKU | sku_precision@5 | NDCG@5 SKU | Huecos regalados |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **Oraculo de categoria (techo)** | 0.2308 | 0.7816 | — | 0.2660 | 0.5542 | — | 0.1495 | 0.2004 | 0.0% |
-| **Oraculo de SKU (techo)** | 0.2340 | 0.7309 | — | 0.2339 | 0.5920 | — | 0.1661 | 0.2269 | 0.0% |
-| **LambdaRank servido: relevancia graduada (predicciones en disco)** | 0.2148 | 0.7181 | 91.9% | 0.2267 | 0.5416 | 91.5% | 0.1451 | 0.2006 | 0.0% |
-| LambdaRank con relevancia binaria de SKU (ablacion A4) | 0.2083 | 0.6775 | 86.7% | 0.2036 | 0.5510 | 93.1% | 0.1491 | 0.2048 | 0.0% |
-| LambdaRank antes de A4 (relevancia binaria, congelado) | 0.2059 | 0.6743 | 86.3% | 0.2021 | 0.5488 | 92.7% | 0.1482 | 0.2028 | 0.0% |
-| LambdaRank antes de A1 (historial congelado) | 0.1791 | 0.6168 | 78.9% | 0.1754 | 0.4947 | 83.6% | 0.1285 | 0.1759 | 0.0% |
-| Frecuencia personal x due_for_repurchase + referencia favorita | 0.1680 | 0.6789 | 86.9% | 0.2089 | 0.4214 | 71.2% | 0.1047 | 0.1374 | 0.0% |
-| Frecuencia personal por categoria + referencia favorita | 0.1564 | 0.6489 | 83.0% | 0.1957 | 0.3994 | 67.5% | 0.0971 | 0.1278 | 0.0% |
-| Popularidad de categoria + referencia lider | 0.1237 | 0.6109 | 78.2% | 0.1791 | 0.2651 | 44.8% | 0.0605 | 0.0867 | 0.0% |
-| Reglas de asociacion de categoria + referencia lider | 0.1222 | 0.6096 | 78.0% | 0.1782 | 0.2586 | 43.7% | 0.0591 | 0.0835 | 0.0% |
-| Repetir las referencias favoritas del cliente | 0.1616 | 0.5969 | 76.4% | 0.1739 | 0.4481 | 75.7% | 0.1125 | 0.1512 | 1.4% |
-| Popularidad global (SKU) | 0.1198 | 0.5799 | 74.2% | 0.1666 | 0.2662 | 45.0% | 0.0606 | 0.0871 | 0.5% |
-| Aleatorio | 0.0301 | 0.2754 | 35.2% | 0.0641 | 0.0408 | 6.9% | 0.0082 | 0.0102 | 2.8% |
+| **Oraculo de categoria (techo)** | 0.3310 | 0.8382 | — | 0.3762 | 0.6425 | — | 0.2124 | 0.2941 | 0.0% |
+| **Oraculo de SKU (techo)** | 0.3406 | 0.8292 | — | 0.3490 | 0.6677 | — | 0.2354 | 0.3283 | 0.0% |
+| **LambdaRank servido: relevancia graduada (predicciones en disco)** | 0.3015 | 0.7954 | 94.9% | 0.3269 | 0.6157 | 92.2% | 0.2008 | 0.2815 | 0.0% |
+| LambdaRank con relevancia binaria de SKU (ablacion A4) | 0.2970 | 0.7758 | 92.6% | 0.3074 | 0.6226 | 93.3% | 0.2063 | 0.2874 | 0.0% |
+| Reglas de asociacion de categoria + referencia lider | 0.2117 | 0.7594 | 90.6% | 0.3067 | 0.4012 | 60.1% | 0.1058 | 0.1475 | 0.0% |
+| Frecuencia personal x due_for_repurchase + referencia favorita | 0.2479 | 0.7493 | 89.4% | 0.3032 | 0.5276 | 79.0% | 0.1555 | 0.2093 | 0.0% |
+| Frecuencia personal por categoria + referencia favorita | 0.2414 | 0.7405 | 88.3% | 0.2960 | 0.5120 | 76.7% | 0.1489 | 0.2029 | 0.0% |
+| Popularidad de categoria + referencia lider | 0.2039 | 0.7383 | 88.1% | 0.2972 | 0.3949 | 59.1% | 0.1043 | 0.1417 | 0.0% |
+| Popularidad global (SKU) | 0.2104 | 0.7173 | 85.6% | 0.2909 | 0.4136 | 61.9% | 0.1103 | 0.1572 | 2.5% |
+| Repetir las referencias favoritas del cliente | 0.2455 | 0.6989 | 83.4% | 0.2701 | 0.5441 | 81.5% | 0.1656 | 0.2295 | 3.6% |
+| Aleatorio | 0.0395 | 0.3137 | 37.4% | 0.0882 | 0.0515 | 7.7% | 0.0108 | 0.0126 | 2.9% |
 
-Cifras congeladas del LambdaRank en `reports/recommender/baseline_pre_diagnostico.json` (2026-09-17, commit `83ab9f7`): cat_hit_rate@5 0.6003, sku_hit_rate@5 0.4948. **Las predicciones en disco ya no son las congeladas**: la fila del LambdaRank de arriba es la version actual.
+### Frente al dataset anterior a la Fase 8
+
+Los mismos sistemas, medidos con el mismo codigo sobre el dataset de la Fase 7a (`reports/recommender/baseline_pre_fase8.json`, 2026-09-17, commit `0a49c2e`; el resto de artefactos de ese momento esta en `snapshots/pre-fase-8/`). Son queries distintas de datasets distintos: la comparacion es de nivel, no pareada. El techo tambien cambia, asi que la columna que dice cuanto mejora cada sistema *respecto a lo alcanzable* es el % del techo.
+
+| Sistema | NDCG@5 graduada antes | ahora | cat_hit_rate@5 antes | ahora | % techo antes | ahora | sku_hit_rate@5 antes | ahora | % techo SKU antes | ahora |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **Oraculo de categoria (techo)** | 0.2308 | 0.3310 | 0.7816 | 0.8382 | — | — | 0.5542 | 0.6425 | — | — |
+| **Oraculo de SKU (techo)** | 0.2340 | 0.3406 | 0.7309 | 0.8292 | — | — | 0.5920 | 0.6677 | — | — |
+| **LambdaRank servido: relevancia graduada (predicciones en disco)** | 0.2148 | 0.3015 | 0.7181 | 0.7954 | 91.9% | 94.9% | 0.5416 | 0.6157 | 91.5% | 92.2% |
+| LambdaRank con relevancia binaria de SKU (ablacion A4) | 0.2083 | 0.2970 | 0.6775 | 0.7758 | 86.7% | 92.6% | 0.5510 | 0.6226 | 93.1% | 93.3% |
+| Reglas de asociacion de categoria + referencia lider | 0.1222 | 0.2117 | 0.6096 | 0.7594 | 78.0% | 90.6% | 0.2586 | 0.4012 | 43.7% | 60.1% |
+| Frecuencia personal x due_for_repurchase + referencia favorita | 0.1680 | 0.2479 | 0.6789 | 0.7493 | 86.9% | 89.4% | 0.4214 | 0.5276 | 71.2% | 79.0% |
+| Frecuencia personal por categoria + referencia favorita | 0.1564 | 0.2414 | 0.6489 | 0.7405 | 83.0% | 88.3% | 0.3994 | 0.5120 | 67.5% | 76.7% |
+| Popularidad de categoria + referencia lider | 0.1237 | 0.2039 | 0.6109 | 0.7383 | 78.2% | 88.1% | 0.2651 | 0.3949 | 44.8% | 59.1% |
+| Popularidad global (SKU) | 0.1198 | 0.2104 | 0.5799 | 0.7173 | 74.2% | 85.6% | 0.2662 | 0.4136 | 45.0% | 61.9% |
+| Repetir las referencias favoritas del cliente | 0.1616 | 0.2455 | 0.5969 | 0.6989 | 76.4% | 83.4% | 0.4481 | 0.5441 | 75.7% | 81.5% |
+| Aleatorio | 0.0301 | 0.0395 | 0.2754 | 0.3137 | 35.2% | 37.4% | 0.0408 | 0.0515 | 6.9% | 7.7% |
 
 ### LambdaRank frente a cada sistema (bootstrap pareado, punto M4)
 
@@ -351,111 +377,90 @@ Diferencia = LambdaRank servido - el otro sistema, sobre las mismas queries. Cad
 
 | Frente a | ndcg_graded@5: diferencia [IC 95 %] | p | cat_hit_rate@5: diferencia [IC 95 %] | p | sku_hit_rate@5: diferencia [IC 95 %] | p |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| LambdaRank con relevancia binaria de SKU (ablacion A4) | +0.0065 [+0.0053, +0.0079] | < 0.001 | +4.06 pp [+3.60, +4.53] | < 0.001 | -0.94 pp [-1.41, -0.49] | < 0.001 |
-| LambdaRank antes de A4 (relevancia binaria, congelado) | +0.0089 [+0.0074, +0.0103] | < 0.001 | +4.38 pp [+3.86, +4.94] | < 0.001 | -0.73 pp [-1.22, -0.29] | 0.003 |
-| LambdaRank antes de A1 (historial congelado) | +0.0357 [+0.0339, +0.0377] | < 0.001 | +10.13 pp [+9.50, +10.78] | < 0.001 | +4.69 pp [+4.11, +5.31] | < 0.001 |
-| Frecuencia personal x due_for_repurchase + referencia favorita | +0.0468 [+0.0446, +0.0491] | < 0.001 | +3.92 pp [+3.25, +4.59] | < 0.001 | +12.02 pp [+11.32, +12.67] | < 0.001 |
-| Frecuencia personal por categoria + referencia favorita | +0.0584 [+0.0562, +0.0608] | < 0.001 | +6.92 pp [+6.29, +7.62] | < 0.001 | +14.22 pp [+13.52, +14.93] | < 0.001 |
-| Popularidad de categoria + referencia lider | +0.0912 [+0.0884, +0.0938] | < 0.001 | +10.72 pp [+9.91, +11.52] | < 0.001 | +27.65 pp [+26.83, +28.54] | < 0.001 |
-| Reglas de asociacion de categoria + referencia lider | +0.0926 [+0.0898, +0.0954] | < 0.001 | +10.85 pp [+10.07, +11.62] | < 0.001 | +28.30 pp [+27.49, +29.13] | < 0.001 |
-| Repetir las referencias favoritas del cliente | +0.0532 [+0.0512, +0.0555] | < 0.001 | +12.12 pp [+11.47, +12.74] | < 0.001 | +9.34 pp [+8.73, +9.98] | < 0.001 |
-| Popularidad global (SKU) | +0.0950 [+0.0922, +0.0976] | < 0.001 | +13.82 pp [+13.03, +14.65] | < 0.001 | +27.53 pp [+26.69, +28.42] | < 0.001 |
-| Aleatorio | +0.1847 [+0.1817, +0.1877] | < 0.001 | +44.27 pp [+43.41, +45.14] | < 0.001 | +50.07 pp [+49.28, +50.84] | < 0.001 |
+| LambdaRank con relevancia binaria de SKU (ablacion A4) | +0.0045 [+0.0031, +0.0059] | < 0.001 | +1.97 pp [+1.59, +2.37] | < 0.001 | -0.69 pp [-1.08, -0.27] | 0.002 |
+| Reglas de asociacion de categoria + referencia lider | +0.0898 [+0.0870, +0.0929] | < 0.001 | +3.61 pp [+3.04, +4.17] | < 0.001 | +21.44 pp [+20.73, +22.32] | < 0.001 |
+| Frecuencia personal x due_for_repurchase + referencia favorita | +0.0536 [+0.0511, +0.0562] | < 0.001 | +4.61 pp [+4.07, +5.12] | < 0.001 | +8.81 pp [+8.20, +9.43] | < 0.001 |
+| Frecuencia personal por categoria + referencia favorita | +0.0601 [+0.0577, +0.0628] | < 0.001 | +5.49 pp [+4.94, +6.01] | < 0.001 | +10.37 pp [+9.76, +10.98] | < 0.001 |
+| Popularidad de categoria + referencia lider | +0.0976 [+0.0948, +0.1009] | < 0.001 | +5.72 pp [+5.11, +6.26] | < 0.001 | +22.08 pp [+21.36, +22.94] | < 0.001 |
+| Popularidad global (SKU) | +0.0911 [+0.0885, +0.0941] | < 0.001 | +7.81 pp [+7.20, +8.39] | < 0.001 | +20.21 pp [+19.47, +20.99] | < 0.001 |
+| Repetir las referencias favoritas del cliente | +0.0559 [+0.0535, +0.0584] | < 0.001 | +9.66 pp [+9.15, +10.20] | < 0.001 | +7.16 pp [+6.62, +7.71] | < 0.001 |
+| Aleatorio | +0.2620 [+0.2587, +0.2656] | < 0.001 | +48.17 pp [+47.37, +48.99] | < 0.001 | +56.42 pp [+55.69, +57.14] | < 0.001 |
 
 ### cat_hit_rate@5 por perfil (entre parentesis, % del techo del perfil)
 
 | Sistema | Total | Perfil 1 - nuevo, carrito vacio | Perfil 2 - nuevo, con articulos | Perfil 3 - recurrente, carrito vacio | Perfil 4 - recurrente, con articulos |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| **Oraculo de categoria (techo)** | 0.7816 | 0.6545 | 0.5297 | 0.8522 | 0.7286 |
-| **Oraculo de SKU (techo)** | 0.7309 | 0.6372 | 0.4632 | 0.8057 | 0.6723 |
-| **LambdaRank servido: relevancia graduada (predicciones en disco)** | 0.7181 (91.9%) | 0.5969 (91.2%) | 0.4466 (84.3%) | 0.7895 (92.6%) | 0.6648 (91.2%) |
-| LambdaRank con relevancia binaria de SKU (ablacion A4) | 0.6775 (86.7%) | 0.5777 (88.3%) | 0.4418 (83.4%) | 0.7490 (87.9%) | 0.6210 (85.2%) |
-| LambdaRank antes de A4 (relevancia binaria, congelado) | 0.6743 (86.3%) | 0.5835 (89.1%) | 0.4418 (83.4%) | 0.7470 (87.7%) | 0.6158 (84.5%) |
-| LambdaRank antes de A1 (historial congelado) | 0.6168 (78.9%) | 0.5624 (85.9%) | 0.4371 (82.5%) | 0.6848 (80.4%) | 0.5583 (76.6%) |
-| Frecuencia personal x due_for_repurchase + referencia favorita | 0.6789 (86.9%) | 0.5547 (84.8%) | 0.4086 (77.1%) | 0.7690 (90.2%) | 0.6062 (83.2%) |
-| Frecuencia personal por categoria + referencia favorita | 0.6489 (83.0%) | 0.5413 (82.7%) | 0.4038 (76.2%) | 0.7360 (86.4%) | 0.5771 (79.2%) |
-| Popularidad de categoria + referencia lider | 0.6109 (78.2%) | 0.5662 (86.5%) | 0.4418 (83.4%) | 0.7007 (82.2%) | 0.5285 (72.5%) |
-| Reglas de asociacion de categoria + referencia lider | 0.6096 (78.0%) | 0.5662 (86.5%) | 0.4347 (82.1%) | 0.7007 (82.2%) | 0.5261 (72.2%) |
-| Repetir las referencias favoritas del cliente | 0.5969 (76.4%) | 0.5298 (80.9%) | 0.3753 (70.9%) | 0.6845 (80.3%) | 0.5208 (71.5%) |
-| Popularidad global (SKU) | 0.5799 (74.2%) | 0.5643 (86.2%) | 0.4204 (79.4%) | 0.6654 (78.1%) | 0.4997 (68.6%) |
-| Aleatorio | 0.2754 (35.2%) | 0.2764 (42.2%) | 0.1591 (30.0%) | 0.3324 (39.0%) | 0.2218 (30.4%) |
+| **Oraculo de categoria (techo)** | 0.8382 | 0.7437 | 0.7861 | 0.8410 | 0.8443 |
+| **Oraculo de SKU (techo)** | 0.8292 | 0.7148 | 0.7680 | 0.8314 | 0.8379 |
+| **LambdaRank servido: relevancia graduada (predicciones en disco)** | 0.7954 (94.9%) | 0.7112 (95.6%) | 0.7088 (90.2%) | 0.8057 (95.8%) | 0.7932 (94.0%) |
+| LambdaRank con relevancia binaria de SKU (ablacion A4) | 0.7758 (92.6%) | 0.7040 (94.7%) | 0.6907 (87.9%) | 0.7838 (93.2%) | 0.7753 (91.8%) |
+| Reglas de asociacion de categoria + referencia lider | 0.7594 (90.6%) | 0.7058 (94.9%) | 0.7345 (93.4%) | 0.7739 (92.0%) | 0.7465 (88.4%) |
+| Frecuencia personal x due_for_repurchase + referencia favorita | 0.7493 (89.4%) | 0.6733 (90.5%) | 0.6521 (83.0%) | 0.7813 (92.9%) | 0.7201 (85.3%) |
+| Frecuencia personal por categoria + referencia favorita | 0.7405 (88.3%) | 0.6733 (90.5%) | 0.6469 (82.3%) | 0.7763 (92.3%) | 0.7056 (83.6%) |
+| Popularidad de categoria + referencia lider | 0.7383 (88.1%) | 0.7058 (94.9%) | 0.6804 (86.6%) | 0.7739 (92.0%) | 0.6993 (82.8%) |
+| Popularidad global (SKU) | 0.7173 (85.6%) | 0.7022 (94.4%) | 0.6443 (82.0%) | 0.7540 (89.7%) | 0.6765 (80.1%) |
+| Repetir las referencias favoritas del cliente | 0.6989 (83.4%) | 0.6751 (90.8%) | 0.6211 (79.0%) | 0.7340 (87.3%) | 0.6608 (78.3%) |
+| Aleatorio | 0.3137 (37.4%) | 0.2852 (38.3%) | 0.2345 (29.8%) | 0.3500 (41.6%) | 0.2747 (32.5%) |
 
 ### sku_hit_rate@5 por perfil (entre parentesis, % del techo de SKU del perfil)
 
 | Sistema | Total | Perfil 1 - nuevo, carrito vacio | Perfil 2 - nuevo, con articulos | Perfil 3 - recurrente, carrito vacio | Perfil 4 - recurrente, con articulos |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| **Oraculo de categoria (techo)** | 0.5542 | 0.4203 | 0.2494 | 0.6311 | 0.4975 |
-| **Oraculo de SKU (techo)** | 0.5920 | 0.4587 | 0.2589 | 0.6837 | 0.5214 |
-| **LambdaRank servido: relevancia graduada (predicciones en disco)** | 0.5416 (91.5%) | 0.4031 (87.9%) | 0.2257 (87.2%) | 0.6186 (90.5%) | 0.4857 (93.2%) |
-| LambdaRank con relevancia binaria de SKU (ablacion A4) | 0.5510 (93.1%) | 0.3916 (85.4%) | 0.2257 (87.2%) | 0.6309 (92.3%) | 0.4939 (94.7%) |
-| LambdaRank antes de A4 (relevancia binaria, congelado) | 0.5488 (92.7%) | 0.3954 (86.2%) | 0.2399 (92.7%) | 0.6288 (92.0%) | 0.4905 (94.1%) |
-| LambdaRank antes de A1 (historial congelado) | 0.4947 (83.6%) | 0.3724 (81.2%) | 0.2114 (81.7%) | 0.5741 (84.0%) | 0.4337 (83.2%) |
-| Frecuencia personal x due_for_repurchase + referencia favorita | 0.4214 (71.2%) | 0.3129 (68.2%) | 0.1853 (71.6%) | 0.5027 (73.5%) | 0.3552 (68.1%) |
-| Frecuencia personal por categoria + referencia favorita | 0.3994 (67.5%) | 0.2994 (65.3%) | 0.1829 (70.6%) | 0.4715 (69.0%) | 0.3413 (65.5%) |
-| Popularidad de categoria + referencia lider | 0.2651 (44.8%) | 0.3090 (67.4%) | 0.1853 (71.6%) | 0.3219 (47.1%) | 0.2070 (39.7%) |
-| Reglas de asociacion de categoria + referencia lider | 0.2586 (43.7%) | 0.3090 (67.4%) | 0.1686 (65.1%) | 0.3219 (47.1%) | 0.1938 (37.2%) |
-| Repetir las referencias favoritas del cliente | 0.4481 (75.7%) | 0.3033 (66.1%) | 0.1734 (67.0%) | 0.5369 (78.5%) | 0.3783 (72.6%) |
-| Popularidad global (SKU) | 0.2662 (45.0%) | 0.3090 (67.4%) | 0.1829 (70.6%) | 0.3208 (46.9%) | 0.2108 (40.4%) |
-| Aleatorio | 0.0408 (6.9%) | 0.0230 (5.0%) | 0.0285 (11.0%) | 0.0487 (7.1%) | 0.0344 (6.6%) |
+| **Oraculo de categoria (techo)** | 0.6425 | 0.5018 | 0.4948 | 0.6575 | 0.6416 |
+| **Oraculo de SKU (techo)** | 0.6677 | 0.5144 | 0.5129 | 0.6866 | 0.6632 |
+| **LambdaRank servido: relevancia graduada (predicciones en disco)** | 0.6157 (92.2%) | 0.4892 (95.1%) | 0.4304 (83.9%) | 0.6420 (93.5%) | 0.6016 (90.7%) |
+| LambdaRank con relevancia binaria de SKU (ablacion A4) | 0.6226 (93.3%) | 0.4928 (95.8%) | 0.4149 (80.9%) | 0.6479 (94.4%) | 0.6112 (92.2%) |
+| Reglas de asociacion de categoria + referencia lider | 0.4012 (60.1%) | 0.4224 (82.1%) | 0.3943 (76.9%) | 0.4412 (64.3%) | 0.3502 (52.8%) |
+| Frecuencia personal x due_for_repurchase + referencia favorita | 0.5276 (79.0%) | 0.4314 (83.9%) | 0.4021 (78.4%) | 0.5705 (83.1%) | 0.4875 (73.5%) |
+| Frecuencia personal por categoria + referencia favorita | 0.5120 (76.7%) | 0.4278 (83.2%) | 0.3892 (75.9%) | 0.5569 (81.1%) | 0.4685 (70.6%) |
+| Popularidad de categoria + referencia lider | 0.3949 (59.1%) | 0.4224 (82.1%) | 0.3763 (73.4%) | 0.4412 (64.3%) | 0.3361 (50.7%) |
+| Popularidad global (SKU) | 0.4136 (61.9%) | 0.4458 (86.7%) | 0.3789 (73.9%) | 0.4575 (66.6%) | 0.3583 (54.0%) |
+| Repetir las referencias favoritas del cliente | 0.5441 (81.5%) | 0.4477 (87.0%) | 0.3892 (75.9%) | 0.5877 (85.6%) | 0.5046 (76.1%) |
+| Aleatorio | 0.0515 (7.7%) | 0.0307 (6.0%) | 0.0335 (6.5%) | 0.0612 (8.9%) | 0.0419 (6.3%) |
 
 ### Huecos en categorias recien compradas (punto A1)
 
 Cada hueco del top-5 se clasifica por los dias desde que el cliente compro por ultima vez su categoria, con **todo** su historial anterior al dia de la cesta (lo viera o no el modelo). El generador castiga con fuerza reponer justo despues de comprar, asi que los huecos de los primeros dias casi nunca aciertan. "En la ventana" es desde el inicio del test. Precision = parte de esos huecos que acierta el SKU o la categoria.
 
-| Huecos en categorias compradas... | LambdaRank antes de A1 (historial congelado): % huecos | SKU prec. | cat. prec. | LambdaRank servido: relevancia graduada (predicciones en disco): % huecos | SKU prec. | cat. prec. | Frecuencia personal x due_for_repurchase + referencia favorita: % huecos | SKU prec. | cat. prec. |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| <= 7 dias | 15.6% | 4.7% | 7.2% | 3.0% | 14.7% | 27.8% | 14.7% | 5.0% | 10.6% |
-| <= 14 dias | 27.2% | 7.7% | 11.5% | 12.0% | 15.2% | 27.2% | 24.6% | 7.7% | 16.1% |
-| 8-14 dias | 11.6% | 11.7% | 17.2% | 9.1% | 15.3% | 27.0% | 10.0% | 11.7% | 24.3% |
-| comprada en la ventana, antes de la cesta | 41.7% | 10.5% | 14.9% | 30.2% | 15.4% | 26.2% | 36.9% | 9.8% | 20.3% |
-| sin compra en la ventana | 58.3% | 14.5% | 19.4% | 69.8% | 14.1% | 21.1% | 63.1% | 10.8% | 21.2% |
-| total | 100.0% | 12.9% | 17.5% | 100.0% | 14.5% | 22.7% | 100.0% | 10.5% | 20.9% |
-
-**Queries donde el modelo de antes gastaba huecos en categorias recien compradas.** Para cada umbral, las queries cuya lista antes de A1 tenia al menos un hueco en una categoria comprada hace <= d dias, y como les va a cada sistema (lista entera de 5).
-
-| Umbral | Sistema | Queries | Huecos recientes | sku_precision@5 | cat_precision@5 | sku_hit_rate@5 | cat_hit_rate@5 |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| <= 7 dias | LambdaRank servido: relevancia graduada (predicciones en disco) | 6,693 | 7.8% | 0.1502 | 0.2400 | 0.5573 | 0.7433 |
-| <= 7 dias | LambdaRank antes de A1 (historial congelado) | 6,693 | 41.9% | 0.1140 | 0.1551 | 0.4538 | 0.5684 |
-| <= 7 dias | Frecuencia personal x due_for_repurchase + referencia favorita | 6,693 | 36.4% | 0.0990 | 0.2013 | 0.4028 | 0.6607 |
-| <= 14 dias | LambdaRank servido: relevancia graduada (predicciones en disco) | 9,987 | 21.1% | 0.1487 | 0.2373 | 0.5527 | 0.7395 |
-| <= 14 dias | LambdaRank antes de A1 (historial congelado) | 9,987 | 49.0% | 0.1195 | 0.1645 | 0.4715 | 0.5936 |
-| <= 14 dias | Frecuencia personal x due_for_repurchase + referencia favorita | 9,987 | 42.2% | 0.1026 | 0.2084 | 0.4165 | 0.6782 |
-
-Las predicciones de antes son las congeladas en `baseline_pre_a1.json` (2026-09-17, commit `bd1adc6`).
+| Huecos en categorias compradas... | LambdaRank servido: relevancia graduada (predicciones en disco): % huecos | SKU prec. | cat. prec. | Frecuencia personal x due_for_repurchase + referencia favorita: % huecos | SKU prec. | cat. prec. |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| <= 7 dias | 9.2% | 20.5% | 37.2% | 20.7% | 11.5% | 23.7% |
+| <= 14 dias | 22.2% | 21.2% | 37.6% | 33.2% | 14.3% | 28.9% |
+| 8-14 dias | 13.0% | 21.7% | 37.9% | 12.5% | 19.0% | 37.4% |
+| comprada en la ventana, antes de la cesta | 40.8% | 21.3% | 35.9% | 46.4% | 15.8% | 31.1% |
+| sin compra en la ventana | 59.2% | 19.2% | 30.4% | 53.6% | 15.4% | 29.7% |
+| total | 100.0% | 20.1% | 32.7% | 100.0% | 15.6% | 30.3% |
 
 ### Como se construye el techo
 
-El generador exporta, para cada cesta de test, el peso de cada categoria antes del primer sorteo (afinidad x estacionalidad x ciclo de reposicion) y la referencia mas probable de cada una (`data/oracle/`, fuera de `data/raw`). Como el sorteo es secuencial y sin reemplazo, la probabilidad de que cada categoria este en el resto de la cesta, dado el carrito, se calcula por Monte Carlo: una carrera de relojes exponenciales con los lifts de afinidad, condicionada al carrito por muestreo por importancia (exacta salvo ruido de muestreo; detalle en `src/recommender/oracle.py`). El **oraculo de categoria** recomienda las 5 categorias de mas peso fuera del carrito (con el lift de las disparadoras del carrito aplicado), cada una con su referencia mas probable: es la lista optima salvo en los 10 pares de afinidad, asi que su valor es una cota inferior muy ajustada del maximo. El **oraculo de SKU** ordena por `P(categoria en el resto) x P(mejor referencia)`, estimada con la mitad de las muestras y medida con la otra. Ningun sistema que solo vea el pasado puede superarlos en valor esperado: lo que queda entre el techo y el 100 % es entropia del generador.
+El generador exporta, para cada cesta de test, el peso de cada categoria antes de aplicar la mision (afinidad x estacionalidad x ciclo de reposicion), la probabilidad de cada mision de compra en esa visita, su factor de tamano y la referencia mas probable de cada categoria (`data/oracle/`, fuera de `data/raw`); el manifiesto trae los perfiles de mision, el tamano de cada una y la matriz de complementos y sustitutos. El oraculo conoce el carrito y cuantas categorias distintas tiene la cesta, pero no la mision. La probabilidad de que cada categoria este en el resto se calcula por Monte Carlo con muestreo secuencial por importancia: replica el sorteo del generador paso a paso, forzando que el carrito quede dentro, y pondera cada muestra por su probabilidad real (exacto salvo ruido de muestreo; detalle en `src/recommender/oracle.py`). El **oraculo de categoria** recomienda las 5 categorias de mas probabilidad fuera del carrito, cada una con su referencia mas probable; el **oraculo de SKU** ordena por `P(categoria en el resto) x P(mejor referencia en la cesta)`. Las dos listas se eligen con la mitad de las muestras y se miden con la otra, asi que el techo es una cota inferior muy ajustada del maximo. Ningun sistema que solo vea el pasado puede superarlos en valor esperado: lo que queda entre el techo y el 100 % es entropia del generador.
 
 El realizado y el esperado deben coincidir salvo ruido (ver comprobaciones):
 
 | Techo | Realizado (estas queries) | Esperado (Monte Carlo) |
 | --- | ---: | ---: |
-| cat_hit_rate@5 (oraculo de categoria) | 0.7816 | 0.7783 ± 0.0055 |
-| cat_precision@5 (oraculo de categoria) | 0.2660 | 0.2662 |
-| sku_hit_rate@5 (oraculo de SKU) | 0.5920 | 0.5861 |
-| sku_precision@5 (oraculo de SKU) | 0.1661 | 0.1656 |
+| cat_hit_rate@5 (oraculo de categoria) | 0.8382 | 0.8385 ± 0.0048 |
+| cat_precision@5 (oraculo de categoria) | 0.3762 | 0.3765 |
+| sku_hit_rate@5 (oraculo de SKU) | 0.6677 | 0.6661 |
+| sku_precision@5 (oraculo de SKU) | 0.2354 | 0.2350 |
 
-Muestras por query: 1,000 (mitad de evaluacion: tamano efectivo mediano 1000, percentil 5 50; queries con peso de respaldo: 7). Reglas de asociacion: 489 de 3772 pares con confianza >= 0.10 y lift > 1.
+Muestras por query: 1,000 (mitad de evaluacion: tamano efectivo mediano 151, percentil 5 11; queries sin ninguna muestra valida: 0). Reglas de asociacion: 3031 de 3782 pares con confianza >= 0.10 y lift > 1.
 
 ### Techo esperado por perfil
 
 | grupo | cat_hit_rate@5 | cat_precision@5 | sku_hit_rate@5 | sku_precision@5 |
 | --- | --- | --- | --- | --- |
-| total | 0.7783 | 0.2662 | 0.5861 | 0.1656 |
-| 1 - nuevo, carrito vacio | 0.6537 | 0.2136 | 0.4198 | 0.1103 |
-| 2 - nuevo, con articulos | 0.5201 | 0.1352 | 0.2687 | 0.0611 |
-| 3 - recurrente, carrito vacio | 0.8478 | 0.3256 | 0.6804 | 0.2084 |
-| 4 - recurrente, con articulos | 0.7264 | 0.2141 | 0.5141 | 0.1296 |
+| total | 0.8385 | 0.3765 | 0.6661 | 0.2350 |
+| 1 - nuevo, carrito vacio | 0.7424 | 0.2965 | 0.5111 | 0.1558 |
+| 2 - nuevo, con articulos | 0.7591 | 0.2634 | 0.4590 | 0.1239 |
+| 3 - recurrente, carrito vacio | 0.8386 | 0.4055 | 0.6851 | 0.2574 |
+| 4 - recurrente, con articulos | 0.8495 | 0.3520 | 0.6644 | 0.2187 |
 
 ### Comprobaciones
 
 - OK — La ablacion con relevancia binaria cubre las mismas queries que el LambdaRank
-- OK — Las predicciones de referencia (antes de A4) son las congeladas y cubren las mismas queries (sha256 = el de baseline_pre_a4.json)
-- OK — Una linea por categoria: el target en categorias coincide con n_target
-- OK — LambdaRank recalculado desde predictions/ = reports/recommender/metrics.json (0.7181 frente a 0.7181)
-- OK — Techo realizado compatible con el esperado en las 4 metricas, total y por perfil (max |z| <= 3.5) (peor: sku_hit_p1, z = +1.55)
-- OK — Ningun sistema supera al oraculo de categoria en cat_hit_rate (mejor sistema lambdarank = 0.7181)
-- OK — Las predicciones de referencia (antes de A1) son las congeladas y cubren las mismas queries (sha256 = el de baseline_pre_a1.json)
+- OK — Target en categorias <= target en lineas (segunda referencia de la Fase 8) (17.8% de queries con dos lineas de una categoria en el target; 8.7% con una categoria a los dos lados del corte)
+- OK — LambdaRank recalculado desde predictions/ = reports/recommender/metrics.json (0.7954 frente a 0.7954)
+- OK — Techo realizado compatible con el esperado en las 4 metricas, total y por perfil (max |z| <= 3.5) (peor: sku_precision_p2, z = +2.26)
+- OK — Ningun sistema supera al oraculo de categoria en cat_hit_rate (mejor sistema lambdarank = 0.7954)
 <!-- diagnostics:end -->

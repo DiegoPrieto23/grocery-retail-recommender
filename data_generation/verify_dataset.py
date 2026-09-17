@@ -250,8 +250,9 @@ def sku_loyalty(
         .drop_duplicates(["customer_id", "category_clean", "basket_id", "product_id"])
     )
 
-    # Una cesta trae como mucho una linea por categoria, asi que tras el
-    # `drop_duplicates` el recuento por producto ya es "en cuantas cestas se lo llevo".
+    # Tras el `drop_duplicates`, el recuento por producto es "en cuantas cestas se lo
+    # llevo". Las compras se cuentan por cesta aparte: desde la Fase 8 una cesta puede
+    # llevar dos referencias de una categoria de exploracion, y es una sola compra.
     per_product = (
         df.groupby(["customer_id", "category_clean", "product_id"], sort=False)
         .size()
@@ -260,7 +261,12 @@ def sku_loyalty(
     )
     stats = (
         per_product.groupby(["customer_id", "category_clean"], sort=False)["n"]
-        .agg(n_compras="sum", n_referencias="size", favorita="max")
+        .agg(n_referencias="size", favorita="max")
+        .join(
+            df.groupby(["customer_id", "category_clean"], sort=False)["basket_id"]
+            .nunique()
+            .rename("n_compras")
+        )
         .reset_index()
     )
     stats = stats[stats["n_compras"] >= min_purchases]
@@ -283,6 +289,265 @@ def sku_loyalty(
         )
         out[f"cuota_de_la_referencia_favorita__{banda}"] = float(sub["cuota_favorita"].mean())
     return out
+
+
+def _basket_lines(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Lineas positivas, una por `(cesta, producto)`, con su categoria canonica.
+
+    Los duplicados y las cantidades negativas son problemas de calidad inyectados: aqui
+    se mide la forma de la cesta que decidio el generador, no la suciedad.
+    """
+    items = tables["basket_items"]
+    items = items.loc[items["quantity"] > 0, ["basket_id", "product_id"]].drop_duplicates()
+    return items.merge(
+        tables["products"][["product_id", "category_clean", "is_private_label"]],
+        on="product_id",
+        how="left",
+    )
+
+
+# Umbrales del tamano de cesta que se reportan. 20 era el tope duro antes de la Fase 8.
+SIZE_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99)
+
+
+def basket_size(tables: dict[str, pd.DataFrame]) -> dict[str, float]:
+    """Forma de la distribucion del tamano de cesta (punto M1 del diagnostico).
+
+    Cuenta lineas distintas por cesta y, aparte, categorias distintas por cesta. Una
+    Poisson tiene coeficiente de variacion `1/sqrt(media)`; una cesta real de gran
+    consumo mezcla reposiciones de 1-3 articulos con compras semanales de 30-60 y queda
+    muy por encima.
+    """
+    lines = _basket_lines(tables)
+    n_lines = lines.groupby("basket_id").size()
+    n_cats = lines.groupby("basket_id")["category_clean"].nunique()
+    mean = float(n_lines.mean())
+    out: dict[str, float] = {
+        "cestas": int(len(n_lines)),
+        "lineas_media": round(mean, 3),
+        "lineas_coef_variacion": round(float(n_lines.std(ddof=0) / mean), 3),
+        "coef_variacion_de_una_poisson_con_esa_media": round(float(1 / np.sqrt(mean)), 3),
+    }
+    for q in SIZE_QUANTILES:
+        out[f"lineas_p{int(round(q * 100)):02d}"] = float(n_lines.quantile(q))
+    out |= {
+        "lineas_max": int(n_lines.max()),
+        "cestas_de_1_a_3_lineas_pct": round(float((n_lines <= 3).mean() * 100), 2),
+        "cestas_de_15_o_mas_lineas_pct": round(float((n_lines >= 15).mean() * 100), 2),
+        "cestas_de_mas_de_20_lineas_pct": round(float((n_lines > 20).mean() * 100), 2),
+        "cestas_de_mas_de_40_lineas_pct": round(float((n_lines > 40).mean() * 100), 3),
+        "categorias_media": round(float(n_cats.mean()), 3),
+        "categorias_p50": float(n_cats.median()),
+        "categorias_p99": float(n_cats.quantile(0.99)),
+        "categorias_max": int(n_cats.max()),
+    }
+    return out
+
+
+def lines_per_category(tables: dict[str, pd.DataFrame]) -> dict[str, float]:
+    """Cuantas veces una cesta lleva dos referencias de la misma categoria (punto M2).
+
+    Hasta la Fase 8 el generador ponia exactamente una linea por categoria y cesta; ahora
+    permite, con baja probabilidad, una segunda referencia en las categorias de
+    exploracion. Se reporta por banda de lealtad: en las de habito tiene que seguir en 0.
+    """
+    lines = _basket_lines(tables)
+    per_cat = lines.groupby(["basket_id", "category_clean"]).size().rename("n").reset_index()
+    bands = {c.name: cat.loyalty_band(c) for c in cat.CATEGORIES}
+    per_cat["banda"] = per_cat["category_clean"].map(bands)
+    out: dict[str, float] = {
+        "cestas_con_alguna_categoria_repetida_pct": round(
+            float(per_cat.groupby("basket_id")["n"].max().gt(1).mean() * 100), 3
+        ),
+        "categorias_de_cesta_con_2_o_mas_referencias_pct": round(
+            float(per_cat["n"].gt(1).mean() * 100), 3
+        ),
+        "lineas_por_categoria_de_cesta_max": int(per_cat["n"].max()),
+    }
+    for banda, sub in per_cat.groupby("banda"):
+        out[f"categorias_de_cesta_con_2_o_mas_referencias_pct__{banda}"] = round(
+            float(sub["n"].gt(1).mean() * 100), 3
+        )
+    return out
+
+
+# Bandas de tamano (categorias distintas) para el lift controlado por tamano.
+SIZE_BANDS = (0, 2, 4, 7, 12, 20, 35, 10_000)
+
+
+def category_cooccurrence(
+    tables: dict[str, pd.DataFrame],
+    *,
+    min_pair_baskets: int = 50,
+    min_band_expected: float = 5.0,
+    top: int = 15,
+) -> dict[str, object]:
+    """Estructura global de co-ocurrencia entre categorias (punto A5 del diagnostico).
+
+    `lift` es la misma cuenta que `affinity_category` del ETL (pares ordenados con al
+    menos `min_pair_baskets` cestas en comun). El lift crudo mezcla dos cosas: la
+    afinidad real y el **tamano** de la cesta (en una compra grande estan casi todas las
+    categorias, asi que cualquier par co-ocurre mas de lo que dicta el azar). Por eso se
+    reporta tambien el lift **controlado por tamano**: el lift del par dentro de cada banda
+    de tamano (`SIZE_BANDS`, en categorias distintas), promediado con el peso de cestas
+    de cada banda. Pesa igual una visita pequena que una compra semanal; un estimador
+    ponderado por co-ocurrencias (tipo Mantel-Haenszel) quedaria dominado por las compras
+    grandes, que es justo donde menos estructura hay. Solo cuentan las bandas donde el
+    par tendria al menos `min_band_expected` cestas en comun por azar.
+
+    Dentro de una banda las categorias no son independientes ni siquiera sin afinidad: se
+    sortean sin reemplazo, asi que llevar una deja menos hueco para las demas y el lift de
+    un par cualquiera cae algo por debajo de 1. Por eso el controlado se divide por la
+    mediana de todos los pares (`controlado_*`): 1 es "lo normal para una cesta de ese
+    tamano". Las cestas de una sola categoria no entran en el controlado.
+    """
+    lines = _basket_lines(tables)
+    sets = lines[["basket_id", "category_clean"]].drop_duplicates()
+    names = [c.name for c in cat.CATEGORIES]
+    b_codes, b_ids = pd.factorize(sets["basket_id"])
+    c_codes = sets["category_clean"].map({n: i for i, n in enumerate(names)}).to_numpy()
+    x = np.zeros((len(b_ids), len(names)), dtype=np.float32)
+    x[b_codes, c_codes] = 1.0
+
+    n_total = x.shape[0]
+    single = x.sum(axis=0)
+    both = x.T @ x
+    size = x.sum(axis=1)
+    band = np.digitize(size, SIZE_BANDS[1:-1], right=True)
+    weighted = np.zeros_like(both, dtype=np.float64)
+    weight = np.zeros_like(both, dtype=np.float64)
+    # Una cesta de una sola categoria no dice nada de pares: queda fuera del controlado.
+    for b in np.unique(band):
+        xb = x[(band == b) & (size >= 2)]
+        n_b = xb.shape[0]
+        if n_b == 0:
+            continue
+        p = xb.mean(axis=0).astype(np.float64)
+        expected = np.outer(p, p)
+        ok = expected * n_b >= min_band_expected
+        with np.errstate(divide="ignore", invalid="ignore"):
+            lift_b = (xb.T @ xb) / n_b / expected
+        weighted += np.where(ok, lift_b * n_b, 0.0)
+        weight += np.where(ok, n_b, 0.0)
+
+    off_diag = ~np.eye(len(names), dtype=bool)
+    valid = off_diag & (both >= min_pair_baskets) & (weight > 0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lift = both * n_total / np.outer(single, single)
+        lift_ctrl = weighted / weight
+    ctrl_median = float(np.median(lift_ctrl[valid]))
+    lift_ctrl = lift_ctrl / ctrl_median
+    raw = lift[valid]
+    ctrl = lift_ctrl[valid]
+
+    def counts(values: np.ndarray, prefix: str) -> dict[str, float]:
+        return {
+            f"{prefix}pares_con_lift_mayor_1_5": int((values > 1.5).sum()),
+            f"{prefix}pares_con_lift_mayor_1_2": int((values > 1.2).sum()),
+            f"{prefix}pares_con_lift_mayor_3": int((values > 3.0).sum()),
+            f"{prefix}pares_con_lift_menor_0_8": int((values < 0.8).sum()),
+            f"{prefix}lift_mediana": round(float(np.median(values)), 3),
+            f"{prefix}lift_p90": round(float(np.percentile(values, 90)), 3),
+        }
+
+    order = np.argsort(-np.where(valid, lift_ctrl, -np.inf), axis=None)[:top]
+    top_pairs = [
+        f"{names[i]} -> {names[j]}: lift {lift[i, j]:.2f}, controlado {lift_ctrl[i, j]:.2f}"
+        for i, j in zip(*np.unravel_index(order, lift.shape))
+    ]
+    order_low = np.argsort(np.where(valid, lift_ctrl, np.inf), axis=None)[:top]
+    low_pairs = [
+        f"{names[i]} -> {names[j]}: lift {lift[i, j]:.2f}, controlado {lift_ctrl[i, j]:.2f}"
+        for i, j in zip(*np.unravel_index(order_low, lift.shape))
+    ]
+    out: dict[str, object] = {
+        "cestas": int(n_total),
+        "pares_ordenados_posibles": int(off_diag.sum()),
+        "pares_con_soporte_minimo": int(valid.sum()),
+        **counts(raw, ""),
+        "mediana_del_lift_controlado_sin_normalizar": round(ctrl_median, 3),
+        **counts(ctrl, "controlado_"),
+        "top_por_lift_controlado": top_pairs,
+        "bottom_por_lift_controlado": low_pairs,
+    }
+
+    idx = {n: i for i, n in enumerate(names)}
+
+    def pair_values(pairs) -> dict[str, float]:
+        res = {}
+        for a, b in pairs:
+            i, j = idx[a], idx[b]
+            res[f"{a} -> {b}"] = (
+                f"lift {lift[i, j]:.2f}, controlado {lift_ctrl[i, j]:.2f}"
+                if both[i, j] >= min_pair_baskets
+                else "sin soporte"
+            )
+        return res
+
+    complements = getattr(cat, "COMPLEMENT_PAIRS", None)
+    if complements is None:
+        complements = tuple((t, a) for t, a, _ in cat.AFFINITY_PAIRS)
+    else:
+        complements = tuple((t, a) for t, a, _, _ in complements)
+    out["complementarios_declarados"] = pair_values(complements)
+    substitutes = [
+        (a, b)
+        for _, members, _ in getattr(cat, "SUBSTITUTION_GROUPS", ())
+        for a in members
+        for b in members
+        if a < b
+    ]
+    if substitutes:
+        values = np.array([lift_ctrl[idx[a], idx[b]] for a, b in substitutes])
+        raw_values = np.array([lift[idx[a], idx[b]] for a, b in substitutes])
+        out["sustitutos_declarados_lift_mediana"] = round(float(np.median(raw_values)), 3)
+        out["sustitutos_declarados_lift_controlado_mediana"] = round(float(np.median(values)), 3)
+        out["sustitutos_declarados_con_lift_controlado_menor_1"] = (
+            f"{int((values < 1).sum())} de {len(values)}"
+        )
+        out["sustitutos_declarados"] = pair_values(substitutes)
+    else:
+        # Antes de la Fase 8 no habia grupos: se miden los mismos pares que despues, para
+        # poder comparar el antes y el despues.
+        out["sustitutos_referencia"] = pair_values(
+            (("Agua", "Refrescos"), ("Carne de pollo", "Carne de ternera"),
+             ("Lavavajillas", "Lejia y limpiadores"))
+        )
+    return out
+
+
+def private_label_propensity(
+    tables: dict[str, pd.DataFrame], min_lines: int = 40
+) -> dict[str, float]:
+    """Heterogeneidad entre clientes en la cuota de marca blanca (punto M2).
+
+    Si todos los clientes tuvieran la misma propension, la cuota de cada uno solo
+    variaria por azar (binomial) y por su mezcla de categorias. `ratio_varianza` compara
+    la varianza observada entre clientes con la que daria ese azar, contando la mezcla
+    de categorias de cada cliente: 1 es "sin propension propia", y cuanto mas alto, mas
+    se diferencia el cliente que busca marca blanca del que no.
+    """
+    lines = _basket_lines(tables).merge(
+        tables["baskets"][["basket_id", "customer_id"]].dropna(), on="basket_id"
+    )
+    lines["pl"] = lines["is_private_label"].astype(float)
+    cat_share = lines.groupby("category_clean")["pl"].mean()
+    lines["p_cat"] = lines["category_clean"].map(cat_share)
+    lines["var_cat"] = lines["p_cat"] * (1 - lines["p_cat"])
+    per = lines.groupby("customer_id").agg(
+        n=("pl", "size"), pl=("pl", "mean"), p_exp=("p_cat", "mean"), var=("var_cat", "sum")
+    )
+    per = per[per["n"] >= min_lines]
+    resid = per["pl"] - per["p_exp"]
+    expected_var = float((per["var"] / per["n"] ** 2).mean())
+    return {
+        "clientes_evaluados": int(len(per)),
+        "cuota_marca_blanca_global": round(float(lines["pl"].mean()), 4),
+        "cuota_cliente_p10": round(float(per["pl"].quantile(0.10)), 4),
+        "cuota_cliente_p50": round(float(per["pl"].quantile(0.50)), 4),
+        "cuota_cliente_p90": round(float(per["pl"].quantile(0.90)), 4),
+        "ratio_varianza_observada_vs_azar": round(float(resid.var() / expected_var), 2),
+    }
 
 
 def churn_signal(tables: dict[str, pd.DataFrame], window_days: int = 56) -> dict[str, float]:
@@ -417,6 +682,10 @@ def run_all(data_dir: Path) -> dict[str, dict]:
         "uplift_promocion": promotion_uplift(tables),
         "ciclos_reposicion": repurchase_cycles(tables),
         "fidelidad_de_sku": sku_loyalty(tables),
+        "tamano_de_cesta": basket_size(tables),
+        "lineas_por_categoria": lines_per_category(tables),
+        "coocurrencia_de_categorias": category_cooccurrence(tables),
+        "propension_marca_blanca": private_label_propensity(tables),
         "senal_churn": churn_signal(tables),
         "calidad_del_dato": quality_issues(tables),
         "integridad_referencial": referential_integrity(tables),

@@ -1,8 +1,9 @@
 """Re-ranking final del top-k: diversidad por categoria y exclusion del carrito (punto A2).
 
 El LambdaRank puntua cada candidato por separado, asi que nada le impide poner dos leches
-en el top-5, o una leche cuando ya hay leche en el carrito. Con una linea por categoria en
-cada cesta (regla del generador), esos huecos casi nunca aciertan. Este modulo aplica,
+en el top-5, o una leche cuando ya hay leche en el carrito. Con (casi siempre) una linea
+por categoria en cada cesta, esos huecos casi nunca aciertan: desde la Fase 8 solo las
+categorias de exploracion llevan a veces una segunda referencia. Este modulo aplica,
 despues del score y antes de cortar, las reglas de `config.RerankConfig`:
 
 - **Cuota por categoria**: solo las `max_per_category` primeras referencias de cada

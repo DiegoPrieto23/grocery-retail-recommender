@@ -163,6 +163,9 @@ def freeze_snapshot(
             file: _sha256(Path(cfg.predictions_dir) / file) for file in PREDICTION_FILES
         },
         "modelo_sha256": _sha256(Path(cfg.models_dir) / "recommender_ranker_lgbm.txt"),
+        # Con que dataset se midio: los hashes de las 7 tablas de `data/raw`. Desde la
+        # Fase 8 el dato cambia, y un "antes/despues" solo tiene sentido con el mismo.
+        "dataset_sha256": pl.dataset_fingerprint(),
         "metrics": metrics,
     }
     if name != SNAPSHOT_FILENAME and diagnostics_path.is_file():
@@ -371,12 +374,19 @@ def measure(
 
     # --- Oraculo ---
     inputs = orc.load_inputs(oracle_dir, queries, test.context, products)
-    same_size = bool((inputs.n_target == queries["n_target"].to_numpy()).all())
+    # Desde la Fase 8 una categoria de exploracion puede llevar dos lineas, y el corte
+    # puede dejar una a cada lado: esa categoria ya esta en el carrito y no cuenta como
+    # resto. Lo que no puede pasar es que haya mas categorias que lineas.
+    lines = queries["n_target"].to_numpy()
+    fits = bool((inputs.n_target <= lines).all())
+    split = float((inputs.target_mask & inputs.prefix_mask).any(axis=1).mean())
+    repeated = float((inputs.target_mask.sum(axis=1) < lines).mean())
     checks.append(
         (
-            "Una linea por categoria: el target en categorias coincide con n_target",
-            same_size,
-            "" if same_size else "el oraculo asume una linea por categoria",
+            "Target en categorias <= target en lineas (segunda referencia de la Fase 8)",
+            fits,
+            f"{repeated:.1%} de queries con dos lineas de una categoria en el target; "
+            f"{split:.1%} con una categoria a los dos lados del corte",
         )
     )
     t0 = time.perf_counter()
@@ -762,6 +772,104 @@ def _objective_bullets(diag: Diagnostics, h: dict[str, object]) -> list[str]:
     ]
 
 
+def pre_fase8_comparison(diag: Diagnostics, cfg: RecommenderConfig) -> pd.DataFrame | None:
+    """Cada sistema frente a si mismo sobre el dataset anterior a la Fase 8.
+
+    Solo tiene sentido cuando el dataset en uso ya no es el congelado: mientras lo sea,
+    devuelve None. Las queries no son las mismas (otro dataset), asi que la comparacion es
+    de nivel, no pareada.
+    """
+    path = Path(cfg.reports_dir) / pl.PRE_FASE8_FILENAME
+    if not path.is_file():
+        return None
+    snap = json.loads(path.read_text(encoding="utf-8"))
+    if pl.same_dataset(snap) or "diagnostics" not in snap:
+        return None
+    k = diag.k
+    old_systems = snap["diagnostics"]["systems"]
+    old_ceiling = old_systems[ORACLE_CAT]["by_profile"][0][f"cat_hit_rate@{k}"]
+    old_sku_ceiling = old_systems[ORACLE_SKU]["by_profile"][0][f"sku_hit_rate@{k}"]
+    total = {name: s.iloc[0] for name, s in diag.summaries.items()}
+    ceiling = float(total[ORACLE_CAT][f"cat_hit_rate@{k}"])
+    sku_ceiling = float(total[ORACLE_SKU][f"sku_hit_rate@{k}"])
+    rows = []
+    for name in _system_order(diag):
+        if name not in old_systems:
+            continue
+        old = old_systems[name]["by_profile"][0]
+        now = total[name]
+        rows.append(
+            {
+                "sistema": name,
+                "ndcg_graded_antes": old[f"ndcg_graded@{k}"],
+                "ndcg_graded_ahora": float(now[f"ndcg_graded@{k}"]),
+                "cat_hit_antes": old[f"cat_hit_rate@{k}"],
+                "cat_hit_ahora": float(now[f"cat_hit_rate@{k}"]),
+                "pct_techo_cat_antes": old[f"cat_hit_rate@{k}"] / old_ceiling,
+                "pct_techo_cat_ahora": float(now[f"cat_hit_rate@{k}"]) / ceiling,
+                "sku_hit_antes": old[f"sku_hit_rate@{k}"],
+                "sku_hit_ahora": float(now[f"sku_hit_rate@{k}"]),
+                "pct_techo_sku_antes": old[f"sku_hit_rate@{k}"] / old_sku_ceiling,
+                "pct_techo_sku_ahora": float(now[f"sku_hit_rate@{k}"]) / sku_ceiling,
+            }
+        )
+    frame = pd.DataFrame(rows)
+    frame.attrs["congelado"] = snap["congelado"]
+    frame.attrs["commit"] = snap["commit"]
+    return frame
+
+
+def _pre_fase8_markdown(diag: Diagnostics, cfg: RecommenderConfig) -> list[str]:
+    table = pre_fase8_comparison(diag, cfg)
+    if table is None or table.empty:
+        return []
+    k = diag.k
+    lines = [
+        "### Frente al dataset anterior a la Fase 8",
+        "",
+        "Los mismos sistemas, medidos con el mismo codigo sobre el dataset de la Fase 7a "
+        f"(`{Path(cfg.reports_dir).as_posix()}/{pl.PRE_FASE8_FILENAME}`, "
+        f"{table.attrs['congelado']}, commit `{(table.attrs['commit'] or '?')[:7]}`; el "
+        "resto de artefactos de ese momento esta en `snapshots/pre-fase-8/`). Son "
+        "queries distintas de datasets distintos: la comparacion es de nivel, no pareada. "
+        "El techo tambien cambia, asi que la columna que dice cuanto mejora cada sistema "
+        "*respecto a lo alcanzable* es el % del techo.",
+        "",
+        f"| Sistema | NDCG@{k} graduada antes | ahora | cat_hit_rate@{k} antes | ahora "
+        f"| % techo antes | ahora | sku_hit_rate@{k} antes | ahora | % techo SKU antes "
+        "| ahora |",
+        "| --- |" + " ---: |" * 10,
+    ]
+    for row in table.to_dict(orient="records"):
+        name = row["sistema"]
+        is_oracle = name in (ORACLE_CAT, ORACLE_SKU)
+        label = SYSTEM_LABELS[name]
+        if is_oracle or name == LAMBDARANK:
+            label = f"**{label}**"
+        pct = (lambda v: "—") if is_oracle else _pct
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    label,
+                    _num(row["ndcg_graded_antes"]),
+                    _num(row["ndcg_graded_ahora"]),
+                    _num(row["cat_hit_antes"]),
+                    _num(row["cat_hit_ahora"]),
+                    pct(row["pct_techo_cat_antes"]),
+                    pct(row["pct_techo_cat_ahora"]),
+                    _num(row["sku_hit_antes"]),
+                    _num(row["sku_hit_ahora"]),
+                    pct(row["pct_techo_sku_antes"]),
+                    pct(row["pct_techo_sku_ahora"]),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return lines
+
+
 def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: str) -> str:
     k = diag.k
     h = headline(diag)
@@ -885,6 +993,7 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         *main,
         "",
         *snap_lines,
+        *_pre_fase8_markdown(diag, cfg),
         *_comparison_markdown(diag),
         f"### cat_hit_rate@{k} por perfil (entre parentesis, % del techo del perfil)",
         "",
@@ -897,21 +1006,23 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         *_recency_markdown(diag),
         "### Como se construye el techo",
         "",
-        "El generador exporta, para cada cesta de test, el peso de cada categoria antes del "
-        "primer sorteo (afinidad x estacionalidad x ciclo de reposicion) y la referencia mas "
-        "probable de cada una (`data/oracle/`, fuera de `data/raw`). Como el sorteo es "
-        "secuencial y sin reemplazo, la probabilidad de que cada categoria este en el resto "
-        "de la cesta, dado el carrito, se calcula por Monte Carlo: una carrera de relojes "
-        "exponenciales con los lifts de afinidad, condicionada al carrito por muestreo por "
-        "importancia (exacta salvo ruido de muestreo; detalle en "
+        "El generador exporta, para cada cesta de test, el peso de cada categoria antes de "
+        "aplicar la mision (afinidad x estacionalidad x ciclo de reposicion), la probabilidad "
+        "de cada mision de compra en esa visita, su factor de tamano y la referencia mas "
+        "probable de cada categoria (`data/oracle/`, fuera de `data/raw`); el manifiesto "
+        "trae los perfiles de mision, el tamano de cada una y la matriz de complementos y "
+        "sustitutos. El oraculo conoce el carrito y cuantas categorias distintas tiene la "
+        "cesta, pero no la mision. La probabilidad de que cada categoria este en el resto se "
+        "calcula por Monte Carlo con muestreo secuencial por importancia: replica el sorteo "
+        "del generador paso a paso, forzando que el carrito quede dentro, y pondera cada "
+        "muestra por su probabilidad real (exacto salvo ruido de muestreo; detalle en "
         "`src/recommender/oracle.py`). El **oraculo de categoria** recomienda las "
-        f"{k} categorias de mas peso fuera del carrito (con el lift de las disparadoras del "
-        "carrito aplicado), cada una con su referencia mas probable: es la lista optima "
-        "salvo en los 10 pares de afinidad, asi que su valor es una cota inferior muy "
-        "ajustada del maximo. El **oraculo de SKU** ordena por `P(categoria en el resto) x "
-        "P(mejor referencia)`, estimada con la mitad de las muestras y medida con la otra. "
-        "Ningun sistema que solo vea el pasado puede superarlos en valor esperado: lo que "
-        "queda entre el techo y el 100 % es entropia del generador.",
+        f"{k} categorias de mas probabilidad fuera del carrito, cada una con su referencia "
+        "mas probable; el **oraculo de SKU** ordena por `P(categoria en el resto) x "
+        "P(mejor referencia en la cesta)`. Las dos listas se eligen con la mitad de las "
+        "muestras y se miden con la otra, asi que el techo es una cota inferior muy "
+        "ajustada del maximo. Ningun sistema que solo vea el pasado puede superarlos en "
+        "valor esperado: lo que queda entre el techo y el 100 % es entropia del generador.",
         "",
         "El realizado y el esperado deben coincidir salvo ruido (ver comprobaciones):",
         "",
@@ -919,7 +1030,7 @@ def render_markdown(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: 
         "",
         f"Muestras por query: {int(diag.ess['n_samples']):,} (mitad de evaluacion: tamano "
         f"efectivo mediano {diag.ess['median']:.0f}, percentil 5 {diag.ess['p05']:.0f}; "
-        f"queries con peso de respaldo: {int(diag.ess['n_fallback'])}). Reglas de asociacion: "
+        f"queries sin ninguna muestra valida: {int(diag.ess['n_fallback'])}). Reglas de asociacion: "
         f"{int(diag.rules['n_rules_used'])} de {int(diag.rules['n_rules_total'])} pares con "
         f"confianza >= {diag.rules['min_confidence']:.2f} y lift > 1.",
         "",
@@ -962,6 +1073,11 @@ def to_json(diag: Diagnostics, cfg: RecommenderConfig, predictions_sha: str) -> 
         "bootstrap": None if diag.bootstrap is None else dataclasses.asdict(diag.bootstrap),
         "comparisons": (
             None if diag.comparisons is None else diag.comparisons.to_dict(orient="records")
+        ),
+        "pre_fase8": (
+            None
+            if (table := pre_fase8_comparison(diag, cfg)) is None
+            else table.to_dict(orient="records")
         ),
     }
 
@@ -1032,9 +1148,8 @@ def _objective_systems(
         )
 
     frozen = load_reference(reference_a4)
-    snapshot_path = Path(cfg.reports_dir) / PRE_A4_SNAPSHOT
-    if frozen is not None and snapshot_path.is_file():
-        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    snapshot = pl._load_same_dataset_snapshot(cfg, PRE_A4_SNAPSHOT)
+    if frozen is not None and snapshot is not None:
         sha = _sha256(reference_a4 / "recommendations_test.parquet")
         same_file = sha == snapshot["predicciones_sha256"]["recommendations_test.parquet"]
         same = same_file and set(frozen["basket_id"]) == queries
@@ -1064,23 +1179,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     reports = Path(cfg.reports_dir)
-    snapshot_path = reports / SNAPSHOT_FILENAME
-    snapshot = (
-        json.loads(snapshot_path.read_text(encoding="utf-8")) if snapshot_path.is_file() else None
-    )
+    # Los snapshots de antes de la Fase 8 se midieron sobre otro dataset: con el actual,
+    # sus cifras y sus predicciones no son comparables query a query.
+    snapshot = pl._load_same_dataset_snapshot(cfg, SNAPSHOT_FILENAME)
     metrics_path = reports / "metrics.json"
     current = (
         json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.is_file() else None
     )
 
-    pre_a1_path = reports / PRE_A1_SNAPSHOT
-    pre_a1 = (
-        json.loads(pre_a1_path.read_text(encoding="utf-8")) if pre_a1_path.is_file() else None
-    )
+    pre_a1 = pl._load_same_dataset_snapshot(cfg, PRE_A1_SNAPSHOT)
 
     start = time.perf_counter()
     test = load_test_set(Path(cfg.predictions_dir))
-    reference = load_reference(args.reference)
+    reference = load_reference(args.reference) if pre_a1 is not None else None
     reference_sha = (
         _sha256(args.reference / "recommendations_test.parquet") if reference is not None else None
     )

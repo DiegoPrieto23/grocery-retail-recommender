@@ -22,7 +22,7 @@ import pytest
 
 from data_generation import catalog as cat
 from data_generation import verify_dataset as vd
-from data_generation.export_oracle import oracle_frame
+from data_generation.export_oracle import missions_frame, oracle_frame
 from data_generation.generate_dataset import (
     TABLE_COLUMNS,
     TABLE_ORDER,
@@ -49,6 +49,33 @@ def test_departamentos_de_data_spec() -> None:
 
 def test_los_diez_pares_de_afinidad_de_data_spec() -> None:
     assert len(cat.AFFINITY_PAIRS) == 10
+    # La tabla completa de la Fase 8 los incluye con el mismo lift.
+    complements = {(t, a): lift for t, a, lift, _ in cat.COMPLEMENT_PAIRS}
+    for trigger, associated, lift in cat.AFFINITY_PAIRS:
+        assert complements[(trigger, associated)] == lift
+
+
+def test_matriz_de_interaccion_y_perfiles_de_mision() -> None:
+    """Complementos por encima de 1, sustitutos por debajo, y ningun factor a 0."""
+    import numpy as np
+
+    idx = cat.category_index()
+    m = np.array(cat.interaction_matrix())
+    assert m.shape == (len(cat.CATEGORIES), len(cat.CATEGORIES))
+    assert (m > 0).all()
+    for trigger, associated, _, _ in cat.COMPLEMENT_PAIRS:
+        assert m[idx[trigger], idx[associated]] > 1
+    for _, members, factor in cat.SUBSTITUTION_GROUPS:
+        for a in members:
+            for b in members:
+                if a != b:
+                    assert m[idx[a], idx[b]] == pytest.approx(factor)
+    profiles = np.array(cat.mission_profiles())
+    assert profiles.shape == (len(cat.MISSIONS), len(cat.CATEGORIES))
+    assert (profiles > 0).all()
+    # Solo hay segunda referencia en las categorias de exploracion.
+    for c in cat.CATEGORIES:
+        assert (cat.second_reference_prob(c) > 0) == (cat.loyalty_band(c) == "exploracion")
 
 
 def test_surtido_de_ocho_referencias_por_categoria(dataset: dict) -> None:
@@ -276,6 +303,13 @@ def test_el_registrador_del_oraculo_no_cambia_el_dataset(
     covered = bought.merge(frame[["basket_id", "category"]], on=["basket_id", "category"])
     assert len(covered) == len(bought)
 
+    # Fase 8: una fila de mision por cesta registrada, con probabilidades que suman 1.
+    missions = missions_frame(recorder, tables["baskets"]["basket_id"].to_numpy())
+    assert set(missions["basket_id"]) == test_ids
+    probs = missions[[f"mission_{m}" for m in cat.MISSION_NAMES]]
+    assert probs.sum(axis=1).round(9).eq(1).all()
+    assert (missions["size_factor"] > 0).all()
+
 
 # --------------------------------------------------------------------------------------
 # Patrones de negocio
@@ -416,3 +450,84 @@ def test_el_diccionario_de_datos_se_autogenera(dataset_dir: Path) -> None:
     for table in TABLE_ORDER:
         assert f"`{table}`" in readme
     assert (dataset_dir / "manifest.json").exists()
+
+
+# --------------------------------------------------------------------------------------
+# Estructura de la cesta (Fase 8: puntos A5, M1 y M2 del diagnostico)
+# --------------------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def tablas(dataset_dir: Path) -> dict:
+    return vd.load_tables(dataset_dir)
+
+
+@pytest.fixture(scope="module")
+def coocurrencia(tablas: dict) -> dict:
+    return vd.category_cooccurrence(tablas)
+
+
+def test_tamano_de_cesta_con_cola_larga(tablas: dict) -> None:
+    """M1: nada de Poisson recortada a 20. Rangos de DATA_SPEC.md, con holgura."""
+    size = vd.basket_size(tablas)
+    assert size["lineas_coef_variacion"] > 0.7
+    assert size["lineas_coef_variacion"] > 2 * size["coef_variacion_de_una_poisson_con_esa_media"]
+    assert size["lineas_max"] > 20
+    assert 2.0 < size["cestas_de_mas_de_20_lineas_pct"] < 15.0
+    assert 20.0 < size["cestas_de_1_a_3_lineas_pct"] < 50.0
+    assert size["categorias_max"] <= cat.MAX_CATEGORIES_PER_BASKET
+
+
+def test_segunda_referencia_solo_en_exploracion(tablas: dict) -> None:
+    """M2: dos referencias de una categoria, a veces y solo en las de exploracion."""
+    lines = vd.lines_per_category(tablas)
+    assert lines["categorias_de_cesta_con_2_o_mas_referencias_pct__habito"] == 0.0
+    assert 5.0 < lines["categorias_de_cesta_con_2_o_mas_referencias_pct__exploracion"] < 20.0
+    assert lines["lineas_por_categoria_de_cesta_max"] == 2
+
+
+def test_la_cesta_tiene_estructura_mas_alla_del_tamano(coocurrencia: dict) -> None:
+    """A5: muchos mas pares por encima del azar que los 38 de la Fase 7a, sin plantillas."""
+    assert 150 <= coocurrencia["controlado_pares_con_lift_mayor_1_5"] <= 600
+    assert coocurrencia["pares_con_lift_mayor_1_5"] > 40
+
+
+def test_los_complementos_declarados_sobreviven_al_tamano(coocurrencia: dict) -> None:
+    for pair, value in coocurrencia["complementarios_declarados"].items():
+        controlled = float(value.split("controlado ")[1])
+        assert controlled > 1.2, f"{pair}: {value}"
+
+
+def test_la_sustitucion_resta_frente_a_no_tenerla(
+    tmp_path: Path, coocurrencia: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2: el mismo generador sin grupos de sustitucion junta mas a los sustitutos.
+
+    Los sustitutos que comparten mision (lavavajillas y lejia en la de limpieza) pueden
+    seguir por encima de 1 en lift controlado, porque la mision los junta; lo que se
+    comprueba es que el grupo les resta frente a no tenerlo.
+    """
+    monkeypatch.setattr(cat, "SUBSTITUTION_GROUPS", ())
+    generate(GeneratorConfig(out_dir=tmp_path, scale=TEST_SCALE))
+    monkeypatch.undo()
+    # Ya con los grupos restaurados, para medir los mismos pares en el dataset sin ellos.
+    without = vd.category_cooccurrence(vd.load_tables(tmp_path))
+
+    pairs = without["sustitutos_declarados"]
+    with_groups = coocurrencia["sustitutos_declarados"]
+    ratios = []
+    for pair, value in with_groups.items():
+        base = pairs.get(pair)
+        if base is None:
+            continue
+        ratios.append(
+            float(value.split("controlado ")[1]) / float(base.split("controlado ")[1])
+        )
+    assert len(ratios) == len(pairs) >= 9
+    assert max(ratios) < 0.85
+    assert coocurrencia["sustitutos_declarados_con_lift_controlado_menor_1"].split()[0] != "0"
+
+
+def test_propension_a_la_marca_blanca(tablas: dict) -> None:
+    """M2: la cuota de marca blanca varia entre clientes mucho mas que por azar."""
+    pl = vd.private_label_propensity(tablas)
+    assert pl["ratio_varianza_observada_vs_azar"] > 5
+    assert pl["cuota_cliente_p90"] - pl["cuota_cliente_p10"] > 0.2
