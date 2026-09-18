@@ -7,6 +7,9 @@ name: Smoke E2E
 # que mas caro sale de arreglar tarde: que las 54 features valgan lo mismo en los dos
 # motores.
 #
+# Tambien se salta ahi `test_demo_app.py`, que es el unico que ejecuta `streamlit_app.py`:
+# sin bundle no hay app que arrancar.
+#
 # Este job ejecuta la cadena entera con `--scale 0.02` y corre esos tests contra el bundle
 # recien construido. Va de noche y a mano, no en cada push, porque tarda bastante mas que
 # los tests unitarios.
@@ -67,6 +70,7 @@ jobs:
           pytest -v -rs --no-header \
             tests/test_serving_parity.py \
             tests/test_demo_baskets.py \
+            tests/test_demo_app.py \
             tests/test_catalog.py \
             | tee smoke-tests.log
           if grep -qE "[0-9]+ skipped" smoke-tests.log; then

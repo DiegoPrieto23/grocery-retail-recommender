@@ -325,10 +325,9 @@ def nba_banner(
         # esconder, asi que se dice.
         if info["cutoff"] is not None:
             nota = (
-                f"Decidido con el historial anterior al **{info['cutoff']:%d/%m/%Y}**, el "
-                "corte de test de la Tarea 3b. No se recalcula al mover la fecha de la "
-                "cesta: el recomendador sí razona con el día que tengas seleccionado, la "
-                "próxima mejor acción no."
+                f"Decidido con el historial anterior al **{info['cutoff']:%d/%m/%Y}**. No "
+                "se recalcula al mover la fecha de la cesta: el recomendador sí razona "
+                "con el día que tengas seleccionado, la próxima mejor acción no."
             )
             if basket_day != info["cutoff"]:
                 dias = (basket_day - info["cutoff"]).days
@@ -340,11 +339,13 @@ def nba_banner(
 # Cabecera (antes de cargar nada pesado: la pagina no se queda en blanco)
 # --------------------------------------------------------------------------------------
 st.title("Supermercado online")
+# Los textos de la interfaz no mencionan fases ni tareas del proyecto: quien abre la demo
+# no tiene por que saber que hubo una Fase 7c. Lo que si se dice es como funciona el
+# sistema, que es informacion util, y eso se queda.
 st.caption(
     "Cesta en curso, recomendaciones del sistema de dos etapas (ALS + co-compra + "
     "popularidad, reordenado con LambdaRank) y próxima mejor acción. Todo es inferencia "
-    "sobre los modelos ya entrenados de las Fases 3 y 4, reentrenados en las 7c y 7d "
-    "sobre el catálogo de 496 referencias."
+    "sobre modelos ya entrenados, sobre un catálogo de 496 referencias."
 )
 
 
@@ -626,47 +627,68 @@ else:
 # --------------------------------------------------------------------------------------
 # Catalogo: buscador y navegacion por departamento
 # --------------------------------------------------------------------------------------
-st.subheader("Catálogo")
-query = st.text_input(
-    "Buscar productos",
-    placeholder="Buscar por nombre, categoría o marca…",
-    icon=":material/search:",
-    label_visibility="collapsed",
-)
+# Con una cesta real cargada, la app esta haciendo otra cosa: no se esta construyendo una
+# compra, se esta revisando si el modelo acerto lo que ese cliente compro de verdad. Anadir
+# productos a mano no ayuda a eso — rompe el contraste contra el ticket real, que es justo
+# lo que hace interesante el modo. Asi que el catalogo se repliega, no se quita: sigue
+# estando para quien quiera ver que pasa al tocar la cesta, pero deja de ocupar media
+# pantalla pidiendo ser usado.
+revisando_cesta_real = loaded is not None
 
-LIMIT = 15
-
-if query:
-    # Buscar manda sobre navegar: el resultado sale de todo el catalogo, no del
-    # departamento que estuviera abierto. Los filtros se esconden mientras tanto para que
-    # no haya duda de sobre que se ha buscado.
-    found = search(catalog, query, exclude=cart_ids, limit=LIMIT)
-    st.caption(f"Resultados en todo el catálogo, del más barato al más caro (máx. {LIMIT}).")
+if revisando_cesta_real:
+    contenedor = st.expander(
+        "Añadir productos a mano", icon=":material/add_shopping_cart:", expanded=False
+    )
+    contenedor.caption(
+        "Estás revisando una cesta real. Si añades productos, el carrito deja de ser el "
+        "que el cliente tenía en el corte y la comparación con lo que compró de verdad "
+        "deja de valer."
+    )
 else:
-    departments = sorted(catalog["department"].unique())
-    department = st.segmented_control(
-        "Departamento",
-        departments,
-        default=DEFAULT_DEPARTMENT,
+    st.subheader("Catálogo")
+    contenedor = st.container()
+
+with contenedor:
+    query = st.text_input(
+        "Buscar productos",
+        placeholder="Buscar por nombre, categoría o marca…",
+        icon=":material/search:",
         label_visibility="collapsed",
     )
-    category = None
-    if department:
-        categories = sorted(
-            catalog.loc[catalog["department"] == department, "category"].unique()
-        )
-        category = st.pills("Categoría", categories, label_visibility="collapsed")
-    found = (
-        browse(catalog, department, category, exclude=cart_ids, limit=LIMIT)
-        if department
-        else []
-    )
-    if department and not category:
-        st.caption(
-            "Una referencia por categoría. Elige una categoría para ver todas sus marcas."
-        )
 
-if not found:
-    st.caption("Ningún producto casa con esa búsqueda.")
-else:
-    product_grid(get_products(catalog, found), key_prefix="cat", action="add")
+    LIMIT = 15
+
+    if query:
+        # Buscar manda sobre navegar: el resultado sale de todo el catalogo, no del
+        # departamento que estuviera abierto. Los filtros se esconden mientras tanto para que
+        # no haya duda de sobre que se ha buscado.
+        found = search(catalog, query, exclude=cart_ids, limit=LIMIT)
+        st.caption(f"Resultados en todo el catálogo, del más barato al más caro (máx. {LIMIT}).")
+    else:
+        departments = sorted(catalog["department"].unique())
+        department = st.segmented_control(
+            "Departamento",
+            departments,
+            default=DEFAULT_DEPARTMENT,
+            label_visibility="collapsed",
+        )
+        category = None
+        if department:
+            categories = sorted(
+                catalog.loc[catalog["department"] == department, "category"].unique()
+            )
+            category = st.pills("Categoría", categories, label_visibility="collapsed")
+        found = (
+            browse(catalog, department, category, exclude=cart_ids, limit=LIMIT)
+            if department
+            else []
+        )
+        if department and not category:
+            st.caption(
+                "Una referencia por categoría. Elige una categoría para ver todas sus marcas."
+            )
+
+    if not found:
+        st.caption("Ningún producto casa con esa búsqueda.")
+    else:
+        product_grid(get_products(catalog, found), key_prefix="cat", action="add")
