@@ -1,615 +1,135 @@
-# GETTING_STARTED — cómo arrancar el proyecto con Claude Code
+# Cómo arrancar el proyecto
 
-## 1. Por qué esta estructura
+Guía para alguien que acaba de clonar el repo. Si lo que buscas es **qué es** el proyecto,
+empieza por el [`README.md`](README.md); si buscas **cómo funcionan los modelos** en lenguaje
+llano, por [`docs/como-funcionan-recomendador-y-nba.md`](docs/como-funcionan-recomendador-y-nba.md).
 
-Claude Code lee automáticamente, al inicio de cada sesión, cualquier `CLAUDE.md` que esté en
-el directorio donde lo lanzas (o en directorios por encima). Los demás documentos
-(`CHALLENGE.md`, `DATA_SPEC.md`, `ROADMAP.md`) **no** se cargan solos — Claude los lee bajo
-demanda con sus herramientas de fichero, cuando el propio `CLAUDE.md` o tu prompt le dicen
-que lo haga. Por eso el `CLAUDE.md` que ya tienes empieza indicando "lee también
-CHALLENGE.md, DATA_SPEC.md y ROADMAP.md antes de generar código": así se aseguran de entrar
-en contexto sin tener que pegarlos tú a mano cada vez.
+> Este documento describía hasta la Fase 8 el arranque original con Claude Code, que ya no
+> se parecía a lo que hay. Los prompts de construcción se conservan tal cual en
+> [`docs/prompts-de-construccion.md`](docs/prompts-de-construccion.md); esto de aquí es la
+> guía del pipeline actual (punto B3 del [diagnóstico](docs/diagnostico-fase7.md)).
 
-## 2. Carpeta inicial
+## Lo que hace falta
 
-Antes de abrir Claude Code, deja el repo así (los 4 `.md` ya los tienes; el resto son
-carpetas vacías que Claude Code rellenará en la Fase 0 del `ROADMAP.md`):
-
-```
-grocery-retail-recommender/
-├── CLAUDE.md
-├── CHALLENGE.md
-├── DATA_SPEC.md
-├── ROADMAP.md
-├── data_generation/
-├── data/
-│   ├── raw/
-│   └── processed/
-├── src/
-│   ├── etl/
-│   ├── recommender/
-│   └── nba/
-├── notebooks/
-├── models/
-├── predictions/
-└── tests/
-```
-
-Comandos para dejarlo listo en PowerShell (ajustados a tu ruta y a que los 4 `.md` están
-en Descargas):
-
-```powershell
-$base    = "C:\Users\Diego Prieto\Documents\Claude Code"
-$project = Join-Path $base "grocery-retail-recommender"
-
-$subfolders = @(
-    "data_generation",
-    "data\raw",
-    "data\processed",
-    "src\etl",
-    "src\recommender",
-    "src\nba",
-    "notebooks",
-    "models",
-    "predictions",
-    "tests"
-)
-
-foreach ($folder in $subfolders) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $project $folder) | Out-Null
-}
-
-$downloads = "$env:USERPROFILE\Downloads"
-$mdFiles   = @("CLAUDE.md", "CHALLENGE.md", "DATA_SPEC.md", "ROADMAP.md")
-
-foreach ($file in $mdFiles) {
-    Move-Item -Path (Join-Path $downloads $file) -Destination $project
-}
-
-Set-Location $project
-git init
-git add .
-git commit -m "docs: brief, esquema de datos y roadmap iniciales"
-```
-
-Todo va en variables (`$base`, `$project`, `$downloads`) precisamente porque la ruta tiene
-espacios (`Diego Prieto`, `Claude Code`) — así no hace falta ir entrecomillando cada línea a
-mano.
-
-### Alternativa en bash (Git Bash / WSL)
-
-Si prefieres bash en vez de PowerShell, primero averigua cuál tienes — la ruta se escribe
-distinto en cada uno. En tu terminal bash:
+- **Python 3.10 – 3.12.** PySpark 3.5 todavía no soporta 3.13.
+- **Una JVM 17** (Temurin va bien). PySpark la necesita a partir de la Fase 2.
+- Unos **8 GB de RAM libres** y unos **6 GB de disco** para los artefactos generados.
+- **Ninguna clave ni conexión de red**, con una excepción: volver a descargar las fotos del
+  catálogo de Pexels. Las fotos ya están en `assets/` y versionadas, así que no hace falta.
 
 ```bash
-uname -a
+git clone <este-repo> && cd grocery-retail-recommender
+python -m venv .venv
+.venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt -c constraints.txt
 ```
 
-- Si la salida menciona `Microsoft` o `WSL` → tienes **WSL**, y el disco `C:` vive en `/mnt/c/...`
-- Si empieza por `MINGW64` o `MSYS` → tienes **Git Bash**, y el disco `C:` vive en `/c/...`
+`constraints.txt` fija las versiones. Instalar sin él funciona, pero entonces las cifras de
+los informes pueden no salir idénticas.
 
-**Git Bash:**
+## Comprobar que el entorno está bien, antes de gastar una hora
 
 ```bash
-base="/c/Users/Diego Prieto/Documents/Claude Code"
-project="$base/grocery-retail-recommender"
-
-mkdir -p "$project"/{data_generation,data/raw,data/processed,src/etl,src/recommender,src/nba,notebooks,models,predictions,tests}
-
-downloads="/c/Users/Diego Prieto/Downloads"
-mv "$downloads/CLAUDE.md" "$downloads/CHALLENGE.md" "$downloads/DATA_SPEC.md" "$downloads/ROADMAP.md" "$project/"
-
-cd "$project"
-git init
-git add .
-git commit -m "docs: brief, esquema de datos y roadmap iniciales"
+pytest -q                          # ~8 min, 453 tests
+python -m src.pipeline list        # los 13 pasos y sus dependencias
+python -m src.pipeline all --dry-run
 ```
 
-**WSL:**
+En un repo recién clonado no hay `data/`, así que unos cuantos tests **se saltan solos**:
+los que necesitan el bundle de serving o las tablas procesadas. Es esperado. Si pasan los
+que sí corren, el entorno está bien.
+
+## Generar todo
 
 ```bash
-base="/mnt/c/Users/Diego Prieto/Documents/Claude Code"
-project="$base/grocery-retail-recommender"
-
-mkdir -p "$project"/{data_generation,data/raw,data/processed,src/etl,src/recommender,src/nba,notebooks,models,predictions,tests}
-
-downloads="/mnt/c/Users/Diego Prieto/Downloads"
-mv "$downloads/CLAUDE.md" "$downloads/CHALLENGE.md" "$downloads/DATA_SPEC.md" "$downloads/ROADMAP.md" "$project/"
-
-cd "$project"
-git init
-git add .
-git commit -m "docs: brief, esquema de datos y roadmap iniciales"
+python -m src.pipeline all         # ~75 min
 ```
 
-Si vas a trabajar con Claude Code dentro de WSL, instálalo también dentro de WSL (es un
-entorno Linux aparte del Windows nativo). Si dudas entre todo esto, la opción de PowerShell
-de arriba es la más directa: es la shell que ya trae Windows 11 por defecto, sin instalar ni
-comprobar nada más.
+Un solo comando: `src/pipeline.py` conoce las dependencias entre pasos y los ordena. Lo que
+deja, en orden:
 
-No hace falta crear `README.md` a mano: es una de las tareas de la Fase 5 del `ROADMAP.md`,
-y tenerlo vacío desde el principio solo invita a que quede desactualizado.
+| Paso | Deja en |
+| --- | --- |
+| `generate` | `data/raw/` — los 7 CSV, ~4,4 M de líneas de ticket |
+| `verify-dataset` | `reports/etl/verify_dataset.json` |
+| `etl` | `data/processed/` — 7 tablas limpias + 4 de features |
+| `recommender` | `models/`, `predictions/`, `reports/recommender/` |
+| `export-bundle` | `data/serving/` — lo que la demo necesita para correr sin Spark |
+| `export-oracle` | `data/oracle/` — el techo teórico |
+| `nba` | `models/`, `predictions/nba_actions.parquet`, `reports/nba/` |
+| `impact` | `IMPACT.md` |
+| `findings` | `reports/insights/` |
+| `assets` | `assets/product_catalog.csv` |
 
-## 3. Prompt inicial para Claude Code
+Si algo falla a mitad, se retoma sin repetir lo hecho:
 
-Lánzalo con `claude` dentro de `grocery-retail-recommender/` y pega esto como primer mensaje:
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos.
-
-Quiero que ejecutemos la Fase 0 y la Fase 1 del ROADMAP.md:
-
-1. Fase 0: monta el esqueleto del proyecto (requirements.txt con pyspark, pandas, numpy,
-   faker, scikit-learn, lightgbm; constraints.txt con versiones fijas; un workflow de CI
-   mínimo que instale dependencias y corra los tests).
-
-2. Fase 1: implementa data_generation/generate_dataset.py siguiendo DATA_SPEC.md al pie de
-   la letra — las 7 tablas, con seed=42, los ciclos de reposición, los 10 pares de afinidad
-   de cesta y la estacionalidad con sus multiplicadores exactos, el uplift de promoción, el
-   churn progresivo y los problemas de calidad deliberados.
-
-No implementes nada de ETL, recomendador ni NBA todavía — eso es la Fase 2 en adelante y lo
-abordamos en otra sesión.
-
-Antes de dar la Fase 1 por terminada, verifica que dos ejecuciones del generador con la
-misma seed producen el mismo hash de fichero, y déjame un resumen de qué tablas y volúmenes
-ha generado.
-
-Si algo de DATA_SPEC.md es ambiguo o te faltan datos para decidir un detalle concreto,
-pregúntame antes de asumir.
+```bash
+python -m src.pipeline all --from recommender
 ```
 
-Este prompt deja fuera del alcance el ETL/recomendador/NBA a propósito — es mucha lógica de
-negocio para una sola sesión, y conviene revisar el dataset generado (Fase 1) antes de
-construir nada encima.
+Y para probar el circuito entero en unos minutos en vez de en una hora, con un dataset
+pequeño (es lo que corre el job de smoke en CI):
 
-## 4. Prompts para las siguientes sesiones
-
-Cada sesión nueva de Claude Code no recuerda la anterior por defecto, así que cada prompt
-empieza igual: relee los 4 documentos y repasa qué hay ya hecho en el repo antes de avanzar.
-Van en orden — no pegues el de la Fase 3 si la Fase 2 no está terminada y verificada.
-
-### Estado: qué prompts ya se han ejecutado
-
-Los prompts de abajo se conservan como registro de cómo se construyó el proyecto, pero la
-mayoría ya están gastados. El detalle fase a fase, con su verificación, está en
-`ROADMAP.md`; este es el resumen para saber cuál toca:
-
-| Fase | Estado | Nota |
-| --- | --- | --- |
-| 0 · Setup | ✅ | |
-| 1 · Generador | ✅ | |
-| 2 · ETL y features | ✅ | |
-| 3 · Recomendador | ✅ | la deuda de fidelidad de SKU se cerró en la Fase 7 |
-| 4 · Next Best Action | ✅ | queda una deuda anotada (el churn es inactividad a 4 semanas) |
-| 5 · Empaquetado | ✅ | impacto, hallazgos y README regenerados sobre el dataset de la Fase 7 |
-| 6a · Preparación visual | ✅ | 60 `visual_group`, 60 fotos cacheadas en `assets/` |
-| 6b · Demo (V1+V2+V3) | ✅ | los prompts V1/V2/V3 de abajo ya no aplican tal cual: las tres versiones aterrizaron juntas en el commit `55116b3` |
-| 7 · Fidelidad de producto (7a-7e) | ✅ | |
-
-### Fase 2 — ETL y feature engineering
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado actual del repo (qué hay en data_generation/ y data/raw/ de la Fase 1).
-
-Vamos a ejecutar la Fase 2 del ROADMAP.md:
-
-1. Limpieza de las 7 tablas generadas en la Fase 1: duplicados, nulos, categorías
-   inconsistentes, cantidades negativas y outliers de total_amount — documenta qué se
-   corrige y por qué.
-2. Implementa el Data Trust Score (Tarea 1 del CHALLENGE.md) sobre el dataset limpio.
-3. Notebook de EDA (notebooks/): resuelve cada pregunta de negocio de la Tarea 1 con
-   Spark SQL (vistas temporales + spark.sql) y una visualización por pregunta
-   (matplotlib/seaborn/plotly) — no solo una tabla de números.
-4. Calcula RFM por cliente.
-5. Implementa la función due_for_repurchase por cliente-categoría (Tarea 2 del
-   CHALLENGE.md), usando typical_repurchase_days de products.
-6. Construye la tabla de afinidad de cesta (co-ocurrencia o FP-Growth) a partir de
-   basket_items, que servirá de candidato para el recomendador en la Fase 3.
-
-Todo esto en PySpark, en src/etl/, con tests para las funciones de las Tareas 1 y 2.
-
-No implementes nada del recomendador ni del NBA todavía — eso es la Fase 3 en adelante.
-
-Al terminar, marca en ROADMAP.md los checkboxes de la Fase 2 que hayas completado, y déjame
-un resumen de qué decisiones de limpieza tomaste y qué pinta tiene la tabla de afinidad
-resultante (¿se ven los 10 pares de DATA_SPEC.md con lift alto?).
-
-Si algo de DATA_SPEC.md o CHALLENGE.md es ambiguo, pregúntame antes de asumir.
+```bash
+python -m src.pipeline all --scale 0.02
 ```
 
-### Fase 3 — Recomendador de cesta
+Ojo: a esa escala las **cifras no son las del README**. Sirve para comprobar que la cadena
+funciona de punta a punta, no para reproducir resultados.
 
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado actual del repo (ETL y features de la Fase 2, en particular la tabla de
-afinidad de cesta y el RFM).
+## Levantar la demo
 
-Vamos a ejecutar la Fase 3 del ROADMAP.md — el recomendador de cesta (Tarea 3a del
-CHALLENGE.md), con la arquitectura de dos etapas que describe CHALLENGE.md:
-
-1. Split train/test por basket_id (nunca por fila de basket_items, para no filtrar datos).
-2. Generación de candidatos, cada uno como una fuente independiente:
-   - Popularidad/estacionalidad (fallback)
-   - Co-compra (tabla de afinidad de la Fase 2)
-   - ALS (Spark MLlib) sobre customer_id × product_id
-3. Feature engineering para el ranker: score de cada fuente de candidatos,
-   recency/frequency del cliente con esa categoría/producto, si está en promoción,
-   popularidad reciente, y señal de sesión si la hay (session_events).
-4. Entrena un LightGBM con objetivo de ranking (LambdaRank) sobre esas features para
-   reordenar los candidatos y quedarte con el top-5.
-5. Verifica que la lógica cubre los 4 perfiles de cliente del CHALLENGE.md (nuevo sin
-   cesta, nuevo con cesta, recurrente sin cesta, recurrente con cesta) — lo que cambia
-   entre perfiles es qué fuentes de candidatos tienen señal, no el ranker.
-6. Evaluación con NDCG@5 y Recall@5 sobre el test.
-
-Todo en src/recommender/, con un notebook o script que muestre el resultado para al menos
-un ejemplo de cada uno de los 4 perfiles.
-
-No implementes el NBA todavía — eso es la Fase 4.
-
-Al terminar, marca los checkboxes de la Fase 3 en ROADMAP.md y dime qué NDCG@5/Recall@5 ha
-salido, y si algún perfil de cliente rinde claramente peor que los otros.
-
-Si algo es ambiguo, pregúntame antes de asumir.
+```bash
+streamlit run streamlit_app.py     # http://localhost:8501
 ```
 
-### Fase 4 — Next Best Action
+Necesita `data/serving/` (paso `export-bundle`), `models/` y
+`predictions/nba_actions.parquet`. Si falta algo, la app dice qué comando lo genera en vez
+de reventar con un *stack trace*.
 
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado actual del repo (recomendador de la Fase 3, y las features de RFM/churn de
-la Fase 2).
+La demo **solo hace inferencia**: carga los modelos ya entrenados y no reentrena nada ni
+llama a ninguna API.
 
-Vamos a ejecutar la Fase 4 del ROADMAP.md — Next Best Action (Tarea 3b del CHALLENGE.md):
+## El dataset no se versiona, y aun así es reproducible
 
-1. Define el target de propensión: compra en categoría en los próximos 7 días, y/o churn en
-   las próximas 4 semanas (usa customers.churn_label y la caída progresiva de
-   frecuencia/ticket de DATA_SPEC.md).
-2. Split temporal (no aleatorio): entrena con un periodo pasado, evalúa con uno posterior.
-3. Modelo de propensión (LightGBM o logística) en src/nba/.
-4. Define el catálogo de acciones con coste y margen esperado (recomendar_producto,
-   enviar_cupón_categoría, ninguna_acción).
-5. Implementa la política de valor esperado:
-   acción* = argmax_a (P(conversión|a) × margen_esperado(a) − coste(a)).
-6. Evalúa el modelo con AUC/PR-AUC, y la política comparándola contra "no actuar siempre" y
-   "actuar siempre".
+`data/` está en `.gitignore`. No se sube, se regenera: la semilla está fija (`SEED = 42`) y
+propagada a numpy, `random` y Faker, con sub-*streams* por etapa. Dos ejecuciones dan
+ficheros **byte a byte idénticos**, y eso lo comprueba un test comparando los `sha256` del
+manifiesto (`data/raw/manifest.json`).
 
-Al terminar, marca los checkboxes de la Fase 4 en ROADMAP.md y dime qué AUC ha salido y qué
-uplift de valor esperado tiene la política frente a las dos alternativas triviales.
+Hay dos excepciones declaradas:
 
-Si algo es ambiguo (por ejemplo, qué margen o coste asignar a cada acción si no está en
-DATA_SPEC.md), pregúntame antes de asumir un número arbitrario.
+- **Las fotos de `assets/`** salen de la API de Pexels y una búsqueda puede dar resultados
+  distintos con el tiempo. Por eso se descargaron una vez y están versionadas.
+- **El entrenamiento del ranker no es del todo determinista entre ejecuciones**: la parada
+  temprana cae en un número de árboles distinto y la métrica se mueve en la tercera decimal.
+  Está anotado como deuda en el [`README.md`](README.md#qué-viene-ahora).
+
+## Si quieres tocar algo
+
+- **Los supuestos de negocio** (márgenes, coste del cupón, uplifts, incrementalidad) están
+  todos juntos y comentados en `src/nba/config.py` y `src/impact/config.py`. Son supuestos
+  declarados, no estimaciones, y el porqué está en esos docstrings.
+- **Los parámetros del recomendador** (ventanas temporales, topes de candidatos,
+  hiperparámetros, re-ranking) están en `src/recommender/config.py`.
+- **El dominio del generador** (categorías, misiones de compra, afinidades, estacionalidad)
+  está en `data_generation/catalog.py`, y el esquema que produce, en
+  [`DATA_SPEC.md`](DATA_SPEC.md).
+- **La lógica de negocio vive en `src/`**, no en los notebooks ni en `streamlit_app.py`:
+  eso último solo dibuja. Es la regla que fija [`CLAUDE.md`](CLAUDE.md) y lo que permite
+  testear el porqué de una recomendación sin levantar la app.
+
+Cambiar el generador obliga a rehacer todo lo que cuelga de él. Eso es un comando
+(`python -m src.pipeline all`) y una hora, pero las cifras de los informes cambiarán: la
+convención del repo es congelar las anteriores en un `reports/*/baseline_*.json` antes de
+tocar nada, para poder comparar después.
+
+## Extras opcionales
+
+```bash
+pip install jupyterlab             # para abrir notebooks/01_eda.ipynb
+pip install mlflow                 # las Fases 3 y 4 registran cada ejecución
 ```
 
-### Fase 5 — Empaquetado y storytelling
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa todo el trabajo de las Fases 1 a 4.
-
-Vamos a ejecutar la Fase 5 del ROADMAP.md — empaquetado. El dashboard de Power BI que
-menciona la Tarea 4 de CHALLENGE.md queda fuera de alcance por ahora (ver "Fuera de
-alcance" en ROADMAP.md) — no lo implementes aunque CHALLENGE.md todavía lo describa; el
-foco del proyecto pasa a la demo de la Fase 6.
-
-1. README.md principal: qué es el proyecto, arquitectura (diagrama en texto o Mermaid está
-   bien), cómo reproducirlo de principio a fin, y un resumen de resultados del recomendador
-   y del NBA.
-2. Diagrama ER (Mermaid) del modelo relacional de las 7 tablas (customers, products,
-   promotions, baskets, basket_items, sessions, session_events) con sus claves y
-   relaciones, incluido en el README.
-3. Resumen de impacto de negocio (medio folio, en el README o en IMPACT.md aparte): traduce
-   el NDCG@5 y el uplift del NBA a impacto estimado (ej. cross-sell extra en €/mes sobre el
-   volumen de cestas simulado).
-4. Notebook o informe con los hallazgos de negocio más interesantes (estacionalidad,
-   afinidad de cesta, qué perfiles de cliente responden mejor al NBA) — con el mismo
-   espíritu narrativo del informe de sports-rental-analytics.
-5. Revisa que existan tests para las funciones clave de las Tareas 1 y 2, y añade los que
-   falten.
-6. (Opcional, si te sobra tiempo) Integra MLflow para registrar los experimentos del
-   recomendador y del modelo de propensión.
-
-Al terminar, marca los checkboxes de la Fase 5 en ROADMAP.md (el dashboard de Power BI no
-cuenta como pendiente: está fuera de alcance, no a medias).
-
-Antes de darla por cerrada, dime qué quedó sin cubrir de la Tarea 4 del CHALLENGE.md más
-allá de Power BI, y por qué.
-```
-
-### Fase 6a — Preparación visual del catálogo
-
-✅ **Ya ejecutada** (commit `b810bd5`). Se conserva como registro.
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el esquema real de la tabla products (data/processed/ o donde la dejó la Fase 2).
-
-Vamos a ejecutar la Fase 6a del ROADMAP.md — preparación visual del catálogo. Es un paso
-previo a la demo, se ejecuta una sola vez y es la única parte del proyecto que necesita
-internet.
-
-1. Analiza las columnas de products (department, category, brand) y decide si category ya
-   es suficientemente granular para agrupar visualmente los productos, o si hace falta una
-   columna nueva visual_group. No uses el departamento (muy amplio) ni el product_id o la
-   marca (muy específico) — el objetivo son grupos reutilizables tipo "leche_entera",
-   "yogur_griego", "salmón".
-2. Genera un CSV visual_group, search_term con el término de búsqueda en inglés para cada
-   grupo (Pexels tiene mejor cobertura en inglés aunque el resto del proyecto esté en
-   español).
-3. Cuenta productos por visual_group y fusiona los grupos demasiado pequeños; documenta qué
-   fusionaste y por qué.
-4. Usa la API de Pexels para buscar y descargar una imagen representativa por
-   visual_group. Prioriza imágenes de producto sobre fondo limpio o blanco, con aspecto de
-   ecommerce/supermercado — evita personas, composiciones complejas o fotografías de
-   cocinas y restaurantes en la query de búsqueda.
-5. Guarda las imágenes en assets/ (assets/leche_entera.jpg, etc.).
-6. Genera el CSV final product_id, product_name, visual_group, image_path. Como el dataset
-   no tiene un nombre de producto propio, deriva product_name de department/category/brand
-   — no hace falta tocar DATA_SPEC.md ni el generador para esto.
-7. Comitea assets/ y los CSV de mapeo. No se regeneran en cada ejecución del pipeline: son
-   un fixture cacheado, porque los resultados de Pexels no son reproducibles por semilla.
-
-La PEXELS_API_KEY ya está en un .env en la raíz del proyecto. Cárgala con python-dotenv
-(añádelo a requirements.txt si no está) — nunca la imprimas por pantalla, la metas en un
-commit, un log o una celda de notebook, ni la hardcodees en el código. Antes de nada,
-comprueba que .env está en .gitignore; si no lo está, añádelo tú antes de continuar (y
-confirma que .env.example sí queda comiteado, como documentación de qué variable hace
-falta, sin el valor real).
-
-Al terminar, marca los checkboxes de la Fase 6a en ROADMAP.md y déjame un resumen: cuántos
-visual_group salieron, cuáles fusionaste, y si algún grupo se quedó sin imagen válida.
-```
-
-### Fase 6b — V1: Carrito, sin recomendaciones
-
-✅ **Ya ejecutada** (commit `55116b3`), salvo sembrar la cesta desde `basket_items`.
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado actual del repo (README de la Fase 5, y el CSV de imágenes de la Fase 6a
-en assets/).
-
-Antes de nada, comprueba que streamlit, python-dotenv y requests están en
-requirements.txt (el requirements.txt original de la Fase 0 no los incluía) e instálalos
-si falta alguno. Verifica que streamlit run funciona (aunque sea sobre un app.py vacío)
-antes de seguir — si da un error tipo "command not found" (127), es casi seguro que
-streamlit no está instalado en el entorno activo.
-
-Si no tienes ya instalada la skill developing-with-streamlit (repo streamlit/agent-skills)
-en .claude/skills/, instálala ahora — la vamos a necesitar para el theming y estilizado.
-
-Vamos a ejecutar la V1 de la Fase 6b del ROADMAP.md: una primera versión de la demo SIN
-recomendaciones ni NBA todavía, solo catálogo y cesta. Es la primera de tres versiones
-incrementales — hazlo así de acotado a propósito, no adelantes trabajo de la V2 o la V3.
-
-1. Define un tema propio en .streamlit/config.toml (colores, fuente) en vez de dejar el
-   tema por defecto de Streamlit.
-2. App en Streamlit, en local, que:
-   - Deja elegir un customer_id existente (cliente recurrente) o simular "cliente nuevo"
-     (sin historial).
-   - Si es un cliente existente, permite cargar una cesta real suya de basket_items de
-     test como punto de partida.
-   - Si es un cliente nuevo (o si se prefiere empezar de cero), permite construir una
-     cesta manualmente eligiendo productos del catálogo.
-   - Muestra el catálogo/resultado de búsqueda de productos como tarjetas visuales: cada
-     producto lleva la foto real de su visual_group (columna image_path del CSV de la Fase
-     6a), nombre, categoría y precio. Usa las imágenes que ya están en assets/ tal cual —
-     no descargues nada nuevo ni llames a la API de Pexels desde la app. Si algún
-     visual_group se quedó sin imagen válida en la Fase 6a, dímelo en vez de generar o
-     buscar un placeholder por tu cuenta.
-   - La cesta (cargada o construida a mano) se muestra con el mismo estilo de tarjeta, no
-     como una tabla.
-3. Todavía NO llames al recomendador ni al NBA — eso es la V2 y la V3. Esta versión es solo
-   navegación de catálogo y gestión de cesta.
-4. Añade un README corto dentro de la carpeta de la demo explicando cómo lanzarla en local
-   (streamlit run ...).
-
-Al terminar, marca los checkboxes de la V1 en ROADMAP.md y déjame confirmación de que
-streamlit run arranca sin errores antes de que sigamos con la V2 en otra sesión.
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
-
-### Fase 6b — V2: Recomendaciones en vivo
-
-✅ **Ya ejecutada** (commit `55116b3`). Los 4 perfiles quedaron verificados.
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado actual del repo — en particular la app de la V1 de la Fase 6b (catálogo y
-cesta ya funcionando) y el ranker entrenado en models/ de la Fase 3.
-
-Vamos a ejecutar la V2 de la Fase 6b del ROADMAP.md: añadir recomendaciones en vivo sobre
-la app de la V1. No reescribas ni rehagas lo de la V1 — amplíalo.
-
-1. Integra el pipeline de candidatos + ranking (Fase 3, ya entrenado): carga el modelo una
-   vez al arrancar la app (no en cada interacción), y recalcula el top-5 cada vez que
-   cambie la cesta.
-2. Muestra las recomendaciones como tarjetas con el mismo estilo visual que el catálogo
-   (foto real del visual_group), y añade un motivo breve por recomendación cuando se pueda
-   derivar de las features del ranker (ej. "porque te toca reponerlo", "co-compra habitual
-   con lo que llevas").
-3. Verifica explícitamente que los 4 perfiles de cliente funcionan: nuevo sin cesta, nuevo
-   con cesta, recurrente sin cesta, recurrente con cesta — prueba los cuatro casos y
-   dime qué fuentes de candidatos tiene señal en cada uno.
-4. Todavía NO implementes el NBA — eso es la V3.
-
-Al terminar, marca los checkboxes de la V2 en ROADMAP.md.
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
-
-### Fase 6b — V3: Next Best Action
-
-✅ **Ya ejecutada** (commit `55116b3`), salvo el README de la demo.
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado actual del repo — en particular la app de la V1+V2 de la Fase 6b (catálogo,
-cesta y recomendaciones ya funcionando) y los modelos de propensión en models/ de la Fase 4.
-
-Vamos a ejecutar la V3 de la Fase 6b del ROADMAP.md: añadir el Next Best Action sobre la
-app de la V1+V2. No reescribas lo anterior — amplíalo.
-
-1. Carga los modelos de propensión (Fase 4) una vez al arrancar la app, y calcula la acción
-   recomendada (Tarea 3b del CHALLENGE.md) para el cliente activo.
-2. Muestra un banner con esa acción, visualmente destacado (color/icono), no como texto
-   plano perdido en la página.
-3. Comprueba que la demo completa (V1+V2+V3) solo hace inferencia: carga los artefactos ya
-   entrenados de models/ y las imágenes ya descargadas en assets/, sin reentrenar nada ni
-   volver a llamar a la API de Pexels en caliente.
-4. Actualiza el README de la demo si hace falta, con el flujo completo.
-
-No despliegues nada en la nube ni montes una API pública — sigue fuera de alcance del
-proyecto, esto es solo para local.
-
-Al terminar, marca los checkboxes de la V3 en ROADMAP.md — con esto, la Fase 6b queda
-cerrada del todo.
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
-
-## 5. Prompts para la Fase 7 (fidelidad de producto y comparación con Kaggle)
-
-Motivada por ver en la demo "0 de 5 recomendaciones" casi siempre — el generador elegía la
-referencia dentro de cada categoría casi al azar, así que el SKU exacto era casi
-impredecible por construcción, no por falta de modelo. Son 5 sub-fases, cada una pensada
-para caber en una sesión de la suscripción Pro. Van en orden — cada una da por hecho que la
-anterior está cerrada y verificada.
-
-### Fase 7a — Generador: fidelidad de marca + catálogo reducido
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa data_generation/generate_dataset.py y el hallazgo de la Fase 3 sobre fidelidad de
-SKU (sección "Lo que limita la métrica" del ROADMAP.md).
-
-Vamos a ejecutar la Fase 7a del ROADMAP.md: dar fidelidad de marca al generador y reducir
-el catálogo, para que el recomendador tenga más señal real a nivel de SKU. Esto va a
-cambiar los product_id y los hashes del dataset — es intencionado.
-
-1. Reduce el número de referencias por categoría de ~24 a 8 (si tienes una razón de negocio
-   clara para otro número, dímela antes de aplicarla, pero 8 es el punto de partida).
-2. Añade fidelidad de marca: la primera compra de un cliente en una categoría le asigna una
-   referencia preferida (aleatoria entre las de esa categoría). Las compras siguientes en
-   la misma categoría repiten esa referencia con una probabilidad de lealtad que varía por
-   categoría: 0,75-0,85 en categorías de hábito (café, detergente, higiene, cuidado
-   personal) y 0,25-0,40 en categorías más exploratorias (fruta, snacks, congelados). Decide
-   tú a qué grupo pertenece cada categoría siguiendo ese criterio y documenta la asignación.
-3. Actualiza DATA_SPEC.md con el nuevo tamaño de catálogo y el parámetro de lealtad por
-   categoría.
-4. Regenera el dataset con la semilla fija (seed=42) y verifica que sigue siendo
-   reproducible: dos ejecuciones deben dar el mismo hash.
-5. Comprueba con una consulta rápida que la repetición de SKU dentro de categoría subió de
-   forma clara frente al número antiguo (0,86 referencias distintas por compra de media,
-   documentado en la Fase 3) — dame el número nuevo.
-
-No toques nada de la Fase 2 en adelante todavía — eso es la Fase 7b y siguientes, en otra
-sesión.
-
-Al terminar, marca los checkboxes de la Fase 7a en ROADMAP.md.
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
-
-### Fase 7b — Rehacer la Fase 2 (ETL) sobre el dataset nuevo
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el dataset regenerado de la Fase 7a (data/raw/ o donde lo haya dejado).
-
-Vamos a ejecutar la Fase 7b del ROADMAP.md: rehacer la Fase 2 (ETL) sobre el dataset nuevo.
-Es la misma lógica de la Fase 2 original, solo se re-ejecuta sobre datos distintos — no
-rediseñes nada salvo que algo se rompa por el cambio de esquema.
-
-1. Vuelve a ejecutar limpieza, Data Trust Score, RFM, due_for_repurchase y afinidad de
-   cesta (python -m src.etl.run_etl o el comando que corresponda).
-2. Comprueba que los 10 pares de afinidad de DATA_SPEC.md siguen saliendo con lift alto —
-   no debería haber cambiado mucho respecto a antes, pero verifícalo y dime si algo se
-   desvía.
-
-Al terminar, marca los checkboxes de la Fase 7b en ROADMAP.md y dime si el Data Trust Score
-y los recuentos de limpieza salen parecidos a los de antes (79 comprobaciones, 89,99 → 100).
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
-
-### Fase 7c — Rehacer la Fase 3 (recomendador): reentrenar, F1@5 y comparación con Kaggle
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el ETL regenerado de la Fase 7b.
-
-Vamos a ejecutar la Fase 7c del ROADMAP.md: reentrenar el recomendador sobre el dataset
-nuevo, añadir F1@5 a la evaluación, y comparar con la competición de Kaggle "Instacart
-Market Basket Analysis".
-
-1. Reentrena el pipeline completo (candidatos + ranker) sobre los datos de la Fase 7b.
-2. Añade Precision@5 a la evaluación (ya tienes Recall@5) y calcula F1@5 como su media
-   armónica: F1@5 = 2 × (Precision@5 × Recall@5) / (Precision@5 + Recall@5).
-3. Compara el F1@5 con el resultado del primer puesto de la competición de Kaggle
-   "Instacart Market Basket Analysis" (F1 ≈ 0,41), pero documenta explícitamente en el
-   informe que no es una comparación estrictamente equivalente: Instacart predice solo
-   recompras (productos que el usuario ya compró antes) con un conjunto de tamaño variable
-   optimizado por F1-maximization, mientras que este proyecto predice un top-5 fijo que
-   mezcla recompra con descubrimiento (popularidad, co-compra, ALS). Deja el número, pero
-   con esa salvedad al lado — no lo presentes como si fuera el mismo benchmark.
-4. Compara NDCG@5, Recall@5, hit_rate@5 (SKU) y el ratio categoría/SKU con los números
-   antiguos (0,0343 / 0,0332 / 11,8% / 51,4% categoría vs 11,8% SKU) y dime si mejoraron de
-   forma clara.
-
-Al terminar, marca los checkboxes de la Fase 7c en ROADMAP.md.
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
-
-### Fase 7d — Rehacer la Fase 4 (NBA) sobre el dataset nuevo
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el ETL regenerado de la Fase 7b y el recomendador reentrenado de la Fase 7c.
-
-Vamos a ejecutar la Fase 7d del ROADMAP.md: rehacer la Fase 4 (NBA) sobre el dataset nuevo.
-La lógica y la política no cambian — solo se reentrena sobre datos distintos.
-
-1. Reentrena los dos modelos de propensión (compra en categoría a 7 días, churn a 4
-   semanas) y recalcula la política de valor esperado sobre el dataset regenerado.
-2. Compara el AUC/PR-AUC y el barrido de sensibilidad de churn_reduction con los números
-   antiguos (Churn: AUC 0,8531 · Compra categoría: AUC 0,7634 · política +4.012€ frente a
-   no actuar). Si algo se desvía de forma notable, dímelo antes de darlo por bueno — no
-   debería cambiar mucho, porque el NBA no depende de la fidelidad de SKU.
-
-Al terminar, marca los checkboxes de la Fase 7d en ROADMAP.md.
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
-
-### Fase 7e — Rehacer la Fase 6a y arreglar la Fase 6b
-
-```text
-Antes de escribir nada, lee CLAUDE.md, CHALLENGE.md, DATA_SPEC.md y ROADMAP.md completos, y
-revisa el estado de las Fases 7a-7d y la app de la Fase 6b tal como está ahora.
-
-Vamos a ejecutar la Fase 7e del ROADMAP.md: rehacer la Fase 6a para los product_id nuevos,
-y arreglar cómo la Fase 6b comunica el acierto de las recomendaciones.
-
-1. Los product_id cambiaron en la Fase 7a. Revisa si los visual_group siguen siendo válidos
-   (probablemente sí, porque son a nivel de categoría) y regenera el CSV final
-   product_id, product_name, visual_group, image_path. Reutiliza las imágenes que ya están
-   en assets/ para los visual_group que no hayan cambiado — no vuelvas a llamar a la API de
-   Pexels salvo que aparezca un visual_group nuevo que de verdad no tenga imagen todavía.
-2. En la demo, cambia el indicador de acierto de las recomendaciones: en vez de mostrar
-   solo "X de 5 recomendaciones estaban en lo que añadiste después" (SKU exacto), muestra
-   también el acierto de categoría por separado — por ejemplo "X de 5 acertaron la
-   categoría; de esas, Y acertaron el producto exacto". No ocultes ni sustituyas el número
-   de SKU exacto — el objetivo es dar más contexto honesto, no maquillar el resultado.
-3. Re-apunta la app a los modelos reentrenados (Fases 7c y 7d) y al CSV de imágenes nuevo.
-4. Comprueba que streamlit run sigue arrancando sin errores con todo lo nuevo.
-
-Al terminar, marca los checkboxes de la Fase 7e en ROADMAP.md — con esto, la Fase 7 queda
-cerrada.
-
-Si algo es ambiguo, pregúntame antes de asumir.
-```
+Sin MLflow instalado, el registro de experimentos es un *no-op* (`src/tracking.py`): no
+falla ni pide nada.

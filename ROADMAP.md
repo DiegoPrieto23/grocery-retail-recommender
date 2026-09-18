@@ -361,11 +361,15 @@ catálogo de 496 productos — ver más abajo).
       suficientemente granular o hace falta una columna `visual_group` nueva — ni tan
       amplia como el departamento ni tan específica como el SKU (p.ej. `leche_entera`,
       `yogur_griego`, `salmón`, no `Lácteos` ni un `product_id` concreto)
-      · **`category` es el nivel correcto** (1.500 productos en 62 categorías, 24 por
-      grupo de media): `department` son 8 valores demasiado amplios y `brand` son 144
-      razones sociales de Faker sin aspecto propio. `visual_group` se mantiene como
-      columna propia y no como alias porque es un slug ASCII usable como nombre de
-      fichero y porque el mapa es 62 → 60, no 1:1 · razonamiento en el docstring de
+      · **`category` es el nivel correcto** (62 categorías): `department` son 8 valores
+      demasiado amplios y `brand` son razones sociales de Faker sin aspecto propio.
+      `visual_group` se mantiene como columna propia y no como alias porque es un slug
+      ASCII usable como nombre de fichero y porque el mapa es 62 → 60, no 1:1.
+      **Nota (punto B3):** la decisión se tomó en la Fase 6a sobre el catálogo de entonces,
+      1.500 productos a 24 por categoría. La Fase 7a lo redujo a **496 productos**, unos 8
+      por categoría, y la conclusión no cambia —`category` sigue siendo el nivel con
+      aspecto propio— pero las cifras de arriba eran las viejas
+      · razonamiento en el docstring de
       `src/catalog/visual_groups.py` y en `docs/VISUAL_CATALOG.md`
 - [x] CSV `visual_group, search_term` (término de búsqueda en inglés, que es donde Pexels
       tiene mejor cobertura, aunque el resto del proyecto esté en español)
@@ -1017,6 +1021,107 @@ pipeline en la sección "Frente al dataset anterior a la Fase 8" de
       valiendo y no hubo ni una llamada a Pexels · la demo lee el bundle nuevo
       (`python -m src.serving.export_bundle`) y las cifras de referencia de
       `reports/recommender/metrics.json`
+
+## Fase 9 — Cierre: coherencia recomendador/NBA, reproducibilidad y poda
+
+Los tres últimos puntos abiertos del [diagnóstico](docs/diagnostico-fase7.md): **M7**
+(puntos de contacto entre las dos tareas), **B1** (orquestador y smoke en CI) y **B3**
+(documentación). No se tocó ni el modelo del recomendador ni el generador.
+
+### 9a — M7: los tres puntos de contacto con el NBA
+
+- [x] **Renombrar `recomendar_producto` → `recomendar_categoria`**, en vez de conectarla
+      con el top-N del recomendador
+      · La acción decide una **categoría** con un uplift supuesto, y su economía (margen
+      por departamento, gasto esperado por categoría) está definida a nivel de categoría.
+      Conectarla con el recomendador habría exigido cruzar dos granos que no casan: el NBA
+      decide por cliente en un corte fijo, el recomendador por cesta en un instante de
+      corte. El nombre viejo prometía las dos cosas
+      · **Pero la conexión sí se hizo donde sí tiene sentido: en la demo.** La política
+      elige la categoría y el ranker elige la referencia dentro de ella
+      (`demo.catalog.action_product`), que es exactamente el reparto de responsabilidades
+      que el nombre nuevo describe
+      · `src/nba/config.py`, `src/demo/catalog.py`, `tests/test_nba.py`
+
+- [x] **Fecha de corte visible en el banner del NBA**, en vez de recalcular el NBA a la
+      fecha de la cesta
+      · Recalcular exigiría reentrenar los dos modelos de propensión por cada fecha que el
+      usuario seleccione, o al menos rehacer las features en un corte arbitrario: minutos
+      de Spark dentro de una demo que presume de no reentrenar nada en caliente
+      · La fecha viaja ahora **en la propia tabla** (`nba_actions.cutoff_date`), no en una
+      constante de la demo, así que no puede desfasarse respecto al fichero. El banner dice
+      con qué corte se decidió y a cuántos días está la cesta que se está viendo
+      · `src/nba/pipeline.py`, `src/demo/catalog.py`, `streamlit_app.py`
+
+- [x] **Capa común de necesidad de categoría: sí compensa, e implementada**
+      · Se midió antes de decidir (`python -m src.nba.verify_category_need`). El
+      `overdue_ratio` de la Tarea 2 —la señal con la que el recomendador decide si una
+      categoría toca— **también ordena la etiqueta del NBA**, que es otra cosa: la tasa
+      real de compra a 7 días va del 4,6 % en categorías recién repuestas al 9,7 % en las
+      que ya tocan. Compartir la capa tiene sentido
+      · Y hacía falta: el **88,5 %** de los cupones caía en categorías que el recomendador
+      da por no vencidas, con una tasa real de compra del **1,5 %** — peor que el 7,5 % del
+      pool. La causa no era el modelo de propensión sino la política: el cross-sell del
+      cupón es *decreciente* en `p_purchase` (2,54 € de descuento contra ~1,4 € de margen)
+      y la retención no dependía de la categoría, así que el `argmax` elegía la categoría
+      que **minimiza la fuga de descuento**, o sea la que el cliente no iba a comprar
+      · La relevancia (`formulas.category_need_weight`, compartida con la Fase 3) entra
+      ponderando el término de retención: una oferta de algo que el cliente acaba de
+      reponer no retiene a nadie. Resultado: los cupones no vencidos bajan del 88,5 % al
+      **23,2 %**, los recién repuestos del 73,3 % al **2,0 %**, y la tasa real sube del
+      1,5 % al **4,3 %**
+      · **El valor de la política baja de 3.842 € a 3.078 €, y eso es lo correcto:** esos
+      764 € eran retención apuntada a ofertas irrelevantes. La cifra vieja estaba inflada
+      · `src/recommender/formulas.py`, `src/nba/policy.py`, `src/nba/config.py` ·
+      verificado por `src/nba/verify_category_need.py` (informe en
+      `reports/nba/category_need.md`, con el antes congelado en
+      `reports/nba/category_need_pre_m7.json`) y 6 tests nuevos en `tests/test_nba.py`
+
+### 9b — B1: un punto de entrada y un smoke de verdad en CI
+
+- [x] **Orquestador único** `python -m src.pipeline all`, en sustitución de los ~11
+      comandos manuales
+      · Las dependencias entre pasos son **datos** (`Step.needs`), no prosa en el README:
+      el orden se deriva de ellas por orden topológico. `--only`, `--from`, `--scale`,
+      `--dry-run` y `list`
+      · Los pasos se invocan en el mismo proceso, no como subprocesos: una sola JVM de
+      Spark y las trazas de error completas
+      · No es un motor de construcción y no lo pretende: no mira fechas de ficheros. Eso
+      está explicado en el docstring, porque es la decisión que alguien querrá revisar
+      · `src/pipeline.py` · 14 tests en `tests/test_pipeline.py` que fijan el grafo
+      (dependencias existentes, sin ciclos, orden topológico sobre cualquier subconjunto)
+      · **Un bug encontrado al usarlo:** imprimía un `✓` que revienta la consola de
+      Windows (cp1252) *después* de que el paso hubiera terminado bien. Arreglado, y con un
+      test que exige que todo lo que sale por consola sea ASCII
+
+- [x] **Job de smoke E2E** que ejecuta la cadena entera con `--scale 0.02` y corre ahí los
+      tests que en un clon limpio se saltan
+      · `.github/workflows/smoke.yml`, nocturno de lunes a viernes y a mano. `ci.yml` sigue
+      corriendo `pytest` en cada push
+      · El job **falla si algún test se salta**: sin esa comprobación, un bundle mal
+      construido dejaría `test_serving_parity.py` en `skipped` y el job pasaría en verde
+      sin haber comprobado la paridad Spark/pandas, que es justo lo que viene a comprobar
+
+### 9c — B3: poda y actualización de la documentación
+
+- [x] **README separado en estado actual e historia** · de 1.371 a **382 líneas**. La
+      narrativa por fases se va a [`docs/HISTORIA.md`](docs/HISTORIA.md) y el README gana
+      una sección "Cómo funciona el sistema" que cuenta en una pantalla las dos tareas, la
+      capa que comparten y la demo
+- [x] **Docstrings con cifras desfasadas** · `CandidateConfig` razonaba con el catálogo de
+      1.500 productos de la Fase 3: el 29,7 % de líneas de recompra es hoy el **75,6 %**, y
+      los 117 productos por cliente son **77**. La Fase 6a del ROADMAP decía 1.500 productos
+- [x] **Volumen de `DATA_SPEC.md`** · ya estaba alineado con el generador (600.174 cestas y
+      4.357.007 líneas, las del manifiesto); se comprobó contra `data/raw/manifest.json`
+- [x] **`GETTING_STARTED.md`** reescrito sobre el pipeline actual, no el de la Fase 0
+- [x] **El `.docx` pasado a Markdown, y además generado desde él** · la fuente es
+      `docs/como-funcionan-recomendador-y-nba.md` y el binario sale de ella con
+      `python docs/build_docx.py`, que reescribe solo `word/document.xml` y conserva los
+      estilos del original. El diagnóstico daba dos salidas —pasarlo a Markdown o
+      documentar de dónde se genera— y así se cumplen las dos: el `.docx` deja de poder
+      desfasarse por su cuenta, porque para que cambie tiene que cambiar el Markdown
+      · sus cifras estaban tres fases atrasadas (decía `NDCG@5` 0,0343 y SKU 11,8 %,
+      cuando ya eran 0,3015 y 61,6 %) · 14 tests en `tests/test_build_docx.py`
 
 ## Fuera de alcance (por ahora)
 

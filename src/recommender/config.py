@@ -80,18 +80,16 @@ class CandidateConfig:
     ## Por que cada tope esta donde esta
 
     Los tamanos salen de medir el techo de cada fuente, no de redondear. El historial
-    personal es el caso claro: un cliente tiene 117 productos distintos comprados de media
-    (mediana 86), y de las lineas de una cesta futura solo el 29,7 % son productos que ya
-    habia comprado. Cuantas de esas alcanza la fuente segun donde se corte:
+    personal es el caso claro: sobre el dataset de la Fase 8, un cliente llega al corte de
+    test con **77 productos distintos** comprados de media (mediana 66), y el **75,6 %** de
+    las lineas de una cesta de test es un producto que ese cliente ya habia comprado.
 
-    | `n_personal` | Lineas de test cubiertas |
-    | ---: | ---: |
-    | 25 | 6,2 % |
-    | 40 | 8,6 % |
-    | 60 | 11,6 % |
-    | 80 | 14,2 % |
-    | **120** | **18,0 %** |
-    | 200 | 23,1 % |
+    Esa segunda cifra era del **29,7 %** en la Fase 3, y el cambio no es un detalle: con un
+    catalogo de 496 referencias en vez de 1.500, y con las misiones de compra de la Fase 8,
+    la recompra pasa de ser una parte pequena del objetivo a ser casi todo. Es lo que
+    justifica que `hist` sea la fuente dominante y que `hist_rank` sea la primera feature
+    por ganancia. (Las dos las recalcula `python -m src.recommender.pipeline`; el reparto
+    por fuente y perfil esta en `reports/recommender/metrics.md`.)
 
     Cada candidato extra multiplica las filas que hay que puntuar (18.000 queries x 234
     candidatos son 4,2 M de filas), asi que el criterio para subir un tope es que mueva el
