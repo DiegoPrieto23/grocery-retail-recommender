@@ -54,8 +54,8 @@ pytestmark = needs_demo
 # lenta o en la CI puede pasar de largo del minuto por defecto de `AppTest`.
 TIMEOUT = 900
 
-# El icono con el que la demo marca la leyenda de la fecha de corte del NBA. Sirve de ancla
-# para distinguirla del resto: hay otras leyendas con esa misma fecha (ver el test).
+# El icono con el que la demo marca la insignia de la fecha de corte del NBA. Sirve de
+# ancla para distinguirla del resto: hay otros textos con esa misma fecha (ver el test).
 BANNER_MARKER = ":material/event:"
 
 
@@ -184,10 +184,13 @@ def test_el_banner_del_nba_declara_su_fecha_de_corte(arrancada) -> None:
     corte = pd.read_parquet(NBA_ACTIONS)["cutoff_date"].iloc[0]
     assert pd.Timestamp(corte).date() == NBAConfig().test_cutoff
 
-    captions = [c.value for c in arrancada.caption]
-    banner = [c for c in captions if BANNER_MARKER in c]
-    assert len(banner) == 1, f"esperaba una sola leyenda de fecha del NBA: {banner}"
-    assert pd.Timestamp(corte).strftime("%d/%m/%Y") in banner[0], banner[0]
+    # Se pinta como insignia (`st.badge`), que AppTest expone como markdown. Antes era
+    # un parrafo al pie del banner; se compacto porque ocupaba tres lineas de alto,
+    # pero la fecha sigue declarada y la explicacion entera vive en el `help` de la
+    # insignia.
+    marcas = [m.value for m in arrancada.markdown if BANNER_MARKER in m.value]
+    assert len(marcas) == 1, f"esperaba una sola marca de fecha del NBA: {marcas}"
+    assert pd.Timestamp(corte).strftime("%d/%m/%Y") in marcas[0], marcas[0]
 
 
 def test_el_banner_del_nba_ensena_las_dos_probabilidades(arrancada) -> None:
@@ -275,7 +278,10 @@ def test_las_opciones_de_cliente_se_leen_como_una_ficha(arrancada) -> None:
     assert selector.options
     for opcion in selector.options:
         assert "cestas" in opcion
-        assert "de test" in opcion
+        assert "test" in opcion
+        # Y tiene que caber: el desplegable recorta por el final, que es donde va el dato
+        # que solo esta aqui (ver `test_la_etiqueta_cabe_en_la_barra_lateral`).
+        assert len(opcion) <= 32, opcion
 
 
 def test_todos_los_clientes_ofrecidos_tienen_cesta_de_test(arrancada) -> None:

@@ -326,3 +326,42 @@ def test_cada_foto_esta_acreditada() -> None:
     assert set(creditos["visual_group"]) == grupos
     assert creditos["photographer"].notna().all()
     assert creditos["pexels_url"].str.startswith("https://www.pexels.com/").all()
+
+
+# --------------------------------------------------------------------------------------
+# Reparto de columnas de la rejilla de productos
+# --------------------------------------------------------------------------------------
+def test_la_rejilla_no_crea_mas_columnas_que_productos() -> None:
+    """El bug que arregla: 5 columnas fijas para 2 productos dejaban el 60 % de la fila
+    vacia y las tarjetas al 20 % de ancho. Pasaba en el 74,8 % de las cestas reales que la
+    demo puede cargar, que traen entre 1 y 4 lineas en el carrito."""
+    from src.demo.catalog import grid_columns
+
+    assert grid_columns(4, maximum=5) == 4
+    assert grid_columns(2, maximum=5) <= 3
+
+
+def test_una_tarjeta_suelta_no_ocupa_la_pantalla_entera() -> None:
+    """El extremo contrario: con una columna, la foto sale desproporcionada."""
+    from src.demo.catalog import MIN_GRID_COLUMNS, grid_columns
+
+    assert grid_columns(1, maximum=5) == MIN_GRID_COLUMNS
+
+
+def test_la_rejilla_nunca_pasa_de_su_tope() -> None:
+    from src.demo.catalog import grid_columns
+
+    for n in (5, 7, 12, 40):
+        assert grid_columns(n, maximum=5) == 5
+    # El carrito vive en una columna estrecha y su tope es mas bajo.
+    for n in (1, 2, 8):
+        assert grid_columns(n, maximum=2) == 2
+
+
+def test_la_rejilla_devuelve_siempre_algo_valido_para_st_columns() -> None:
+    """`st.columns(0)` lanza; ningun caso puede llegar ahi."""
+    from src.demo.catalog import grid_columns
+
+    for n in (0, 1, 2, 3, 10):
+        for maximum in (1, 2, 5):
+            assert grid_columns(n, maximum=maximum) >= 1

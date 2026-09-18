@@ -202,9 +202,22 @@ def test_la_etiqueta_dice_quien_es_y_si_hay_cesta_que_cargar() -> None:
     )
     texto = cu.label(fila)
     assert "C1" in texto
-    assert "52 cestas" in texto
-    assert "44 €" in texto
-    assert "11 de test" in texto
+    assert "52" in texto  # cuantas compras tiene detras
+    assert "11" in texto  # cuantas cestas de test se pueden cargar
+
+
+def test_la_etiqueta_cabe_en_la_barra_lateral() -> None:
+    """El desplegable recorta por ancho, y recortaba justo por el final.
+
+    La primera version metia tambien el ticket medio y salia
+    `C007693 · 474 cestas · 54 € · 2…`: se perdia el numero de cestas de test, que es el
+    unico dato que solo esta aqui (el resto se repite en la ficha de debajo). Se quito el
+    ticket. El limite se midio sobre el ancho real de la barra lateral.
+    """
+    peor_caso = pd.Series(
+        {"customer_id": "C007693", "n_baskets": 474, "avg_ticket": 54.5, "n_test": 20}
+    )
+    assert len(cu.label(peor_caso)) <= 32, cu.label(peor_caso)
 
 
 @pytest.mark.parametrize(

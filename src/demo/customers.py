@@ -223,10 +223,12 @@ def label(fila: pd.Series) -> str:
     --cargar una compra real y ver si el modelo la acerto-- va a estar disponible, y antes
     solo se descubria despues de elegir.
     """
-    ticket = f"{fila['avg_ticket']:.0f}".replace(".", ",")
+    # Sin el ticket medio a proposito: ya sale en la ficha de debajo, y con el la etiqueta
+    # no cabia en el ancho de la barra lateral -- se cortaba justo por el dato que solo
+    # esta aqui, las cestas de test.
     return (
         f"{fila['customer_id']} · {int(fila['n_baskets'])} cestas · "
-        f"{ticket} € · {int(fila['n_test'])} de test"
+        f"{int(fila['n_test'])} test"
     )
 
 

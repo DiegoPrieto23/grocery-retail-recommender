@@ -17,12 +17,14 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CATALOG_CSV = PROJECT_ROOT / "assets" / "product_catalog.csv"
 
-# Etiquetas legibles de las cinco fuentes de candidatos. Cortas a proposito: se pintan
-# como insignia dentro de una tarjeta estrecha, y un texto largo se corta a media palabra.
+# Etiquetas legibles de las cinco fuentes de candidatos. Cortas a proposito: se pintan como
+# insignia dentro de una tarjeta estrecha y un texto largo se corta a media palabra. El
+# limite medido es de unos 17 caracteres con la rejilla de 5 tarjetas; "lo compras a menudo"
+# (19) salia como "lo compras a menu...".
 SOURCE_LABELS: dict[str, str] = {
-    "src_hist": "lo compras a menudo",
+    "src_hist": "lo compras mucho",
     "src_aff": "va con tu cesta",
-    "src_cataff": "encaja con tu cesta",
+    "src_cataff": "pega con tu cesta",
     "src_als": "clientes como tú",
     "src_pop": "top ventas ahora",
 }
@@ -340,3 +342,26 @@ def action_product(
         if category_of.get(product_id) == category:
             return str(product_id)
     return None
+
+
+# Columnas minimas de una rejilla de productos: con menos, una tarjeta suelta se comeria
+# el ancho entero y su foto quedaria desproporcionada.
+MIN_GRID_COLUMNS = 3
+
+
+def grid_columns(n_products: int, *, maximum: int, minimum: int = MIN_GRID_COLUMNS) -> int:
+    """Cuantas columnas usar para pintar `n_products` tarjetas.
+
+    `maximum` es un **tope**, no una constante. La demo creaba siempre 5 columnas aunque
+    hubiera 2 productos, asi que las tarjetas salian al 20 % de ancho con el 60 % de la
+    fila vacio. No era un caso raro: el **74,8 %** de las cestas reales que se pueden
+    cargar traen entre 1 y 4 lineas en el carrito.
+
+    El suelo evita el extremo contrario, una unica tarjeta a pantalla completa. Y se
+    calcula sobre el total y no por fila, para que todas las filas de una misma rejilla
+    tengan tarjetas del mismo tamano: si la ultima fila se estirase, la rejilla quedaria
+    dentada.
+    """
+    if n_products <= 0:
+        return maximum
+    return max(min(maximum, max(n_products, minimum)), 1)

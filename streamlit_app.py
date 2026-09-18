@@ -42,6 +42,7 @@ from src.demo.catalog import (
     describe_action,
     explain,
     get_products,
+    grid_columns,
     load_catalog,
     promo_badge,
     search,
@@ -78,6 +79,12 @@ DEFAULT_CHANNEL = "app"
 # Cuantas recomendaciones se pintan. Es el `k` de todas las metricas del proyecto.
 TOP_K = 5
 
+# Lado de la miniatura del carrito, en pixeles. Tiene que dejar reconocer el producto sin
+# forzar la vista; a 56 px se veian demasiado pequenas al lado de las recomendaciones.
+# Siguen siendo bastante menores que las fotos del top-5, que es lo que se quiere: lo que ya
+# esta en el carrito se identifica, lo que hay que decidir se mira.
+THUMBNAIL_PX = 80
+
 # Y cuantas se calculan: las que sobran no se ensenan, solo sirven para localizar la
 # categoria objetivo del NBA dentro del ranking (`describe_action`). El re-ranking deja
 # como mucho una referencia por categoria, asi que 40 puestos cubren 40 categorias.
@@ -87,6 +94,19 @@ st.set_page_config(
     page_title="Supermercado — recomendador y NBA",
     page_icon=":material/shopping_cart:",
     layout="wide",
+)
+
+# La **unica** regla de CSS de la demo, y va con explicacion porque el criterio del proyecto
+# (y el de la guia oficial de Streamlit) es no inyectar CSS: el tema de
+# `.streamlit/config.toml` se aplica a todos los elementos y sobrevive a una actualizacion,
+# mientras que un selector apunta a nombres internos que pueden cambiar.
+#
+# La excepcion aqui es que el hueco por encima del titulo no es un token del tema: Streamlit
+# reserva unos 6 rem para su barra de herramientas, que en esta demo esta vacia, y no hay
+# ninguna opcion de configuracion que lo toque. Se apunta a `data-testid`, que es mas
+# estable que una clase generada, y se cambia una sola propiedad.
+st.html(
+    "<style>[data-testid='stMainBlockContainer']{padding-top:2.5rem;}</style>",
 )
 
 
@@ -239,6 +259,43 @@ def product_card(
             )
 
 
+def cart_list(products: list[Product]) -> None:
+    """El carrito como lista compacta, no como rejilla de tarjetas.
+
+    Una tarjeta con foto grande necesita ancho, y el carrito vive en una columna estrecha
+    para que las recomendaciones se lleven el espacio. Intentar meter ahi la misma rejilla
+    era lo que apelotonaba las dos cosas.
+
+    Una lista con miniatura es ademas como se ensena un carrito en cualquier tienda: lo que
+    importa de lo que ya has metido es que esta y cuanto cuesta, no volver a mirar la foto
+    a tamano escaparate. Las fotos grandes se reservan para lo que hay que decidir, que son
+    las recomendaciones y el catalogo.
+    """
+    for product in products:
+        # Columnas y no `container(horizontal=True)`: con el contenedor horizontal, un
+        # nombre largo empujaba el boton a la linea de abajo y las filas quedaban
+        # desiguales, unas con el boton al lado y otras debajo. Con columnas, la miniatura,
+        # el texto y el boton caen siempre en el mismo sitio.
+        thumb, texto, quitar = st.columns([1, 3, 1], vertical_alignment="center")
+        if product.image:
+            thumb.image(product.image, width=THUMBNAIL_PX)
+        texto.markdown(
+            f"**{product.name}**  \n{product.price:.2f} €".replace(".", ",")
+        )
+        # Sin etiqueta, solo el icono: "Quitar" escrito se llevaba un tercio del ancho de
+        # la columna, que es justo lo que le faltaba al nombre y a la miniatura. La `x` en
+        # una fila de carrito se entiende sin leerla, y el `help` la nombra para quien
+        # navegue con lector de pantalla.
+        quitar.button(
+            "",
+            icon=":material/close:",
+            key=f"cart_{product.product_id}",
+            on_click=remove_from_cart,
+            args=(product.product_id,),
+            help=f"Quitar {product.name} del carrito",
+        )
+
+
 def product_grid(
     products: list[Product],
     *,
@@ -248,11 +305,26 @@ def product_grid(
     promos: dict[str, str] | None = None,
     action: str | None = None,
 ) -> None:
+    """Rejilla de tarjetas, con el ancho repartido entre las que de verdad hay.
+
+    `columns` es el **maximo**, no una constante. Antes se creaban siempre 5 columnas
+    aunque hubiera 2 productos, asi que las tarjetas salian al 20 % de ancho con el 60 %
+    de la fila vacia. No era un caso raro: el **74,8 %** de las cestas reales que la demo
+    puede cargar traen entre 1 y 4 lineas en el carrito.
+
+    El suelo de `MIN_GRID_COLUMNS` evita el extremo contrario, una unica tarjeta ocupando
+    el ancho entero con una foto enorme. Se calcula sobre el total y no por fila, para que
+    todas las filas de una misma rejilla tengan tarjetas del mismo tamano.
+    """
     badges = badges or {}
     promos = promos or {}
-    for start in range(0, len(products), columns):
-        row = products[start : start + columns]
-        for column, product in zip(st.columns(columns), row):
+    if not products:
+        return
+
+    n_columns = grid_columns(len(products), maximum=columns)
+    for start in range(0, len(products), n_columns):
+        row = products[start : start + n_columns]
+        for column, product in zip(st.columns(n_columns), row):
             with column:
                 product_card(
                     product,
@@ -292,51 +364,75 @@ def nba_banner(
 
     info = describe_action(nba.loc[customer_id])
     with st.container(border=True):
-        head, value = st.columns([3, 1], vertical_alignment="center")
+        head, value = st.columns([3, 2], vertical_alignment="center")
         with head:
-            st.markdown(f"### {info['icon']} {info['title']}")
+            # `####` y no `###`: el banner es contexto de la cesta, no el titulo de la
+            # pagina, y a tamano de h3 pesaba mas que el propio recomendador.
+            st.markdown(f"#### {info['icon']} {info['title']}")
             if info["is_action"] and info["category"]:
-                st.markdown(f"Categoría objetivo: **{info['category']}**")
                 # La política elige la categoría; la referencia la pone el recomendador.
                 product_id = action_product(recommendations, info["category"], category_of)
                 if product_id is not None:
                     producto = get_products(catalog, [product_id])[0]
-                    st.caption(
-                        f":material/recommend: El recomendador propone **{producto.name}** "
-                        f"({producto.brand}, {producto.price:.2f} €) dentro de esa "
-                        "categoría.".replace(".", ",", 1)
+                    st.markdown(
+                        f"**{info['category']}** · el recomendador propone "
+                        f"{producto.name} ({producto.price:.2f} €)".replace(".", ",", 1)
                     )
                 else:
-                    st.caption(
-                        ":material/info: El recomendador no coloca ninguna referencia de "
-                        "esa categoría en su lista para esta cesta."
+                    st.markdown(
+                        f"**{info['category']}** · el recomendador no coloca ninguna "
+                        "referencia de esa categoría en esta cesta"
                     )
             elif not info["is_action"]:
-                st.caption(
+                st.markdown(
                     "El valor esperado de actuar no compensa su coste: la política "
                     "prefiere no gastar el impacto."
                 )
-            st.badge(
-                f"valor esperado {info['expected_value']:.2f} €".replace(".", ","),
-                color=info["color"],
-            )
-        with value:
-            st.metric("Compra 7 d", f"{info['p_purchase']:.1%}".replace(".", ","))
-            st.metric("Churn 4 sem", f"{info['p_churn']:.1%}".replace(".", ","))
 
-        # La incoherencia temporal que senalaba M7: el NBA se resuelve una vez, en un
-        # corte fijo, y aqui se ensena junto a cestas de fechas posteriores. No se puede
-        # esconder, asi que se dice.
-        if info["cutoff"] is not None:
-            nota = (
-                f"Decidido con el historial anterior al **{info['cutoff']:%d/%m/%Y}**. No "
-                "se recalcula al mover la fecha de la cesta: el recomendador sí razona "
-                "con el día que tengas seleccionado, la próxima mejor acción no."
+            # Las dos insignias en una fila: el valor de la accion y el corte con el que se
+            # decidio. La fecha de corte iba antes en un parrafo de tres lineas al pie del
+            # banner, que era lo que mas altura le costaba. Sigue estando --el punto M7
+            # pide declararla, porque el NBA se resuelve una vez y se ensena junto a cestas
+            # posteriores-- pero como insignia, con la explicacion en su `help`.
+            with st.container(horizontal=True, gap="small"):
+                st.badge(
+                    f"valor esperado {info['expected_value']:.2f} €".replace(".", ","),
+                    color=info["color"],
+                )
+                if info["cutoff"] is not None:
+                    desfase = ""
+                    if basket_day != info["cutoff"]:
+                        dias = (basket_day - info["cutoff"]).days
+                        desfase = (
+                            f" La cesta que estás viendo es {dias:+d} días respecto a él."
+                        )
+                    st.badge(
+                        f"corte {info['cutoff']:%d/%m/%Y}",
+                        icon=":material/event:",
+                        color="gray",
+                        help=(
+                            "La próxima mejor acción se decidió con el historial anterior "
+                            "a esa fecha y no se recalcula al mover el día de la cesta: el "
+                            "recomendador sí razona con el día seleccionado, esta acción "
+                            "no." + desfase
+                        ),
+                    )
+        with value:
+            # En fila y no apiladas: apiladas, las dos tarjetas hacian el banner el doble
+            # de alto que su propio contenido.
+            compra, churn = st.columns(2)
+            compra.metric(
+                "Compra 7 d",
+                f"{info['p_purchase']:.1%}".replace(".", ","),
+                border=True,
+                help="Probabilidad de que compre la categoría objetivo en 7 días.",
             )
-            if basket_day != info["cutoff"]:
-                dias = (basket_day - info["cutoff"]).days
-                nota += f" La cesta que estás viendo es {dias:+d} días respecto a ese corte."
-            st.caption(f":material/event: {nota}")
+            churn.metric(
+                "Churn 4 sem",
+                f"{info['p_churn']:.1%}".replace(".", ","),
+                border=True,
+                help="Probabilidad de que no vuelva a comprar en 4 semanas.",
+            )
 
 
 # --------------------------------------------------------------------------------------
@@ -346,10 +442,12 @@ st.title("Supermercado online")
 # Los textos de la interfaz no mencionan fases ni tareas del proyecto: quien abre la demo
 # no tiene por que saber que hubo una Fase 7c. Lo que si se dice es como funciona el
 # sistema, que es informacion util, y eso se queda.
+# Acotado: a pantalla completa la linea se iba a ~150 caracteres y se leia mal.
 st.caption(
-    "Cesta en curso, recomendaciones del sistema de dos etapas (ALS + co-compra + "
-    "popularidad, reordenado con LambdaRank) y próxima mejor acción. Todo es inferencia "
-    "sobre modelos ya entrenados, sobre un catálogo de 496 referencias."
+    "Recomendador de cesta en vivo y próxima mejor acción, sobre un catálogo de 496 "
+    "referencias. Candidatos con ALS, co-compra y popularidad; el orden lo pone un "
+    "LambdaRank. Solo inferencia: nada se reentrena aquí.",
+    width=820,
 )
 
 
@@ -360,7 +458,7 @@ bundle = get_bundle()
 catalog = get_catalog()
 
 with st.sidebar:
-    st.header("Cliente")
+    st.header("Cliente", icon=":material/person:")
     tipo = st.segmented_control(
         "Tipo de cliente",
         ["Recurrente", "Nuevo"],
@@ -409,7 +507,7 @@ with st.sidebar:
         )
 
         # --- Sembrar el carrito con una cesta real de test ---
-        st.subheader("Cargar una cesta real")
+        st.subheader("Cargar una cesta real", icon=":material/history:")
         suyas = customer_baskets(get_queries(), customer_id)
         if suyas.empty:
             st.caption(
@@ -446,7 +544,7 @@ with st.sidebar:
             ":material/person_add: Sin historial: solo popularidad y co-compra tienen señal."
         )
 
-    st.header("Contexto")
+    st.header("Contexto", icon=":material/tune:")
     # Las dos con `key`: al cargar una cesta real, `load_real_basket` escribe sobre ellas
     # para que el dia y el canal sean los que esa compra tuvo de verdad. El valor inicial
     # se siembra en el estado y **no** se pasa por `value=`/`default=`: hacer las dos
@@ -522,132 +620,148 @@ nba_banner(customer_id, ranked, category_of)
 
 
 # --------------------------------------------------------------------------------------
-# Cesta
 # --------------------------------------------------------------------------------------
-st.subheader("Tu cesta")
-
+# Cesta y recomendaciones, lado a lado
+# --------------------------------------------------------------------------------------
+# La demo dice que las recomendaciones se recalculan con cada cambio del carrito, y
+# apilarlas debajo lo desmentia: con una cesta real de 15 lineas, las recomendaciones
+# caian fuera de pantalla justo cuando mas interesa ver como cambian. En dos columnas
+# la relacion causa-efecto se ve sin desplazarse.
+#
+# El reparto es 1:2,2 y no 1:1 porque el carrito es contexto y las recomendaciones son
+# el asunto: cinco tarjetas en una fila necesitan el ancho (con 1:2 los distintivos de
+# las tarjetas ya se cortaban), y dos del carrito no.
 loaded: RealBasket | None = st.session_state.loaded_basket
-if loaded is not None:
-    tocada = list(cart_ids) != list(loaded.cart)
-    st.caption(
-        f":material/history: Cesta real **{loaded.basket_id}** del "
-        f"{loaded.basket_day:%d/%m/%Y} ({loaded.channel}) · se cargó lo que el cliente ya "
-        f"llevaba en el carrito en el instante del corte "
-        f"({loaded.n_bought_in_cart} de las {loaded.n_items} líneas del ticket)"
-        + (" · **modificada a mano desde entonces**" if tocada else "")
-    )
-    if loaded.abandoned:
-        # No es un detalle decorativo: son lineas que el ranker vio en el carrito y por
-        # eso excluyo de los candidatos, pero que no cuentan como acierto.
-        n = len(loaded.abandoned)
-        frase = (
-            "1 producto del carrito no llegó al ticket (lo abandonó). Se carga igual"
-            if n == 1
-            else f"{n} productos del carrito no llegaron al ticket (los abandonó). "
-            "Se cargan igual"
-        )
+
+cesta_col, recom_col = st.columns([1, 2.2], gap="medium")
+
+with cesta_col:
+    st.subheader("Tu cesta", icon=":material/shopping_cart:")
+
+    if loaded is not None:
+        tocada = list(cart_ids) != list(loaded.cart)
         st.caption(
-            f":material/remove_shopping_cart: {frase}, porque es lo que el recomendador "
-            "tenía delante, pero no cuentan como acierto."
+            f":material/history: Cesta real **{loaded.basket_id}** del "
+            f"{loaded.basket_day:%d/%m/%Y} ({loaded.channel}) · se cargó lo que el cliente ya "
+            f"llevaba en el carrito en el instante del corte "
+            f"({loaded.n_bought_in_cart} de las {loaded.n_items} líneas del ticket)"
+            + (" · **modificada a mano desde entonces**" if tocada else "")
         )
-
-if not cart_ids:
-    st.caption(
-        "La cesta está vacía. Busca o navega el catálogo de abajo y añade productos: "
-        "las recomendaciones se recalculan con cada cambio."
-    )
-else:
-    st.markdown(
-        f"**{len(cart_ids)} productos · "
-        f"{cart_total(catalog, cart_ids):.2f} €**".replace(".", ",")
-    )
-    product_grid(get_products(catalog, cart_ids), key_prefix="cart", action="remove")
-
-
-# --------------------------------------------------------------------------------------
-# Recomendaciones
-# --------------------------------------------------------------------------------------
-st.subheader("Te recomendamos")
-recommendations = ranked.head(TOP_K)
-
-if recommendations.empty:
-    st.caption("No hay candidatos para esta combinación.")
-else:
-    top5 = recommendations["product_id"].tolist()
-    badges = {row["product_id"]: explain(row) for _, row in recommendations.iterrows()}
-    promos = {
-        row["product_id"]: label
-        for _, row in recommendations.iterrows()
-        if (label := promo_badge(row))
-    }
-
-    # Sobre una cesta real se puede decir algo que en una inventada no: si el cliente
-    # acabo comprando lo que se le recomendo. El acierto pisa al motivo en la insignia,
-    # porque es el dato mas fuerte de la tarjeta. Se distinguen dos niveles: el producto
-    # exacto y "otra referencia de la misma categoria", que tambien es una recomendacion
-    # util en gran consumo y que el SKU exacto solo no deja ver.
-    score = None
-    if loaded is not None and loaded.target:
-        score = score_hits(top5, loaded.target, category_of)
-        for product_id in score.category_only:
-            badges[product_id] = ("categoría acertada", "yellow")
-        for product_id in score.exact:
-            badges[product_id] = ("lo compró de verdad", "green")
-
-    product_grid(
-        get_products(catalog, top5),
-        key_prefix="rec",
-        badges=badges,
-        promos=promos,
-        action="add",
-    )
-    st.caption(
-        "El motivo de cada tarjeta sale de las features con las que el ranker ordenó, "
-        "no de una explicación escrita a posteriori."
-    )
-
-    if score is not None:
-        st.markdown(score.describe())
-        st.caption(
-            f"El cliente añadió {len(loaded.target)} líneas después del corte, de "
-            f"{len(score.target_categories)} categorías distintas. «Acertar la categoría» "
-            "es recomendar un producto de una categoría que sí compró, aunque fuera otra "
-            "referencia; es la misma definición que usa el informe del recomendador."
-        )
-        reference = get_reference_hit_rates()
-        if reference:
-            def es(value: float, fmt: str) -> str:
-                return format(value, fmt).replace(".", ",")
-
+        if loaded.abandoned:
+            # No es un detalle decorativo: son lineas que el ranker vio en el carrito y por
+            # eso excluyo de los candidatos, pero que no cuentan como acierto.
+            n = len(loaded.abandoned)
+            frase = (
+                "1 producto del carrito no llegó al ticket (lo abandonó). Se carga igual"
+                if n == 1
+                else f"{n} productos del carrito no llegaron al ticket (los abandonó). "
+                "Se cargan igual"
+            )
             st.caption(
-                ":material/query_stats: En las cestas de test del recomendador, de media "
-                f"{es(reference['cat_per_basket'], '.2f')} de 5 recomendaciones aciertan "
-                f"la categoría y {es(reference['sku_per_basket'], '.2f')} el producto "
-                f"exacto; el {es(reference['cat_hit_rate'], '.1%')} de las cestas tiene al "
-                f"menos un acierto de categoría y el {es(reference['sku_hit_rate'], '.1%')} "
-                "al menos uno exacto. Una cesta suelta puede quedar por encima o por debajo."
+                f":material/remove_shopping_cart: {frase}, porque es lo que el recomendador "
+                "tenía delante, pero no cuentan como acierto."
             )
 
-        # En el target se marca lo mismo desde el otro lado: que linea se acerto tal cual
-        # y cual solo por categoria (se recomendo otra referencia de la suya).
-        recommended_categories = {category_of.get(p) for p in score.category} - {None}
-        target_badges = {
-            p: ("categoría acertada", "yellow")
-            for p in loaded.target
-            if category_of.get(p) in recommended_categories
+    if not cart_ids:
+        st.caption(
+            "La cesta está vacía. Busca o navega el catálogo de abajo y añade productos: "
+            "las recomendaciones se recalculan con cada cambio."
+        )
+    else:
+        st.caption(
+            f"{len(cart_ids)} productos · "
+            f"**{cart_total(catalog, cart_ids):.2f} €**".replace(".", ",")
+        )
+        cart_list(get_products(catalog, cart_ids))
+
+
+    # --------------------------------------------------------------------------------------
+    # Recomendaciones
+    # --------------------------------------------------------------------------------------
+
+with recom_col:
+    st.subheader("Te recomendamos", icon=":material/auto_awesome:")
+    recommendations = ranked.head(TOP_K)
+
+    if recommendations.empty:
+        st.caption("No hay candidatos para esta combinación.")
+    else:
+        top5 = recommendations["product_id"].tolist()
+        badges = {row["product_id"]: explain(row) for _, row in recommendations.iterrows()}
+        promos = {
+            row["product_id"]: label
+            for _, row in recommendations.iterrows()
+            if (label := promo_badge(row))
         }
-        target_badges.update({p: ("acertada", "green") for p in score.exact})
-        with st.expander("Ver lo que compró realmente después del corte"):
+
+        # Sobre una cesta real se puede decir algo que en una inventada no: si el cliente
+        # acabo comprando lo que se le recomendo. El acierto pisa al motivo en la insignia,
+        # porque es el dato mas fuerte de la tarjeta. Se distinguen dos niveles: el producto
+        # exacto y "otra referencia de la misma categoria", que tambien es una recomendacion
+        # util en gran consumo y que el SKU exacto solo no deja ver.
+        score = None
+        if loaded is not None and loaded.target:
+            score = score_hits(top5, loaded.target, category_of)
+            for product_id in score.category_only:
+                badges[product_id] = ("acertó categoría", "yellow")
+            for product_id in score.exact:
+                badges[product_id] = ("sí lo compró", "green")
+
+        product_grid(
+            get_products(catalog, top5),
+            key_prefix="rec",
+            badges=badges,
+            promos=promos,
+            action="add",
+        )
+        st.caption(
+            "El motivo de cada tarjeta sale de las features con las que el ranker ordenó, "
+            "no de una explicación escrita a posteriori."
+        )
+
+        if score is not None:
+            st.markdown(score.describe())
             st.caption(
-                "Es el `target` del split: las líneas que el cliente añadió tras el "
-                "instante del corte. El ranker no las ha visto."
+                f"El cliente añadió {len(loaded.target)} líneas después del corte, de "
+                f"{len(score.target_categories)} categorías distintas. «Acertar la categoría» "
+                "es recomendar un producto de una categoría que sí compró, aunque fuera otra "
+                "referencia; es la misma definición que usa el informe del recomendador."
             )
-            product_grid(
-                get_products(catalog, loaded.target),
-                key_prefix="target",
-                columns=5,
-                badges=target_badges,
-            )
+            reference = get_reference_hit_rates()
+            if reference:
+                def es(value: float, fmt: str) -> str:
+                    return format(value, fmt).replace(".", ",")
+
+                st.caption(
+                    ":material/query_stats: En las cestas de test del recomendador, de media "
+                    f"{es(reference['cat_per_basket'], '.2f')} de 5 recomendaciones aciertan "
+                    f"la categoría y {es(reference['sku_per_basket'], '.2f')} el producto "
+                    f"exacto; el {es(reference['cat_hit_rate'], '.1%')} de las cestas tiene al "
+                    f"menos un acierto de categoría y el {es(reference['sku_hit_rate'], '.1%')} "
+                    "al menos uno exacto. Una cesta suelta puede quedar por encima o por debajo."
+                )
+
+            # En el target se marca lo mismo desde el otro lado: que linea se acerto tal cual
+            # y cual solo por categoria (se recomendo otra referencia de la suya).
+            recommended_categories = {category_of.get(p) for p in score.category} - {None}
+            target_badges = {
+                p: ("acertó categoría", "yellow")
+                for p in loaded.target
+                if category_of.get(p) in recommended_categories
+            }
+            target_badges.update({p: ("acertada", "green") for p in score.exact})
+            with st.expander("Ver lo que compró realmente después del corte"):
+                st.caption(
+                    "Es el `target` del split: las líneas que el cliente añadió tras el "
+                    "instante del corte. El ranker no las ha visto."
+                )
+                product_grid(
+                    get_products(catalog, loaded.target),
+                    key_prefix="target",
+                    columns=5,
+                    badges=target_badges,
+                )
+
 
 
 # --------------------------------------------------------------------------------------
@@ -671,7 +785,7 @@ if revisando_cesta_real:
         "deja de valer."
     )
 else:
-    st.subheader("Catálogo")
+    st.subheader("Catálogo", icon=":material/storefront:")
     contenedor = st.container()
 
 with contenedor:
