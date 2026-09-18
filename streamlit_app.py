@@ -35,6 +35,7 @@ from src.demo.baskets import (
 )
 from src.demo.catalog import (
     Product,
+    action_product,
     browse,
     cart_total,
     describe_action,
@@ -56,6 +57,14 @@ DEFAULT_DEPARTMENT = "Frescos"
 # Ultimo dia con datos del generador. Mas alla no hay promociones vigentes ni popularidad
 # reciente que mover, asi que el selector de fecha no deja salir de aqui.
 DATASET_END = dt.date(2025, 12, 31)
+
+# Cuantas recomendaciones se pintan. Es el `k` de todas las metricas del proyecto.
+TOP_K = 5
+
+# Y cuantas se calculan: las que sobran no se ensenan, solo sirven para localizar la
+# categoria objetivo del NBA dentro del ranking (`describe_action`). El re-ranking deja
+# como mucho una referencia por categoria, asi que 40 puestos cubren 40 categorias.
+NBA_LOOKUP_K = 40
 
 st.set_page_config(
     page_title="Supermercado — recomendador y NBA",
@@ -230,8 +239,17 @@ def product_grid(
                 )
 
 
-def nba_banner(customer_id: str | None) -> None:
-    """Banner de la proxima mejor accion, destacado y con sus dos probabilidades."""
+def nba_banner(
+    customer_id: str | None,
+    recommendations: pd.DataFrame,
+    category_of: dict[str, str],
+) -> None:
+    """Banner de la proxima mejor accion, destacado y con sus dos probabilidades.
+
+    Recibe las recomendaciones ya calculadas para poder ensenar **que referencia** de la
+    categoria objetivo propone el recomendador: la politica elige la categoria y el ranker
+    la referencia (punto M7 de `docs/diagnostico-fase7.md`).
+    """
     if customer_id is None:
         with st.container(border=True):
             st.markdown("### :material/person_add: Cliente nuevo")
@@ -255,6 +273,20 @@ def nba_banner(customer_id: str | None) -> None:
             st.markdown(f"### {info['icon']} {info['title']}")
             if info["is_action"] and info["category"]:
                 st.markdown(f"Categoría objetivo: **{info['category']}**")
+                # La política elige la categoría; la referencia la pone el recomendador.
+                product_id = action_product(recommendations, info["category"], category_of)
+                if product_id is not None:
+                    producto = get_products(catalog, [product_id])[0]
+                    st.caption(
+                        f":material/recommend: El recomendador propone **{producto.name}** "
+                        f"({producto.brand}, {producto.price:.2f} €) dentro de esa "
+                        "categoría.".replace(".", ",", 1)
+                    )
+                else:
+                    st.caption(
+                        ":material/info: El recomendador no coloca ninguna referencia de "
+                        "esa categoría en su lista para esta cesta."
+                    )
             elif not info["is_action"]:
                 st.caption(
                     "El valor esperado de actuar no compensa su coste: la política "
@@ -267,6 +299,21 @@ def nba_banner(customer_id: str | None) -> None:
         with value:
             st.metric("Compra 7 d", f"{info['p_purchase']:.1%}".replace(".", ","))
             st.metric("Churn 4 sem", f"{info['p_churn']:.1%}".replace(".", ","))
+
+        # La incoherencia temporal que senalaba M7: el NBA se resuelve una vez, en un
+        # corte fijo, y aqui se ensena junto a cestas de fechas posteriores. No se puede
+        # esconder, asi que se dice.
+        if info["cutoff"] is not None:
+            nota = (
+                f"Decidido con el historial anterior al **{info['cutoff']:%d/%m/%Y}**, el "
+                "corte de test de la Tarea 3b. No se recalcula al mover la fecha de la "
+                "cesta: el recomendador sí razona con el día que tengas seleccionado, la "
+                "próxima mejor acción no."
+            )
+            if basket_day != info["cutoff"]:
+                dias = (basket_day - info["cutoff"]).days
+                nota += f" La cesta que estás viendo es {dias:+d} días respecto a ese corte."
+            st.caption(f":material/event: {nota}")
 
 
 # --------------------------------------------------------------------------------------
@@ -404,7 +451,24 @@ PROFILE_TEXT = {
 }
 
 st.badge(f"Perfil {profile}: {PROFILE_TEXT[profile]}", icon=":material/account_circle:")
-nba_banner(customer_id)
+
+# Se calcula aqui, antes del banner, porque el banner del NBA ensena que referencia de su
+# categoria objetivo propone el recomendador. Se piden mas de 5 a proposito: el top-5 que
+# se pinta abajo es `head(5)` de esta misma lista -- `rerank.order_candidates` ordena sin
+# mirar `k`, asi que ampliarla no cambia ni un puesto-- y los de mas abajo solo sirven para
+# buscar la categoria del NBA, que rara vez esta entre los cinco primeros.
+category_of: dict[str, str] = catalog.set_index("product_id")["category"].to_dict()
+with st.spinner("Calculando…"):
+    ranked = recommend(
+        bundle,
+        customer_id=customer_id,
+        cart=cart_ids,
+        basket_day=basket_day,
+        channel=channel,
+        top_k=NBA_LOOKUP_K,
+    )
+
+nba_banner(customer_id, ranked, category_of)
 
 
 # --------------------------------------------------------------------------------------
@@ -454,14 +518,7 @@ else:
 # Recomendaciones
 # --------------------------------------------------------------------------------------
 st.subheader("Te recomendamos")
-with st.spinner("Calculando…"):
-    recommendations = recommend(
-        bundle,
-        customer_id=customer_id,
-        cart=cart_ids,
-        basket_day=basket_day,
-        channel=channel,
-    )
+recommendations = ranked.head(TOP_K)
 
 if recommendations.empty:
     st.caption("No hay candidatos para esta combinación.")
@@ -481,7 +538,6 @@ else:
     # util en gran consumo y que el SKU exacto solo no deja ver.
     score = None
     if loaded is not None and loaded.target:
-        category_of = catalog.set_index("product_id")["category"].to_dict()
         score = score_hits(top5, loaded.target, category_of)
         for product_id in score.category_only:
             badges[product_id] = ("categoría acertada", "yellow")

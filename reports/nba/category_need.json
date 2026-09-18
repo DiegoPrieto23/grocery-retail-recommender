@@ -1,0 +1,89 @@
+{
+  "cutoff": "2025-11-01",
+  "horizon_days": 7,
+  "lookback_days": 180,
+  "n_pairs": 426285,
+  "need_curve": [
+    {
+      "band": "[0.0, 0.25)",
+      "n_pares": 98591,
+      "tasa_real": 0.045906827195180085
+    },
+    {
+      "band": "[0.25, 0.5)",
+      "n_pares": 80156,
+      "tasa_real": 0.07345675931932731
+    },
+    {
+      "band": "[0.5, 0.75)",
+      "n_pares": 59281,
+      "tasa_real": 0.08633457600242911
+    },
+    {
+      "band": "[0.75, 1.0)",
+      "n_pares": 42670,
+      "tasa_real": 0.09596906491680338
+    },
+    {
+      "band": "[1.0, 1.5)",
+      "n_pares": 53948,
+      "tasa_real": 0.09685252465336991
+    },
+    {
+      "band": "[1.5, 2.0)",
+      "n_pares": 29362,
+      "tasa_real": 0.09433962264150944
+    },
+    {
+      "band": "[2.0, 3.0)",
+      "n_pares": 28334,
+      "tasa_real": 0.08918613679678125
+    },
+    {
+      "band": "[3.0, inf)",
+      "n_pares": 33943,
+      "tasa_real": 0.05954099519783166
+    }
+  ],
+  "peak_band": "[1.0, 1.5)",
+  "peak_rate": 0.09685252465336991,
+  "targeting": [
+    {
+      "action": "enviar_cupon_categoria",
+      "n": 8849,
+      "overdue_mediano": 1.3132075471698113,
+      "pct_no_vencida": 0.23211662334727087,
+      "pct_recien_repuesta": 0.019663238784043396,
+      "tasa_real_7d": 0.042603684032094025
+    },
+    {
+      "action": "recomendar_categoria",
+      "n": 5047,
+      "overdue_mediano": 1.4583333333333335,
+      "pct_no_vencida": 0.2522290469585893,
+      "pct_recien_repuesta": 0.05528036457301367,
+      "tasa_real_7d": 0.0851991281949673
+    }
+  ],
+  "pool_not_due": 0.6584749639325803,
+  "pool_fresh": 0.41931337016315373,
+  "pool_rate": 0.07546594414534877,
+  "before": [
+    {
+      "action": "enviar_cupon_categoria",
+      "n": 10943,
+      "overdue_mediano": 0.23636363636363636,
+      "pct_no_vencida": 0.88540619574157,
+      "pct_recien_repuesta": 0.733162752444485,
+      "tasa_real_7d": 0.014529836425111943
+    },
+    {
+      "action": "recomendar_producto",
+      "n": 3037,
+      "overdue_mediano": 1.3009708737864079,
+      "pct_no_vencida": 0.3809680605861047,
+      "pct_recien_repuesta": 0.15805070793546264,
+      "tasa_real_7d": 0.05630556470200856
+    }
+  ]
+}

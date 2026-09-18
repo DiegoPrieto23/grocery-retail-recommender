@@ -32,10 +32,10 @@ tira del promedio hacia abajo.
 
 ## 1. El recomendador: cross-sell
 
-El ranker acierta algo en el **61,6 %** de las cestas de test,
+El ranker acierta algo en el **61,2 %** de las cestas de test,
 frente al **40,8 %** del baseline sin aprendizaje (popularidad
-reciente x indice estacional). Son **20,74 puntos** mas: un
-**51 % mas de cestas con una sugerencia relevante**. Esa
+reciente x indice estacional). Son **20,39 puntos** mas: un
+**50 % mas de cestas con una sugerencia relevante**. Esa
 cifra no lleva ningun supuesto dentro.
 
 Traducida a euros sobre una base de referencia de **100.000 cestas online al mes**,
@@ -43,14 +43,14 @@ con la incrementalidad al 10 %:
 
 | Paso | Valor |
 | --- | ---: |
-| Cestas al mes con un acierto que el baseline no daba | 20.744 |
-| x incrementalidad (10 %) = unidades extra al mes | 2.074 |
-| x importe medio de linea = **venta extra al mes** | **11.427 €** |
-| x margen bruto = **margen extra al mes** | **2.747 €** |
-| **Margen extra al ano** | **32.964 €** |
+| Cestas al mes con un acierto que el baseline no daba | 20.394 |
+| x incrementalidad (10 %) = unidades extra al mes | 2.039 |
+| x importe medio de linea = **venta extra al mes** | **11.234 €** |
+| x margen bruto = **margen extra al mes** | **2.701 €** |
+| **Margen extra al ano** | **32.408 €** |
 
 Sobre el supermercado simulado tal cual (13.622 cestas
-online al mes) son 374 € al mes.
+online al mes) son 368 € al mes.
 
 ### Barrido del supuesto
 
@@ -58,19 +58,19 @@ Por 100.000 cestas online al mes:
 
 | Incrementalidad | Unidades extra/mes | Venta extra/mes | Margen/mes | Margen/ano |
 | ---: | ---: | ---: | ---: | ---: |
-| 2 % | 415 | 2.285 € | 549 € | 6.593 € |
-| 5 % | 1.037 | 5.714 € | 1.373 € | 16.482 € |
-| 10 % | 2.074 | 11.427 € | 2.747 € | 32.964 € |
-| 20 % | 4.149 | 22.854 € | 5.494 € | 65.927 € |
-| 30 % | 6.223 | 34.281 € | 8.241 € | 98.891 € |
+| 2 % | 408 | 2.247 € | 540 € | 6.482 € |
+| 5 % | 1.020 | 5.617 € | 1.350 € | 16.204 € |
+| 10 % | 2.039 | 11.234 € | 2.701 € | 32.408 € |
+| 20 % | 4.079 | 22.468 € | 5.401 € | 64.815 € |
+| 30 % | 6.118 | 33.703 € | 8.102 € | 97.223 € |
 
-La lectura honesta: **el cross-sell del recomendador vale 32.964 € al ano por cada 100.000 cestas online al mes**, frente a 246.151 € del NBA por cada 100.000 clientes.
+La lectura honesta: **el cross-sell del recomendador vale 32.408 € al ano por cada 100.000 cestas online al mes**, frente a 197.201 € del NBA por cada 100.000 clientes.
 
 Antes de la Fase 7 eran **5.721 €**, con el ranker acertando en el
 11,8 % de las cestas. El codigo es el mismo; lo que cambio es el dato. El
 generador original elegia la referencia dentro de la categoria casi al azar entre ~24, asi
 que ningun modelo podia acertar el SKU; con fidelidad de marca y 8 referencias por
-categoria el mismo sistema acierta en el 61,6 %
+categoria el mismo sistema acierta en el 61,2 %
 ([`ROADMAP.md`](ROADMAP.md), Fase 7). Parte de la subida es el catalogo mas pequeno
 — tambien el baseline acierta mas —, y por eso la fila que cuenta es la de cestas con un
 acierto **que el baseline no daba**. Las cifras de antes estan congeladas en
@@ -80,20 +80,20 @@ acierto **que el baseline no daba**. Las cifras de antes estan congeladas en
 
 Aqui no hay que traducir nada: la politica de la Fase 4 ya decide en euros de valor
 incremental esperado sobre no actuar. Sobre los 18.729 clientes del
-corte de test, una oleada de campana vale **3.842 €**
-(0,205 € por cliente), de los que
-**2.914 € los aporta elegir a quien** y no la accion
+corte de test, una oleada de campana vale **3.078 €**
+(0,164 € por cliente), de los que
+**2.408 € los aporta elegir a quien** y no la accion
 en si: la mejor campana no segmentada se queda en
-927 €.
+670 €.
 
 Con una oleada al mes (12 al ano, que es lo coherente con el
 horizonte de retencion de 4 semanas), por **100.000 clientes activos**:
 
 | Escenario | Por oleada | Al ano |
 | --- | ---: | ---: |
-| Politica de valor esperado | 20.513 € | 246.151 € |
-| Suelo: el cupon no retiene a nadie | 6.615 € | 79.377 € |
-| Mejor alternativa trivial | 4.952 € | 59.419 € |
+| Politica de valor esperado | 16.433 € | 197.201 € |
+| Suelo: el cupon no retiene a nadie | 6.183 € | 74.190 € |
+| Mejor alternativa trivial | 3.577 € | 42.921 € |
 
 La fila que sostiene el caso es la segunda. El barrido de la Fase 4 muestra que **incluso
 suponiendo que el cupon no retenga a nadie la politica sigue ganando**, y que en ese
@@ -106,9 +106,9 @@ Por 100.000 clientes activos y 100.000 cestas online al mes:
 
 | Pieza | Al mes | Al ano |
 | --- | ---: | ---: |
-| Cross-sell del recomendador (margen) | 2.747 € | 32.964 € |
-| Politica de Next Best Action | 20.513 € | 246.151 € |
-| **Total** | **23.260 €** | **279.114 €** |
+| Cross-sell del recomendador (margen) | 2.701 € | 32.408 € |
+| Politica de Next Best Action | 16.433 € | 197.201 € |
+| **Total** | **19.134 €** | **229.608 €** |
 
 Las dos cifras no son homogeneas y conviene no sumarlas a la ligera: la del recomendador
 es margen bruto sobre venta incremental y descansa en un supuesto de incrementalidad; la
@@ -118,7 +118,7 @@ en que las dos son **conservadoras por construccion**: el recomendador se compar
 un baseline que ya funciona, y la politica contra la mejor de las alternativas triviales,
 no contra no hacer nada.
 
-El reparto tambien dice donde esta hoy el proyecto: el NBA pone el **88 %** del total y el recomendador el 12 %. En parte tiene sentido — la politica decide sobre el cliente entero y el recomendador solo sobre cinco huecos de una cesta — y en parte es historia: antes de la Fase 7 el recomendador ponia solo el
+El reparto tambien dice donde esta hoy el proyecto: el NBA pone el **86 %** del total y el recomendador el 14 %. En parte tiene sentido — la politica decide sobre el cliente entero y el recomendador solo sobre cinco huecos de una cesta — y en parte es historia: antes de la Fase 7 el recomendador ponia solo el
 2 %, porque el dato no le dejaba acertar la referencia.
 
 ## Que haria falta para afinar esto

@@ -275,8 +275,8 @@ def promo_badge(row: pd.Series) -> str | None:
 
 ACTION_LABELS: dict[str, tuple[str, str, str]] = {
     # accion -> (titulo, icono material, color del badge)
-    "recomendar_producto": (
-        "Recomendar producto",
+    "recomendar_categoria": (
+        "Destacar categoría",
         ":material/recommend:",
         "blue",
     ),
@@ -294,9 +294,16 @@ ACTION_LABELS: dict[str, tuple[str, str, str]] = {
 
 
 def describe_action(action: pd.Series) -> dict[str, object]:
-    """Traduce una fila de `nba_actions` a algo que se pueda leer en un banner."""
+    """Traduce una fila de `nba_actions` a algo que se pueda leer en un banner.
+
+    `cutoff` es la fecha del corte con el que se decidio la accion. Viaja en la propia
+    tabla desde el punto M7: el NBA se resuelve una vez, en un corte fijo, y la demo
+    ensena cestas de fechas posteriores, asi que callarse la fecha invitaba a leer el
+    banner como si fuera de hoy.
+    """
     name = str(action["action"])
     title, icon, color = ACTION_LABELS.get(name, (name, ":material/help:", "gray"))
+    cutoff = action.get("cutoff_date")
     return {
         "title": title,
         "icon": icon,
@@ -306,4 +313,30 @@ def describe_action(action: pd.Series) -> dict[str, object]:
         "p_churn": float(action["p_churn"]),
         "expected_value": float(action["expected_value"]),
         "is_action": name != "ninguna_accion",
+        "cutoff": None if cutoff is None or pd.isna(cutoff) else pd.Timestamp(cutoff).date(),
     }
+
+
+def action_product(
+    recommendations: pd.DataFrame,
+    category: str | None,
+    category_of: dict[str, str],
+) -> str | None:
+    """La referencia que el recomendador pone primero dentro de la categoria del NBA.
+
+    Es el punto de contacto entre las dos tareas (punto M7). La politica de la Tarea 3b
+    decide **la categoria** y con que uplift supuesto; el ranker de la Tarea 3a decide
+    **que referencia** de esa categoria se ensena, con las features del cliente y del
+    carrito de ese momento. Cada uno responde a la pregunta que sabe responder, y por eso
+    la accion se llama `recomendar_categoria` y no `recomendar_producto`.
+
+    Devuelve `None` si la categoria no aparece en la lista: con el re-ranking activo hay
+    como mucho una referencia por categoria, y las que no tocan se quedan fuera. Es un
+    resultado legitimo y el banner lo dice, en vez de rellenar con lo que sea.
+    """
+    if category is None or recommendations.empty:
+        return None
+    for product_id in recommendations["product_id"]:
+        if category_of.get(product_id) == category:
+            return str(product_id)
+    return None

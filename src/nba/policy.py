@@ -28,15 +28,37 @@ entra restando dentro del parentesis, multiplicado por la probabilidad, y no fue
 coste fijo. Meterlo fuera penalizaria de mas a los clientes con baja propension y la
 politica se volveria trivialmente conservadora.
 
-## La retencion entra aparte
+## La retencion entra aparte, y tiene que ser de algo que al cliente le sirva
 
 Actuar sobre un cliente que se esta yendo tiene un segundo efecto: puede que no se vaya.
 
-    delta_retencion(a) = reduccion_churn(a) x P(churn) x valor_de_retener
+    delta_retencion(a) = reduccion_churn(a) x relevancia x P(churn) x valor_de_retener
 
 donde `valor_de_retener` son `retention_weeks` semanas de compra futura al margen del
-cliente. Ese termino no depende de la categoria, asi que solo es coherente porque la
-politica elige **una** accion por cliente.
+cliente.
+
+El factor `relevancia` es el punto M7 de `docs/diagnostico-fase7.md`, y sin el la politica
+hace algo indefendible. Sin relevancia, el termino de retencion **no depende de la
+categoria**: da igual que el cupon sea de cafe o de comida de gato. Pero el otro termino,
+el de cross-sell del cupon, si depende, y es *decreciente* en `p_purchase` -- con un
+descuento de 2,54 EUR persiguiendo un margen de ~1,4 EUR, cuanto mas probable es la compra
+mas dinero se deja en la mesa. El `argmax` sobre categorias resolvia entonces un problema
+que no era el del negocio: como la retencion era una constante, elegia la categoria que
+**minimiza la fuga de descuento**, es decir, la que el cliente casi seguro *no* va a
+comprar.
+
+Medido sobre el corte de test antes de este cambio (`src/nba/verify_category_need.py`): la
+categoria elegida para el cupon tenia una tasa real de compra a 7 dias del **1,5 %**,
+frente al 9,7 % de las categorias que de verdad tocaban y al 7,5 % del pool entero, y el
+**88,5 %** de los cupones caia en categorias que el recomendador considera no vencidas
+(65,8 % en el pool). Un cupon de una categoria que el cliente no va a comprar no retiene a
+nadie; contarlo como retencion era regalar euros en el papel.
+
+La relevancia es la **capa comun de necesidad de categoria** con el recomendador:
+`formulas.category_need_weight` sobre el mismo `overdue_ratio` de la Tarea 2 que alimenta
+`cat_due` en la Fase 3. Vale 0 en una categoria recien repuesta y 1 cuando ya toca, con un
+suelo en `PolicyConfig.min_relevance`. Asi el NBA deja de ofrecer un cupon de una categoria
+que el recomendador acaba de dar por repuesta, que es exactamente lo que pedia M7.
 
 ## El limite honesto
 
@@ -55,6 +77,7 @@ import numpy as np
 import pandas as pd
 
 from src.nba.config import Action, NBAConfig, PolicyConfig
+from src.recommender.formulas import PANDAS_OPS, category_need_weight
 
 # Columnas que describen a un candidato antes de evaluar acciones.
 CANDIDATE_COLUMNS: tuple[str, ...] = (
@@ -65,7 +88,19 @@ CANDIDATE_COLUMNS: tuple[str, ...] = (
     "expected_spend",
     "p_churn",
     "retention_value",
+    "relevance",
 )
+
+
+def relevance(cat_overdue_ratio: pd.Series, cfg: PolicyConfig) -> pd.Series:
+    """Cuanto le sirve al cliente una oferta de esta categoria, en [min_relevance, 1].
+
+    Es la capa comun con el recomendador: el mismo `overdue_ratio` de la Tarea 2, pasado
+    por `formulas.category_need_weight`. Ver la cabecera del modulo para por que entra
+    multiplicando la retencion y no en otro sitio.
+    """
+    weight = category_need_weight(cat_overdue_ratio, PANDAS_OPS)
+    return cfg.min_relevance + (1.0 - cfg.min_relevance) * weight
 
 
 def expected_spend(
@@ -104,7 +139,7 @@ def build_candidates(
 
     Args:
         scored: Una fila por `(customer_id, category)` con `p_purchase`, `department`,
-            `cat_spend` y `cat_n_purchase_days`.
+            `cat_spend`, `cat_n_purchase_days` y `cat_overdue_ratio`.
         churn: Una fila por `customer_id` con `p_churn` y `spend_90d`.
         cfg: Configuracion completa.
         fallback_spend: Gasto medio por cesta-categoria del dataset, para los pares sin
@@ -120,6 +155,10 @@ def build_candidates(
         out["department"].map(pol.margins.by_department).fillna(pol.margins.default)
     )
     out["gross_margin"] = out["expected_spend"] * out["margin_rate"]
+    # Capa comun con el recomendador: cuanto le toca al cliente esta categoria.
+    out["relevance"] = relevance(
+        out.get("cat_overdue_ratio", pd.Series(np.nan, index=out.index)), pol
+    )
 
     per_customer = blended_margin(out, pol).rename("blended_margin").reset_index()
     churn = churn.merge(per_customer, on="customer_id", how="left")
@@ -180,8 +219,16 @@ def action_value(candidates: pd.DataFrame, action: Action) -> pd.Series:
     v_nothing = p0 * margin
     cross_sell = v_action - v_nothing
 
+    # La retencion solo cuenta si la oferta le sirve de algo al cliente: un cupon de una
+    # categoria recien repuesta no retiene a nadie (ver la cabecera del modulo).
+    weight = (
+        candidates["relevance"].to_numpy()
+        if action.retention_needs_relevance and "relevance" in candidates
+        else 1.0
+    )
     retention = (
         action.churn_reduction
+        * weight
         * candidates["p_churn"].to_numpy()
         * candidates["retention_value"].to_numpy()
     )

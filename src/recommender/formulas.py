@@ -143,6 +143,27 @@ def category_need_score(n_purchase_days: Any, cat_due: Any) -> Any:
     return n_purchase_days * (1.0 + cat_due)
 
 
+def category_need_weight(ratio: Any, ops: Ops) -> Any:
+    """Version continua de `is_due`, en [0, 1]: 0 recien repuesta, 1 cuando ya toca.
+
+    `is_due` parte el ciclo en dos con un escalon en `ratio = 1`. Eso vale para ordenar
+    candidatos dentro de una cesta, donde lo unico que importa es el orden, pero no para
+    ponderar euros: un cliente que compro la categoria ayer y otro que la compro justo
+    antes de que le toque no son el mismo caso, y el escalon los iguala.
+
+    Se satura en 1 a proposito. Pasado el ciclo, "mas vencida" no significa "mas la
+    necesita": una categoria con `ratio = 6` casi siempre es una que el cliente dejo de
+    comprar, no una que debe media docena de reposiciones. Medido sobre el corte de test
+    (`src/nba/verify_category_need.py`), la tasa real de compra a 7 dias sube del 4,6 % en
+    `ratio < 0,25` al 9,7 % en `[1,0, 1,5)` y vuelve a bajar al 6,0 % por encima de 3.
+    Saturar en 1 recoge la subida y no premia la cola, que es lo que se busca.
+
+    Sin historial en la categoria el ratio es nulo y el peso es 0: no se puede afirmar que
+    el cliente necesite algo que nunca ha comprado.
+    """
+    return ops.coalesce(ops.where(ratio >= 1.0, 1.0, ratio), 0.0)
+
+
 # --------------------------------------------------------------------------------------
 # Fuente `hist`
 # --------------------------------------------------------------------------------------

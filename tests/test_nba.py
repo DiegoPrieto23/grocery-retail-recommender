@@ -259,6 +259,9 @@ def _candidates(**overrides) -> pd.DataFrame:
         "gross_margin": 2.50,
         "p_churn": 0.0,
         "retention_value": 0.0,
+        # Relevancia plena: la categoria ya le toca. Asi las cuentas a mano de abajo no
+        # arrastran el factor, que tiene sus propios tests mas abajo.
+        "relevance": 1.0,
     }
     row.update(overrides)
     return pd.DataFrame([row])
@@ -276,7 +279,7 @@ def test_el_valor_de_recomendar_se_calcula_a_mano() -> None:
     V(ninguna) = 0,20 x 2,50        = 0,50
     delta      = 0,04
     """
-    value = pol.action_value(_candidates(), ACTION_BY_NAME["recomendar_producto"])
+    value = pol.action_value(_candidates(), ACTION_BY_NAME["recomendar_categoria"])
     assert value.iloc[0] == pytest.approx(0.04, abs=1e-9)
 
 
@@ -306,7 +309,7 @@ def test_la_retencion_puede_rescatar_una_accion_que_pierde_en_margen() -> None:
 
 def test_la_probabilidad_no_pasa_de_uno_por_mucho_uplift() -> None:
     value = pol.action_value(
-        _candidates(p_purchase=0.95), ACTION_BY_NAME["recomendar_producto"]
+        _candidates(p_purchase=0.95), ACTION_BY_NAME["recomendar_categoria"]
     )
     # Con p=0,95 y uplift 1,10 la probabilidad se corta en 1,0, no sube a 1,045.
     esperado = 1.0 * 2.50 - 0.01 - 0.95 * 2.50
@@ -371,6 +374,7 @@ def test_la_politica_nunca_pierde_frente_a_no_actuar() -> None:
         }
     )
     candidates["gross_margin"] = candidates["expected_spend"] * 0.25
+    candidates["relevance"] = 1.0
     comparison = pol.compare(candidates, cfg)
 
     no_actuar = comparison.loc[comparison["politica"] == "no actuar siempre", "valor_total"]
@@ -397,6 +401,7 @@ def test_el_barrido_de_sensibilidad_es_monotono_en_el_uplift() -> None:
         }
     )
     candidates["gross_margin"] = candidates["expected_spend"] * 0.35
+    candidates["relevance"] = 1.0
     sweep = pol.sensitivity(candidates, cfg)
 
     assert sweep["valor_politica"].is_monotonic_increasing
@@ -444,3 +449,97 @@ def test_las_columnas_de_features_no_se_repiten() -> None:
 def test_las_categoricas_estan_declaradas_en_el_conjunto_de_features() -> None:
     for column in feat.CATEGORICAL_FEATURES:
         assert column in feat.PURCHASE_FEATURES
+
+
+# --------------------------------------------------------------------------------------
+# Capa comun de necesidad de categoria (punto M7)
+# --------------------------------------------------------------------------------------
+def test_la_relevancia_es_la_misma_formula_que_usa_el_recomendador() -> None:
+    """No es una heuristica nueva del NBA: es `category_need_weight` de la Fase 3.
+
+    Si alguien cambia la formula compartida, este test se entera. Es lo unico que ata las
+    dos tareas a la misma nocion de "esta categoria le toca".
+    """
+    from src.recommender.formulas import PANDAS_OPS, category_need_weight
+
+    cfg = NBAConfig().policy
+    ratios = pd.Series([0.0, 0.25, 0.5, 1.0, 3.0, np.nan])
+    esperado = cfg.min_relevance + (1.0 - cfg.min_relevance) * category_need_weight(
+        ratios, PANDAS_OPS
+    )
+    pd.testing.assert_series_equal(pol.relevance(ratios, cfg), esperado)
+
+
+def test_la_relevancia_va_del_suelo_a_uno_y_se_satura() -> None:
+    cfg = NBAConfig().policy
+    got = pol.relevance(pd.Series([0.0, 0.5, 1.0, 9.0, np.nan]), cfg)
+    assert got.iloc[0] == pytest.approx(cfg.min_relevance)   # recien repuesta
+    assert got.iloc[2] == pytest.approx(1.0)                 # justo cuando toca
+    assert got.iloc[3] == pytest.approx(1.0)                 # muy vencida: no sube mas
+    assert got.iloc[4] == pytest.approx(cfg.min_relevance)   # sin historial
+    assert got.iloc[0] < got.iloc[1] < got.iloc[2]
+
+
+def test_un_cupon_de_categoria_recien_repuesta_retiene_menos() -> None:
+    """El punto M7: la retencion de una oferta irrelevante no puede valer lo mismo.
+
+    Mismo cliente en riesgo y mismo valor de retener; lo unico que cambia es si la
+    categoria le toca. El que no le toca tiene que valer estrictamente menos.
+    """
+    cupon = ACTION_BY_NAME["enviar_cupon_categoria"]
+    toca = pol.action_value(_candidates(p_churn=0.9, retention_value=20.0), cupon).iloc[0]
+    repuesta = pol.action_value(
+        _candidates(p_churn=0.9, retention_value=20.0, relevance=NBAConfig().policy.min_relevance),
+        cupon,
+    ).iloc[0]
+    assert repuesta < toca
+    # Toda la diferencia esta en el termino de retencion, no en el de cross-sell.
+    perdido = cupon.churn_reduction * (1.0 - NBAConfig().policy.min_relevance) * 0.9 * 20.0
+    assert toca - repuesta == pytest.approx(perdido, abs=1e-9)
+
+
+def test_la_politica_prefiere_la_categoria_que_toca_a_la_recien_repuesta() -> None:
+    """Antes de M7 elegia justo la contraria, por minimizar la fuga de descuento.
+
+    Dos categorias del mismo cliente: una que acaba de reponer (y que por eso el modelo de
+    propension da por poco probable) y otra que ya le toca. Sin el factor de relevancia el
+    `argmax` se iba a la primera, porque el descuento del cupon solo se paga si compra y
+    ahi casi no compra. Con el factor, gana la que de verdad le sirve al cliente.
+    """
+    cfg = NBAConfig()
+    candidates = pd.concat(
+        [
+            _candidates(
+                category="Leche",  # recien repuesta: no la va a comprar
+                p_purchase=0.01,
+                p_churn=0.9,
+                retention_value=20.0,
+                relevance=cfg.policy.min_relevance,
+            ),
+            _candidates(
+                category="Cafe",  # ya le toca
+                p_purchase=0.15,
+                p_churn=0.9,
+                retention_value=20.0,
+                relevance=1.0,
+            ),
+        ],
+        ignore_index=True,
+    )
+    out = pol.decide(candidates, cfg)
+    assert out["category"].iloc[0] == "Cafe"
+
+
+def test_la_accion_nula_no_depende_de_la_relevancia() -> None:
+    """Vale 0 por construccion, le toque al cliente la categoria o no."""
+    nula = ACTION_BY_NAME["ninguna_accion"]
+    for rel in (0.0, 0.15, 1.0):
+        assert pol.action_value(_candidates(relevance=rel), nula).iloc[0] == 0.0
+
+
+def test_la_accion_de_categoria_se_llama_por_lo_que_hace() -> None:
+    """Punto M7: la accion decide una categoria, no una referencia."""
+    assert "recomendar_producto" not in ACTION_BY_NAME
+    accion = ACTION_BY_NAME["recomendar_categoria"]
+    assert accion.needs_category
+    assert accion.discount == 0.0

@@ -116,6 +116,9 @@ class Action:
     churn_reduction: float
     # Si es False, la accion no necesita elegir una categoria (es la accion nula).
     needs_category: bool = True
+    # Si es True, la retencion de la accion se pondera por la necesidad de categoria
+    # (ver `PolicyConfig.retention_needs_relevance`). La accion nula no la necesita.
+    retention_needs_relevance: bool = True
 
 
 # El valor facial del cupon no es un numero inventado: es la media de los cupones que ya
@@ -131,10 +134,17 @@ ACTIONS: tuple[Action, ...] = (
         conversion_uplift=1.0,
         churn_reduction=0.0,
         needs_category=False,
+        retention_needs_relevance=False,
     ),
     Action(
         action_id=1,
-        name="recomendar_producto",
+        # Actua sobre una **categoria**, no sobre una referencia: la politica elige que
+        # categoria destacar y con que uplift supuesto, y no mira el catalogo. Quien elige
+        # el producto concreto dentro de esa categoria es el recomendador de la Tarea 3a,
+        # en el momento de pintar el hueco (`src/demo/catalog.py`, `action_product`). El
+        # nombre anterior, `recomendar_producto`, sugeria que esta accion resolvia las dos
+        # cosas (punto M7 de `docs/diagnostico-fase7.md`).
+        name="recomendar_categoria",
         # Un hueco de recomendacion en la app no tiene coste marginal real; se le pone un
         # valor simbolico para que la politica no la reparta gratis a todo el mundo.
         send_cost=0.01,
@@ -162,6 +172,12 @@ class PolicyConfig:
     """Como se convierte una probabilidad en euros."""
 
     margins: MarginConfig = field(default_factory=MarginConfig)
+
+    # Peso minimo de relevancia: una oferta de una categoria que el cliente acaba de
+    # reponer no retiene a nadie, pero tampoco es exactamente inutil (sigue siendo un
+    # gesto comercial). El peso va de este suelo a 1 segun la necesidad de categoria.
+    # Ver `retention_needs_relevance` mas abajo.
+    min_relevance: float = 0.15
 
     # Semanas de compra futura que se dan por salvadas al retener a un cliente. Con 4 se
     # mantiene la coherencia con el horizonte de churn de la Tarea 3b.

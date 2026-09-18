@@ -200,7 +200,7 @@ RECOMMENDER_METRICS = {
 NBA_METRICS = {
     "comparison": [
         {"politica": "no actuar siempre", "n_clientes": 1_000, "valor_total": 0.0},
-        {"politica": "actuar siempre: recomendar_producto", "n_clientes": 1_000,
+        {"politica": "actuar siempre: recomendar_categoria", "n_clientes": 1_000,
          "valor_total": 200.0},
         {"politica": "actuar siempre: enviar_cupon_categoria", "n_clientes": 1_000,
          "valor_total": -50.0},

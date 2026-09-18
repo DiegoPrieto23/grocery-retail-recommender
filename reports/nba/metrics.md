@@ -65,21 +65,21 @@ vale 0 por construccion, asi que una accion solo suma si su efecto paga su coste
 | politica | n_clientes | n_acciones | pct_accion | valor_total | valor_por_cliente | uplift_vs_no_actuar |
 | --- | --- | --- | --- | --- | --- | --- |
 | no actuar siempre | 18729 | 0 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
-| actuar siempre: recomendar_producto | 18729 | 15588 | 0.8323 | 927.3826 | 0.0495 | 927.3826 |
-| actuar siempre: enviar_cupon_categoria | 18729 | 15588 | 0.8323 | -3744.7255 | -0.1999 | -3744.7255 |
-| politica de valor esperado | 18729 | 13980 | 0.7464 | 3841.7953 | 0.2051 | 3841.7953 |
+| actuar siempre: recomendar_categoria | 18729 | 15588 | 0.8323 | 669.8880 | 0.0358 | 669.8880 |
+| actuar siempre: enviar_cupon_categoria | 18729 | 15588 | 0.8323 | -5032.1985 | -0.2687 | -5032.1985 |
+| politica de valor esperado | 18729 | 13896 | 0.7420 | 3077.8120 | 0.1643 | 3077.8120 |
 
-La politica actua sobre el **74.6%** de los clientes, no sobre
-todos, y ahi esta su ventaja: mandar el cupon a todo el mundo cuesta 7587 EUR
+La politica actua sobre el **74.2%** de los clientes, no sobre
+todos, y ahi esta su ventaja: mandar el cupon a todo el mundo cuesta 8110 EUR
 de valor esperado frente a elegir a quien.
 
 ### Reparto de acciones
 
 | action | cuota |
 | --- | --- |
-| enviar_cupon_categoria | 0.5843 |
-| ninguna_accion | 0.2536 |
-| recomendar_producto | 0.1622 |
+| enviar_cupon_categoria | 0.4725 |
+| recomendar_categoria | 0.2695 |
+| ninguna_accion | 0.2580 |
 
 ## Sensibilidad al supuesto de uplift
 
@@ -92,13 +92,13 @@ supuesto declarado en `config.py`. Esta tabla dice cuanto depende la conclusion 
 
 | uplift_cupon | valor_politica | valor_cupon_a_todos | pct_accion | pct_cupon |
 | --- | --- | --- | --- | --- |
-| 1.0000 | 3712.6444 | -2115.2239 | 0.7464 | 0.5721 |
-| 1.1000 | 3718.3102 | -2581.2102 | 0.7464 | 0.5727 |
-| 1.2000 | 3743.9189 | -3047.1965 | 0.7464 | 0.5749 |
-| 1.3500 | 3841.7953 | -3744.7255 | 0.7464 | 0.5843 |
-| 1.5000 | 4023.7374 | -4433.5725 | 0.7464 | 0.5971 |
-| 1.7500 | 4443.6159 | -5549.5240 | 0.7464 | 0.6176 |
-| 2.0000 | 4927.5453 | -6631.9534 | 0.7465 | 0.6345 |
+| 1.0000 | 2973.9783 | -3402.6969 | 0.7420 | 0.4457 |
+| 1.1000 | 2969.6057 | -3868.6832 | 0.7420 | 0.4459 |
+| 1.2000 | 2991.7032 | -4334.6695 | 0.7420 | 0.4534 |
+| 1.3500 | 3077.8120 | -5032.1985 | 0.7420 | 0.4725 |
+| 1.5000 | 3228.1314 | -5721.0455 | 0.7420 | 0.4986 |
+| 1.7500 | 3581.2174 | -6836.9970 | 0.7420 | 0.5376 |
+| 2.0000 | 4002.7889 | -7919.4264 | 0.7421 | 0.5658 |
 
 ### Reduccion de churn del cupon
 
@@ -111,12 +111,12 @@ de retencion, asi que es `churn_reduction` lo que hay que auditar.
 
 | reduccion_churn | valor_politica | valor_cupon_a_todos | pct_accion | pct_cupon |
 | --- | --- | --- | --- | --- |
-| 0.0000 | 1238.8688 | -8463.6140 | 0.7464 | 0.0001 |
-| 0.0200 | 1239.3503 | -7519.8363 | 0.7464 | 0.0011 |
-| 0.0500 | 1766.8557 | -6104.1697 | 0.7464 | 0.3184 |
-| 0.1000 | 3841.7953 | -3744.7255 | 0.7464 | 0.5843 |
-| 0.1500 | 6137.9667 | -1385.2812 | 0.7464 | 0.6498 |
-| 0.2000 | 8468.8808 | 974.1630 | 0.7464 | 0.6766 |
+| 0.0000 | 1157.9242 | -8463.6140 | 0.7420 | 0.0001 |
+| 0.0200 | 1158.4048 | -7777.3309 | 0.7420 | 0.0011 |
+| 0.0500 | 1454.4933 | -6747.9062 | 0.7420 | 0.1805 |
+| 0.1000 | 3077.8120 | -5032.1985 | 0.7420 | 0.4725 |
+| 0.1500 | 5155.5759 | -3316.4908 | 0.7420 | 0.5918 |
+| 0.2000 | 7359.0614 | -1600.7830 | 0.7420 | 0.6429 |
 
 La fila de `reduccion_churn = 0` es la lectura pesimista: lo que queda cuando se supone que
 el cupon no retiene a nadie.
@@ -138,20 +138,20 @@ La Fase 8 regenera el dataset con misiones de compra, cestas con cola larga, sus
 | Compra categoria: auc | 0.7630 | 0.7591 |
 | Compra categoria: pr_auc | 0.2185 | 0.2479 |
 | Compra categoria: lift decil 1 | 3.50x | 3.43x |
-| Politica: valor frente a no actuar | 3,938 EUR | 3,842 EUR |
-| Politica: ventaja sobre la mejor trivial | 3,030 EUR | 2,914 EUR |
-| Politica: clientes con accion | 75.2% | 74.6% |
+| Politica: valor frente a no actuar | 3,938 EUR | 3,078 EUR |
+| Politica: ventaja sobre la mejor trivial | 3,030 EUR | 2,408 EUR |
+| Politica: clientes con accion | 75.2% | 74.2% |
 
 ### Barrido de `churn_reduction` (Fase 7d frente a Fase 8)
 
 | reduccion_churn | valor Fase 7d | valor Fase 8 | cupones Fase 7d | cupones Fase 8 |
 | ---: | ---: | ---: | ---: | ---: |
-| 0.00 | 1,189 EUR | 1,239 EUR | 0.0% | 0.0% |
-| 0.02 | 1,189 EUR | 1,239 EUR | 0.1% | 0.1% |
-| 0.05 | 1,706 EUR | 1,767 EUR | 43.7% | 31.8% |
-| 0.10 | 3,938 EUR | 3,842 EUR | 66.2% | 58.4% |
-| 0.15 | 6,291 EUR | 6,138 EUR | 70.3% | 65.0% |
-| 0.20 | 8,662 EUR | 8,469 EUR | 72.0% | 67.7% |
+| 0.00 | 1,189 EUR | 1,158 EUR | 0.0% | 0.0% |
+| 0.02 | 1,189 EUR | 1,158 EUR | 0.1% | 0.1% |
+| 0.05 | 1,706 EUR | 1,454 EUR | 43.7% | 18.0% |
+| 0.10 | 3,938 EUR | 3,078 EUR | 66.2% | 47.2% |
+| 0.15 | 6,291 EUR | 5,156 EUR | 70.3% | 59.2% |
+| 0.20 | 8,662 EUR | 7,359 EUR | 72.0% | 64.3% |
 
 ## Frente a la Fase 4 original
 
@@ -167,20 +167,20 @@ La Fase 4 se entreno sobre el dataset anterior a la Fase 7a (1.500 productos, si
 | Compra categoria: auc | 0.7634 | 0.7591 |
 | Compra categoria: pr_auc | 0.2190 | 0.2479 |
 | Compra categoria: lift decil 1 | 3.51x | 3.43x |
-| Politica: valor frente a no actuar | 4,012 EUR | 3,842 EUR |
-| Politica: ventaja sobre la mejor trivial | 3,082 EUR | 2,914 EUR |
-| Politica: clientes con accion | 75.6% | 74.6% |
+| Politica: valor frente a no actuar | 4,012 EUR | 3,078 EUR |
+| Politica: ventaja sobre la mejor trivial | 3,082 EUR | 2,408 EUR |
+| Politica: clientes con accion | 75.6% | 74.2% |
 
 ### Barrido de `churn_reduction` (Fase 4 frente a Fase 7d)
 
 | reduccion_churn | valor Fase 4 | valor Fase 7d | cupones Fase 4 | cupones Fase 7d |
 | ---: | ---: | ---: | ---: | ---: |
-| 0.00 | 1,210 EUR | 1,239 EUR | 0.0% | 0.0% |
-| 0.02 | 1,210 EUR | 1,239 EUR | 0.1% | 0.1% |
-| 0.05 | 1,734 EUR | 1,767 EUR | 41.7% | 31.8% |
-| 0.10 | 4,012 EUR | 3,842 EUR | 64.8% | 58.4% |
-| 0.15 | 6,427 EUR | 6,138 EUR | 69.7% | 65.0% |
-| 0.20 | 8,862 EUR | 8,469 EUR | 71.6% | 67.7% |
+| 0.00 | 1,210 EUR | 1,158 EUR | 0.0% | 0.0% |
+| 0.02 | 1,210 EUR | 1,158 EUR | 0.1% | 0.1% |
+| 0.05 | 1,734 EUR | 1,454 EUR | 41.7% | 18.0% |
+| 0.10 | 4,012 EUR | 3,078 EUR | 64.8% | 47.2% |
+| 0.15 | 6,427 EUR | 5,156 EUR | 69.7% | 59.2% |
+| 0.20 | 8,862 EUR | 7,359 EUR | 71.6% | 64.3% |
 
 ## Que features usan los modelos
 

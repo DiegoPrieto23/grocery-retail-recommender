@@ -240,6 +240,8 @@ def run(spark: SparkSession, cfg: NBAConfig, *, write: bool = True) -> dict[str,
     scored["p_purchase"] = p_purchase
     scored["cat_spend"] = test.category["cat_spend"].to_numpy()
     scored["cat_n_purchase_days"] = test.category["cat_n_purchase_days"].to_numpy()
+    # Entra en la politica como factor de relevancia de la retencion (punto M7).
+    scored["cat_overdue_ratio"] = test.category["cat_overdue_ratio"].to_numpy()
 
     churn_table = _spend_90d(test)
     churn_table["p_churn"] = p_churn
@@ -250,6 +252,9 @@ def run(spark: SparkSession, cfg: NBAConfig, *, write: bool = True) -> dict[str,
     # quien no compra ninguna categoria desde hace meses tambien recibe una decision.
     universe = test.churn["customer_id"]
     actions = pol.cover_all(pol.decide(candidates, cfg), universe)
+    # La fecha de corte viaja con la tabla, no en la cabeza de quien la lee: la demo la
+    # pinta en el banner (punto M7) y asi no puede quedarse desfasada respecto al fichero.
+    actions["cutoff_date"] = pd.Timestamp(cfg.test_cutoff)
     comparison = pol.compare(candidates, cfg, all_customers=universe)
     sweep = pol.sensitivity(candidates, cfg, all_customers=universe)
     sweep_retention = pol.sensitivity_retention(candidates, cfg, all_customers=universe)
