@@ -141,6 +141,41 @@ def load_carts(parity_dir: Path | None = None) -> pd.DataFrame:
     return pd.read_parquet(path, columns=["basket_id", "product_id"])
 
 
+# Lo que una cesta de test necesita para ilustrar el escenario que la demo quiere ensenar:
+# "esto llevaba el cliente, esto le recomendo el sistema, esto compro de verdad".
+#
+# Con el carrito vacio no hay contexto que ensenar y la comparacion se queda en "acerto el
+# historial", que es otro caso. Con una sola linea en el carrito, casi tampoco. Y con una
+# sola por adivinar, el contraste es un si o un no y no se ve el matiz de categoria.
+MIN_EN_CARRITO = 2
+MIN_POR_ADIVINAR = 2
+
+
+def demo_baskets(
+    queries: pd.DataFrame,
+    *,
+    min_en_carrito: int = MIN_EN_CARRITO,
+    min_por_adivinar: int = MIN_POR_ADIVINAR,
+) -> pd.DataFrame:
+    """Las cestas de test que sirven para el escenario de contraste de la demo.
+
+    **Por que hace falta filtrar.** El split reparte los cortes por hash del `basket_id`:
+    la mitad de las queries evalua el carrito vacio y la otra mitad con la mitad de las
+    lineas (punto M3 del diagnostico). Eso es lo correcto para medir --las dos situaciones
+    existen en produccion-- pero al elegir una cesta al azar en la demo salia carrito vacio
+    el 52,6 % de las veces, y ese no es el caso que la demo quiere ilustrar.
+
+    De las 18.000 cestas de test, 7.986 tienen algo en el carrito y **5.529 pasan este
+    filtro**, repartidas en 4.079 clientes: de sobra para el selector.
+
+    No cambia nada de la evaluacion. El recomendador se sigue midiendo sobre las 18.000;
+    esto solo decide cuales se **ofrecen** en un desplegable.
+    """
+    en_carrito = queries["prefix_size"]
+    por_adivinar = queries["n_items"] - queries["prefix_size"]
+    return queries.loc[(en_carrito >= min_en_carrito) & (por_adivinar >= min_por_adivinar)]
+
+
 def customer_baskets(queries: pd.DataFrame, customer_id: str) -> pd.DataFrame:
     """Cestas de test de un cliente, de la mas reciente a la mas antigua.
 

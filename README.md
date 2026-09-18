@@ -62,7 +62,7 @@ pip install -r requirements.txt -c constraints.txt
 
 python -m src.pipeline all         # ~75 min: la cadena entera, en orden
 streamlit run streamlit_app.py     # la demo, en http://localhost:8501
-pytest                             # 489 tests
+pytest                             # 498 tests
 ```
 
 `src/pipeline.py` es el **único punto de entrada** (punto B1 del
@@ -177,7 +177,7 @@ grocery-retail-recommender/
 ├── streamlit_app.py          # FASE 6b — la demo (solo dibuja; la lógica está en src/)
 ├── assets/                   # FASE 6a — 60 fotos + el mapeo producto → foto (versionados)
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 489 tests
+├── tests/                    # 498 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
 ├── reports/recommender/      # métricas de la Fase 3, demo de los 4 perfiles, baselines/techo y las referencias congeladas
 ├── reports/nba/              # métricas de la Fase 4, barridos de sensibilidad y la referencia pre-Fase 7
@@ -294,7 +294,7 @@ una, está en [`docs/HISTORIA.md`](docs/HISTORIA.md).
 
 ## Tests
 
-**489 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17. Los que
+**498 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17. Los que
 necesitan artefactos que no se versionan (el bundle de serving, las tablas procesadas) se
 saltan solos en un repo recién clonado.
 

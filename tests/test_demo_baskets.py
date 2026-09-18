@@ -179,3 +179,62 @@ def test_los_aciertos_son_la_interseccion() -> None:
     assert hits(["A", "B", "C"], ["C", "D"]) == {"C"}
     assert hits(["A"], []) == set()
     assert hits([], ["A"]) == set()
+
+
+# --------------------------------------------------------------------------------------
+# Que cestas ofrece la demo
+# --------------------------------------------------------------------------------------
+def _query(basket_id: str, n_items: int, prefix_size: int) -> dict:
+    return {
+        "customer_id": "C1",
+        "basket_id": basket_id,
+        "basket_day": pd.Timestamp("2025-11-10").date(),
+        "channel": "web",
+        "n_items": n_items,
+        "prefix_size": prefix_size,
+        "profile": 4 if prefix_size else 3,
+    }
+
+
+def test_solo_se_ofrecen_cestas_con_contexto_y_con_algo_que_adivinar() -> None:
+    """El split deja la mitad de las queries con el carrito vacio (punto M3).
+
+    Eso es correcto para medir, pero al elegir una al azar en la demo salia carrito vacio
+    el 52,6 % de las veces, y ese no es el caso que la demo quiere ensenar: sin nada en el
+    carrito no hay contexto que contrastar.
+    """
+    from src.demo.baskets import demo_baskets
+
+    queries = pd.DataFrame(
+        [
+            _query("vale", n_items=8, prefix_size=4),  # 4 dentro, 4 por adivinar
+            _query("justo", n_items=4, prefix_size=2),  # 2 y 2: el limite
+            _query("vacio", n_items=6, prefix_size=0),  # perfil 3
+            _query("poco_carrito", n_items=6, prefix_size=1),
+            _query("poco_target", n_items=4, prefix_size=3),
+        ]
+    )
+    assert set(demo_baskets(queries)["basket_id"]) == {"vale", "justo"}
+
+
+def test_el_filtro_no_toca_las_cestas_sobre_las_que_se_mide() -> None:
+    """Decide que se **ofrece** en un desplegable, no sobre que se evalua el modelo."""
+    from src.demo.baskets import demo_baskets
+
+    queries = pd.DataFrame([_query("a", 8, 4), _query("b", 6, 0)])
+    antes = queries.copy()
+    demo_baskets(queries)
+    pd.testing.assert_frame_equal(queries, antes)
+
+
+@needs_bundle
+def test_sobre_el_dataset_real_quedan_cestas_de_sobra() -> None:
+    """Si el filtro dejase el selector casi vacio, el remedio seria peor."""
+    from src.demo.baskets import demo_baskets, load_queries
+
+    todas = load_queries()
+    ofrecidas = demo_baskets(todas)
+    assert len(ofrecidas) > 3_000, len(ofrecidas)
+    assert ofrecidas["customer_id"].nunique() > 2_000
+    assert (ofrecidas["prefix_size"] >= 2).all()
+    assert ((ofrecidas["n_items"] - ofrecidas["prefix_size"]) >= 2).all()

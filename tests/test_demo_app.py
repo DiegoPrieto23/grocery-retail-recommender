@@ -285,15 +285,34 @@ def test_las_opciones_de_cliente_se_leen_como_una_ficha(arrancada) -> None:
 
 
 def test_todos_los_clientes_ofrecidos_tienen_cesta_de_test(arrancada) -> None:
-    """Dos de los 60 de antes no tenian ninguna, y al elegirlos media demo no funcionaba."""
-    from src.demo.baskets import customer_baskets, load_queries
+    """Dos de los 60 de antes no tenian ninguna, y al elegirlos media demo no funcionaba.
 
-    queries = load_queries()
+    Y no vale cualquier cesta: tiene que servir para el contraste, con algo en el carrito y
+    algo por adivinar (`demo_baskets`). Antes se colaban cestas de carrito vacio y el
+    desplegable abria en una de ellas mas de la mitad de las veces.
+    """
+    from src.demo.baskets import customer_baskets, demo_baskets, load_queries
+
+    ofrecidas = demo_baskets(load_queries())
     selector = [c for c in arrancada.sidebar.selectbox if c.label == "Cliente"][0]
     # La etiqueta empieza por el `customer_id`.
     for opcion in selector.options:
         cid = opcion.split(" ")[0]
-        assert not customer_baskets(queries, cid).empty, cid
+        assert not customer_baskets(ofrecidas, cid).empty, cid
+
+
+def test_la_cesta_que_se_ofrece_por_defecto_trae_carrito(arrancada) -> None:
+    """El escenario que la demo quiere ensenar necesita contexto en el carrito.
+
+    Sin esto, el desplegable abria en una cesta de perfil 3 el 52,6 % de las veces --la
+    mitad del reparto que hace el split-- y lo primero que veia quien abre la demo era un
+    carrito vacio.
+    """
+    selector = [c for c in arrancada.sidebar.selectbox if c.label == "Cesta de test"]
+    assert selector, [c.label for c in arrancada.sidebar.selectbox]
+    etiqueta = selector[0].format_func(selector[0].value)
+    assert "carrito vacío" not in etiqueta, etiqueta
+    assert "en el carrito" in etiqueta, etiqueta
 
 
 def test_cambiar_de_escenario_cambia_a_quien_se_ofrece() -> None:

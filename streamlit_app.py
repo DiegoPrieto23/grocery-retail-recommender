@@ -29,6 +29,7 @@ from src.demo.baskets import (
     basket_label,
     build_basket,
     customer_baskets,
+    demo_baskets,
     load_carts,
     load_queries,
     load_reference_hit_rates,
@@ -137,6 +138,19 @@ def get_queries() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def get_demo_queries() -> pd.DataFrame:
+    """Las cestas de test que la demo **ofrece**, que no son todas las que evalua.
+
+    El split deja la mitad de las queries con el carrito vacio, y elegir una al azar daba
+    perfil 3 el 52,6 % de las veces. La demo quiere ensenar el contraste "esto llevaba,
+    esto le recomende, esto compro", y para eso hace falta algo en el carrito y algo por
+    adivinar. El criterio vive en `demo_baskets`; las metricas siguen calculandose sobre
+    las 18.000.
+    """
+    return demo_baskets(get_queries())
+
+
+@st.cache_data(show_spinner=False)
 def get_carts() -> pd.DataFrame:
     """Lo que habia en el carrito en el corte de cada una de esas cestas."""
     return load_carts()
@@ -157,7 +171,7 @@ def get_customer_pool() -> pd.DataFrame:
     """
     return customers.build_pool(
         get_bundle().customer_stats,
-        get_queries().groupby("customer_id")["basket_id"].nunique(),
+        get_demo_queries().groupby("customer_id")["basket_id"].nunique(),
         pd.read_parquet(NBA_ACTIONS) if NBA_ACTIONS.is_file() else pd.DataFrame(),
     )
 
@@ -508,11 +522,13 @@ with st.sidebar:
 
         # --- Sembrar el carrito con una cesta real de test ---
         st.subheader("Cargar una cesta real", icon=":material/history:")
-        suyas = customer_baskets(get_queries(), customer_id)
+        suyas = customer_baskets(get_demo_queries(), customer_id)
         if suyas.empty:
+            # No deberia pasar: `get_customer_pool` solo ofrece clientes con alguna. Se
+            # deja la rama por si alguien reutiliza el selector con otro pool.
             st.caption(
-                ":material/info: Este cliente no tiene ninguna cesta en la muestra de "
-                "test, así que aquí solo se puede construir la cesta a mano."
+                ":material/info: Este cliente no tiene ninguna cesta que sirva para el "
+                "contraste, así que aquí solo se puede construir la cesta a mano."
             )
         else:
             elegida = st.selectbox(
@@ -533,12 +549,7 @@ with st.sidebar:
                 width="stretch",
                 type="primary",
             )
-            if not real.has_cart:
-                st.caption(
-                    ":material/info: Esta cesta corta en 0: el carrito se queda vacío a "
-                    "propósito (perfil 3). Es la mitad del reparto que hace el split, no "
-                    "un fallo de carga."
-                )
+
     else:
         st.caption(
             ":material/person_add: Sin historial: solo popularidad y co-compra tienen señal."

@@ -30,7 +30,7 @@ los informes pueden no salir idénticas.
 ## Comprobar que el entorno está bien, antes de gastar una hora
 
 ```bash
-pytest -q                          # ~10 min, 489 tests
+pytest -q                          # ~9 min, 498 tests
 python -m src.pipeline list        # los 13 pasos y sus dependencias
 python -m src.pipeline all --dry-run
 ```
