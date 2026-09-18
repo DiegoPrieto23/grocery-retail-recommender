@@ -1,0 +1,90 @@
+name: Smoke E2E
+
+# Punto B1 del diagnostico. El job `tests` de `ci.yml` solo lanza `pytest`, y en un clon
+# limpio no hay `data/`, asi que los tests que necesitan el bundle se **saltan**: la
+# paridad Spark/pandas (`test_serving_parity.py`), las cestas de la demo
+# (`test_demo_baskets.py`) y parte de `test_catalog.py`. Eso deja sin comprobar justo lo
+# que mas caro sale de arreglar tarde: que las 54 features valgan lo mismo en los dos
+# motores.
+#
+# Este job ejecuta la cadena entera con `--scale 0.02` y corre esos tests contra el bundle
+# recien construido. Va de noche y a mano, no en cada push, porque tarda bastante mas que
+# los tests unitarios.
+
+on:
+  schedule:
+    # 03:15 UTC de lunes a viernes. No en fin de semana: nadie va a mirar el fallo.
+    - cron: "15 3 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: "Factor de volumen del generador"
+        default: "0.02"
+        required: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    # A escala 0.02 la cadena entera baja de la hora, pero el recomendador entrena dos
+    # modelos y el oraculo hace Monte Carlo: se deja margen antes de que el runner corte.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # pyspark 3.5.x no soporta Python 3.13 todavia; fijamos 3.11 (igual que en ci.yml).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt
+
+      - name: Plan de la cadena
+        run: python -m src.pipeline all --scale ${{ inputs.scale || '0.02' }} --dry-run
+
+      - name: Cadena completa
+        # `--fast` baja las muestras de Monte Carlo del oraculo: a esta escala el intervalo
+        # es ancho de todas formas y es el paso que mas tiempo se lleva.
+        run: python -m src.pipeline all --scale ${{ inputs.scale || '0.02' }} --fast
+
+      - name: Tests que en un clon limpio se saltan
+        # Se nombran uno a uno y se exige que no haya ni un `skipped`: si el bundle no se
+        # hubiera construido, estos tests se saltarian en silencio y el job pasaria en
+        # verde sin haber comprobado nada, que es exactamente el problema que arregla.
+        shell: bash
+        run: |
+          # Sin `pipefail`, el `tee` se traga el codigo de salida de pytest y un fallo
+          # pasaria por verde.
+          set -o pipefail
+          pytest -v -rs --no-header \
+            tests/test_serving_parity.py \
+            tests/test_demo_baskets.py \
+            tests/test_catalog.py \
+            | tee smoke-tests.log
+          if grep -qE "[0-9]+ skipped" smoke-tests.log; then
+            echo "::error::Algun test se salto: el bundle no se construyo bien."
+            exit 1
+          fi
+
+      - name: Resto de la bateria
+        run: pytest -q
+
+      - name: Guardar los informes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-reports
+          path: |
+            reports/
+            IMPACT.md
+            smoke-tests.log
+          if-no-files-found: warn
+          retention-days: 14
