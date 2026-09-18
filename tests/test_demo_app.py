@@ -249,3 +249,60 @@ def test_la_interfaz_no_menciona_fases_ni_tareas(arrancada) -> None:
     patron = re.compile(r"Fases?\s*\d|Tareas?\s*\d", re.IGNORECASE)
     culpables = [t for t in visible if patron.search(t)]
     assert not culpables, culpables
+
+
+# --------------------------------------------------------------------------------------
+# El selector de cliente
+# --------------------------------------------------------------------------------------
+def test_el_selector_filtra_por_escenario(arrancada) -> None:
+    """Antes se elegia un `customer_id` a ciegas de una lista de 60 clientes clonicos."""
+    from src.demo import customers
+
+    filtro = [
+        c for c in arrancada.sidebar.segmented_control if c.label == "Qué caso quieres ver"
+    ]
+    assert filtro, [c.label for c in arrancada.sidebar.segmented_control]
+    assert list(filtro[0].options) == list(customers.NOMBRES)
+
+
+def test_las_opciones_de_cliente_se_leen_como_una_ficha(arrancada) -> None:
+    """La etiqueta trae cestas, ticket y cuantas cestas de test tiene.
+
+    Lo ultimo decide si la mejor parte de la demo va a estar disponible, y antes solo se
+    descubria despues de elegir.
+    """
+    selector = [c for c in arrancada.sidebar.selectbox if c.label == "Cliente"][0]
+    assert selector.options
+    for opcion in selector.options:
+        assert "cestas" in opcion
+        assert "de test" in opcion
+
+
+def test_todos_los_clientes_ofrecidos_tienen_cesta_de_test(arrancada) -> None:
+    """Dos de los 60 de antes no tenian ninguna, y al elegirlos media demo no funcionaba."""
+    from src.demo.baskets import customer_baskets, load_queries
+
+    queries = load_queries()
+    selector = [c for c in arrancada.sidebar.selectbox if c.label == "Cliente"][0]
+    # La etiqueta empieza por el `customer_id`.
+    for opcion in selector.options:
+        cid = opcion.split(" ")[0]
+        assert not customer_baskets(queries, cid).empty, cid
+
+
+def test_cambiar_de_escenario_cambia_a_quien_se_ofrece() -> None:
+    """Cada escenario tiene que traer gente distinta; si no, el filtro es decorativo."""
+    listas = {}
+    for escenario in ("Fiel", "Ocasional", "En riesgo"):
+        at = _app()
+        at.run()
+        filtro = [
+            c for c in at.sidebar.segmented_control if c.label == "Qué caso quieres ver"
+        ][0]
+        filtro.set_value(escenario).run()
+        assert not at.exception, [e.value for e in at.exception]
+        selector = [c for c in at.sidebar.selectbox if c.label == "Cliente"][0]
+        listas[escenario] = {o.split(" ")[0] for o in selector.options}
+
+    assert not listas["Fiel"] & listas["Ocasional"]
+    assert not listas["Fiel"] & listas["En riesgo"]

@@ -23,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from src.demo import customers
 from src.demo.baskets import (
     RealBasket,
     basket_label,
@@ -128,14 +129,17 @@ def get_reference_hit_rates() -> dict[str, float] | None:
 
 
 @st.cache_data(show_spinner=False)
-def sample_customers(n: int = 60) -> list[str]:
-    """Unos cuantos clientes con historial, para el selector.
+def get_customer_pool() -> pd.DataFrame:
+    """Los clientes que el selector puede ofrecer, con su ficha y su escenario.
 
-    Se ordenan por numero de cestas: un cliente con mucho historial ensena mejor los
-    perfiles 3 y 4, que son los que tienen senal personal.
+    La logica vive en `src/demo/customers.py`; aqui solo se cachea, porque recorre los
+    18.729 clientes y las 18.000 cestas de test.
     """
-    stats = get_bundle().customer_stats.sort_values("cust_frequency", ascending=False)
-    return stats["customer_id"].head(n).tolist()
+    return customers.build_pool(
+        get_bundle().customer_stats,
+        get_queries().groupby("customer_id")["basket_id"].nunique(),
+        pd.read_parquet(NBA_ACTIONS) if NBA_ACTIONS.is_file() else pd.DataFrame(),
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -366,16 +370,38 @@ with st.sidebar:
 
     customer_id: str | None = None
     if tipo == "Recurrente":
+        pool = get_customer_pool()
+        escenario = st.segmented_control(
+            "Qué caso quieres ver",
+            customers.NOMBRES,
+            default=customers.TODOS,
+            help="Filtra la lista por el tipo de cliente, para no elegir a ciegas un ID.",
+        )
+        candidatos = customers.pick(pool, escenario or customers.TODOS)
+        fichas = pool.set_index("customer_id").loc[candidatos]
+
         customer_id = st.selectbox(
             "Cliente",
-            sample_customers(),
-            help="Clientes con más historial, para que se note la señal personal.",
+            candidatos,
+            format_func=lambda cid: customers.label(
+                pd.Series({**fichas.loc[cid].to_dict(), "customer_id": cid})
+            ),
+            help=(
+                "Todos tienen alguna cesta en la ventana de test, así que siempre se "
+                "puede cargar una compra real suya."
+            ),
         )
-        ficha = bundle.customer_stats.set_index("customer_id").loc[customer_id]
+        ficha = fichas.loc[customer_id]
         st.caption(
-            f":material/receipt_long: {int(ficha['cust_frequency'])} cestas · "
-            f"{int(ficha['cust_n_products'])} referencias distintas · "
-            f"ticket medio {ficha['cust_avg_ticket']:.2f} €".replace(".", ",")
+            f":material/receipt_long: {int(ficha['n_baskets'])} cestas · "
+            f"{int(ficha['n_products'])} referencias distintas · "
+            f"ticket medio {ficha['avg_ticket']:.2f} €".replace(".", ",")
+        )
+        nivel, color = customers.riesgo_texto(float(ficha["p_churn"]), pool)
+        st.badge(
+            f"riesgo de fuga {nivel} ({ficha['p_churn']:.0%})".replace(".", ","),
+            color=color,
+            icon=":material/warning:",
         )
         st.caption(
             f"Su historial hasta el {bundle.window_start:%d/%m/%Y}: cestas cerradas y "

@@ -62,7 +62,7 @@ pip install -r requirements.txt -c constraints.txt
 
 python -m src.pipeline all         # ~75 min: la cadena entera, en orden
 streamlit run streamlit_app.py     # la demo, en http://localhost:8501
-pytest                             # 467 tests
+pytest                             # 489 tests
 ```
 
 `src/pipeline.py` es el **único punto de entrada** (punto B1 del
@@ -170,11 +170,14 @@ grocery-retail-recommender/
 │   ├── serving/              # FASE 6b — inferencia del recomendador sin Spark
 │   │   ├── export_bundle.py  #   vuelca las fuentes de candidatos ya ajustadas a data/serving/
 │   │   └── recommend.py      #   el mismo top-5 que el pipeline, con pandas
-│   └── demo/                 # FASE 6b — lo que la app pinta: catálogo, motivos, cestas reales, aciertos
+│   └── demo/                 # FASE 6b — lo que la app pinta
+│       ├── catalog.py       #   fichas de producto, buscador y el motivo de cada recomendación
+│       ├── baskets.py       #   cestas reales de test y el contraste con lo que compró
+│       └── customers.py     #   a quién ofrece el selector, y su escenario (fiel / ocasional / en riesgo)
 ├── streamlit_app.py          # FASE 6b — la demo (solo dibuja; la lógica está en src/)
 ├── assets/                   # FASE 6a — 60 fotos + el mapeo producto → foto (versionados)
 ├── notebooks/01_eda.ipynb    # reconocimiento de tablas + calidad + 9 preguntas de negocio
-├── tests/                    # 467 tests
+├── tests/                    # 489 tests
 ├── reports/etl/              # informes que genera run_etl (versionados)
 ├── reports/recommender/      # métricas de la Fase 3, demo de los 4 perfiles, baselines/techo y las referencias congeladas
 ├── reports/nba/              # métricas de la Fase 4, barridos de sensibilidad y la referencia pre-Fase 7
@@ -291,7 +294,7 @@ una, está en [`docs/HISTORIA.md`](docs/HISTORIA.md).
 
 ## Tests
 
-**467 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17. Los que
+**489 tests** (`pytest`), verdes en CI sobre Ubuntu con Python 3.11 y JVM 17. Los que
 necesitan artefactos que no se versionan (el bundle de serving, las tablas procesadas) se
 saltan solos en un repo recién clonado.
 
