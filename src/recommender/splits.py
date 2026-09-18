@@ -60,8 +60,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+import pandas as pd
 from pyspark.sql import DataFrame, Window
-
 from pyspark.sql import functions as F
 
 from src.recommender.config import (
@@ -69,7 +69,9 @@ from src.recommender.config import (
     CUT_EMPTY_AND_HALF,
     CUT_HEADLINE,
     CUT_RANDOM_FRACTIONS,
+    VALID_TEMPORAL,
     CutPlan,
+    ValidationSplit,
 )
 from src.recommender.schema import PROFILE_LABELS  # noqa: F401  (reexportado)
 
@@ -402,3 +404,30 @@ def prefix_and_target(query_items: DataFrame, queries: DataFrame) -> tuple[DataF
     prefix = scoped.filter(F.col("is_prefix")).select("basket_id", "product_id", "position")
     target = scoped.filter(~F.col("is_prefix")).select("basket_id", "product_id")
     return prefix, target
+
+
+def validation_baskets(
+    basket_days: pd.Series, *, split: ValidationSplit, n_valid: int
+) -> set[str]:
+    """Que cestas de la ventana del ranker hacen de validacion (punto B4).
+
+    Args:
+        basket_days: `basket_day` indexado por `basket_id`, una entrada por cesta de la
+            ventana del ranker.
+        split: Modo de separacion (`temporal` o `hash`).
+        n_valid: Cuantas cestas se apartan en el modo `hash`.
+
+    Returns:
+        Los `basket_id` que van a validacion. El resto entrena.
+
+    En modo `temporal` el corte es la fecha: entran las cestas de los ultimos
+    `split.days` dias de la ventana, contados desde el ultimo dia que aparece en la
+    muestra. En modo `hash`, las `n_valid` primeras por `basket_id` ordenado, que es lo
+    que hacia el pipeline hasta el punto B4 (el `basket_id` ya es un identificador sin
+    relacion con la fecha, asi que ordenarlo equivale a muestrear).
+    """
+    if split.mode == VALID_TEMPORAL:
+        days = pd.to_datetime(basket_days)
+        cut = days.max() - pd.Timedelta(days=split.days - 1)
+        return set(days.index[days >= cut])
+    return set(sorted(basket_days.index)[:n_valid])

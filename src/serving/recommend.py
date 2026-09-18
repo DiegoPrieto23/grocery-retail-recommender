@@ -107,6 +107,8 @@ class ServingBundle:
     """Las tablas del recomendador, ya en memoria y listas para servir."""
 
     popularity: pd.DataFrame
+    # Popularidad por categoria y mes (punto M6): la rama por categoria de `pop`.
+    category_popularity: pd.DataFrame
     affinity_product: pd.DataFrame
     affinity_category: pd.DataFrame
     category_leaders: pd.DataFrame
@@ -202,6 +204,7 @@ def load_bundle(
 
     return ServingBundle(
         popularity=table("popularity"),
+        category_popularity=table("category_popularity"),
         affinity_product=table("affinity_product"),
         affinity_category=table("affinity_category"),
         category_leaders=table("category_leaders"),
@@ -263,10 +266,19 @@ def build_query(
 def candidates_popularity(
     queries: pd.DataFrame, bundle: ServingBundle
 ) -> pd.DataFrame:
+    columns = ["product_id", "month", "pop_score", "pop_rank"]
     top = bundle.popularity.loc[
-        bundle.popularity["pop_rank"] <= bundle.cfg.n_popularity,
-        ["product_id", "month", "pop_score", "pop_rank"],
+        bundle.popularity["pop_rank"] <= bundle.cfg.n_popularity, columns
     ]
+    catpop = bundle.category_popularity
+    by_category = catpop.loc[
+        (catpop["cat_pop_rank"] <= bundle.cfg.n_pop_categories)
+        & (catpop["cat_prod_rank"] <= bundle.cfg.n_pop_products_per_category),
+        columns,
+    ]
+    top = pd.concat([top, by_category], ignore_index=True).drop_duplicates(
+        ["product_id", "month"]
+    )
     q = queries[["basket_id", "basket_day"]].copy()
     q["month"] = q["basket_day"].dt.month
     return q.merge(top, on="month")[["basket_id", "product_id", "pop_score", "pop_rank"]]

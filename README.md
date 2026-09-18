@@ -1303,9 +1303,15 @@ Quedan tres deudas anotadas, ninguna bloqueante:
   cabecera se mueve en la tercera decimal. Los intervalos de confianza lo cubren, pero una
   serie histórica limpia pediría fijar el orden de las filas y `deterministic=True` en
   LightGBM.
-- **Los topes de candidatos no se han reajustado al catálogo de 496 productos** (Fase 7c).
-  Se dejaron como estaban para que las comparaciones entre fases fueran limpias; con el pool
-  cubriendo ya el 82,5 % del target, afinarlos es margen, no un arreglo.
+- **Ampliar el pool de candidatos no mejora lo que el sistema entrega** (punto M6). Los
+  topes sí se reajustaron al catálogo de 496 productos: el `pool_recall` pasó del 82,5 %
+  al 91,8 % y, en el perfil de cliente nuevo con el carrito vacío, del 55,3 % al 77,4 %.
+  La métrica principal se movió +0,03 pp. Es la misma conclusión que ya se midió en la
+  Fase 3, ahora con el dataset y el ranker actuales: **el sistema no está limitado por la
+  primera etapa**, sino por lo distinguibles que son entre sí las referencias de una misma
+  categoría. Lo que sí arregló el punto es un techo real —la cobertura de *categorías* del
+  pool en cold-start, del 70,4 % al 100 %—, y ese margen sigue sin convertirse en acierto.
+  Quien quiera mover la cifra tiene que mirar la segunda etapa, no la primera.
 - **El oráculo es más caro y con menos muestra efectiva que antes** (Fase 8). Con cestas de
   hasta 50 categorías, el muestreo por importancia condicionado al carrito pierde eficiencia:
   el tamaño efectivo mediano es de 151 muestras de 500, y en el 5 % peor baja a 11. El techo

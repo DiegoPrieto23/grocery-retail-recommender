@@ -194,6 +194,14 @@ techo después de reajustar los candidatos (M6), que es más barato. Antes convi
 lo barato: barrer `label_gain` (p. ej. `[0, 1, 2]` o `[0, 2, 3]`) para situar el punto en
 la frontera SKU/categoría que se quiera comunicar.
 
+**Respuesta (Sesión 7, tras M6).** La condición **se cumple**: reajustados los candidatos,
+`cat_precision@5` está en el **87,5 %** del techo (0,3295 de 0,3765), todavía por debajo
+del 90 %. Apenas se movió con el pool ampliado (86,8 % → 87,5 %), que es lo esperable
+ahora que se sabe que la primera etapa no era la restricción: el pool cubre el **100 %**
+de las categorías del target en los cuatro perfiles y aun así `cat_hit_rate@5` se queda en
+el 79,8 % (95,2 % del techo). Lo que falta está entero en la segunda etapa. Sigue siendo
+válido probar antes lo barato (barrer `label_gain`) que montar la jerarquía.
+
 **Esbozo, por si se retoma.** (1) Modelo de necesidad: LightGBM binario (o LambdaRank con
 grupo = cesta) sobre filas query × categoría fuera del carrito, con las features de
 cliente × categoría as-of, estacionalidad, afinidad con el carrito y sesión agregada por

@@ -62,10 +62,13 @@ from src.recommender.config import (
     CUT_RANDOM_FRACTIONS,
     RELEVANCE_BINARY_SKU,
     REQUIRED_TABLES,
+    VALID_HASH,
+    VALID_TEMPORAL,
     BootstrapConfig,
     CutPlan,
     RecommenderConfig,
     RerankConfig,
+    ValidationSplit,
 )
 
 
@@ -120,6 +123,7 @@ SYSTEM_SCORES: dict[str, str] = {
     "sin_carrito": "score_no_cart",
     "relevancia_sku": "score_sku",
     "sin_ranking_personal": "score_no_rank",
+    "validacion_hash": "score_hash_valid",
 }
 SYSTEM_NAMES: dict[str, str] = {
     LAMBDARANK: "LambdaRank servido",
@@ -128,6 +132,7 @@ SYSTEM_NAMES: dict[str, str] = {
     "sin_carrito": "LambdaRank sin features de carrito",
     "relevancia_sku": "LambdaRank con relevancia binaria de SKU",
     "sin_ranking_personal": "LambdaRank sin ranking personal de categorias",
+    "validacion_hash": "LambdaRank con validacion por hash (antes del punto B4)",
 }
 
 # Metricas que se contrastan entre sistemas (columnas de `evaluate.system_per_query`).
@@ -175,6 +180,8 @@ class SourceBundle:
 
     window_start: dt.date
     popularity: DataFrame
+    # Popularidad agregada por categoria y mes (punto M6): la rama por categoria de `pop`.
+    category_popularity: DataFrame
     affinity_product: DataFrame
     affinity_category: DataFrame
     category_leaders: DataFrame
@@ -190,6 +197,7 @@ class SourceBundle:
         """Suelta las caches de la ventana cuando ya no se van a usar."""
         for frame in (
             self.popularity,
+            self.category_popularity,
             self.affinity_product,
             self.affinity_category,
             self.category_leaders,
@@ -212,6 +220,9 @@ def fit_sources(
     popularity = cand.fit_popularity(
         history_baskets, history_items, window_start=window_start, cfg=cfg.candidates
     ).cache()
+    category_popularity = cand.fit_category_popularity(
+        popularity, tables["products"]
+    ).cache()
     affinity_product = cand.fit_affinity_product(history_items).cache()
     affinity_category = cand.fit_affinity_category(history_items, tables["products"]).cache()
     category_leaders = cand.fit_category_leaders(
@@ -223,6 +234,7 @@ def fit_sources(
     # Materializar aqui evita que cada fuente se recalcule en cada accion posterior.
     for df in (
         popularity,
+        category_popularity,
         affinity_product,
         affinity_category,
         category_leaders,
@@ -236,6 +248,7 @@ def fit_sources(
     return SourceBundle(
         window_start=window_start,
         popularity=popularity,
+        category_popularity=category_popularity,
         affinity_product=affinity_product,
         affinity_category=affinity_category,
         category_leaders=category_leaders,
@@ -370,7 +383,9 @@ def build_window(
     ).cache()
 
     sources = {
-        "pop": cand.candidates_popularity(queries, bundle.popularity, cfg=cfg.candidates),
+        "pop": cand.candidates_popularity(
+            queries, bundle.popularity, bundle.category_popularity, cfg=cfg.candidates
+        ),
         "aff": cand.candidates_affinity_product(
             prefix, bundle.affinity_product, cfg=cfg.candidates
         ),
@@ -496,6 +511,13 @@ OBJECTIVE_VARIANTS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+# Variantes del antes/despues del punto B4: validacion temporal frente a la de por hash.
+VALIDATION_VARIANTS: tuple[tuple[str, str, str], ...] = (
+    ("hash", "Parada temprana con validacion por hash (anterior)", "score_hash_valid"),
+    ("temporal", "Parada temprana con validacion temporal (servido)", "score"),
+)
+
+
 def objective_ablation(
     scored: pd.DataFrame,
     queries: pd.DataFrame,
@@ -504,13 +526,14 @@ def objective_ablation(
     *,
     k: int,
     rerank: RerankConfig,
+    variants: tuple[tuple[str, str, str], ...] = OBJECTIVE_VARIANTS,
 ) -> pd.DataFrame:
-    """Antes/despues del punto A4: una fila por variante y grupo (total y perfiles).
+    """Antes/despues del punto A4 (o del B4): una fila por variante y grupo.
 
     Todas con el mismo pool y el mismo re-ranking servido: solo cambia el modelo.
     """
     frames = []
-    for key, label, score_col in OBJECTIVE_VARIANTS:
+    for key, label, score_col in variants:
         top = ev.top_k_predictions(scored, k=k, score_col=score_col, rerank=rerank)
         sku = ev.summarise(ev.per_query_metrics(top, queries, k=k), k=k)
         cat = ev.category_metrics(top, target, product_category, queries, k=k)
@@ -528,6 +551,51 @@ def rank_feature_importance(importance: pd.DataFrame) -> pd.DataFrame:
         ranked["feature"].isin(feat.CUSTOMER_CATEGORY_RANK_FEATURES),
         ["feature", "puesto", "gain", "gain_share", "split"],
     ].reset_index(drop=True)
+
+
+def _validation_window(
+    basket_days: pd.Series, validation: ValidationSplit
+) -> tuple[dt.date, dt.date] | None:
+    """Primer y ultimo dia que caen en validacion, o `None` si el corte no es temporal."""
+    if validation.mode != VALID_TEMPORAL:
+        return None
+    days = pd.to_datetime(basket_days)
+    last = days.max()
+    return (
+        (last - pd.Timedelta(days=validation.days - 1)).date(),
+        last.date(),
+    )
+
+
+def _validation_row(
+    role: str,
+    validation: ValidationSplit,
+    booster,
+    evals: dict,
+    cfg: RecommenderConfig,
+    *,
+    n_train: int,
+    n_valid: int,
+    window: tuple[dt.date, dt.date] | None,
+) -> dict[str, object]:
+    """Una fila de la comparacion de validaciones del punto B4."""
+    return {
+        "role": role,
+        "mode": validation.mode,
+        "days": validation.days if validation.mode == VALID_TEMPORAL else None,
+        "window": None if window is None else [str(window[0]), str(window[1])],
+        "n_train_queries": n_train,
+        "n_valid_queries": n_valid,
+        "n_trees": int(booster.best_iteration),
+        # NDCG de validacion de cada variante, medida sobre **su propia** muestra: dice
+        # donde paro cada una, no cual es mejor. La comparacion honesta es la de test.
+        "valid_ndcg": float(evals["valid"][f"ndcg@{cfg.top_k}"][booster.best_iteration - 1]),
+    }
+
+
+def validation_split_report(rows: list[dict[str, object]]) -> pd.DataFrame:
+    """Tabla del punto B4: de donde sale la validacion de cada variante y donde paro."""
+    return pd.DataFrame(rows)
 
 
 def _queries_to_pandas(queries: DataFrame) -> pd.DataFrame:
@@ -565,6 +633,9 @@ class Scorers:
     no_cart: object
     sku: object
     no_rank: object
+    # Mismo objetivo y mismas features que el servido, pero con la validacion por hash de
+    # antes del punto B4: aisla lo que cambia por parar el entrenamiento en otro sitio.
+    hash_valid: object
     no_session_features: tuple[str, ...]
     no_cart_features: tuple[str, ...]
     no_rank_features: tuple[str, ...]
@@ -584,6 +655,7 @@ class Scorers:
         scored["score_no_rank"] = rk.score(
             self.no_rank, matrix, feature_columns=self.no_rank_features
         )
+        scored["score_hash_valid"] = rk.score(self.hash_valid, matrix)
         scored["score_popularity"] = ev.popularity_baseline(matrix)
         return scored
 
@@ -714,20 +786,57 @@ def run(
     timer.step(f"Matriz del ranker: {len(rank_pdf):,} filas / {rank_queries.count():,} queries")
     rank_history.unpersist()
 
-    # Train y validacion se separan tambien por cesta: una cesta entera cae a un lado.
-    baskets_sorted = sorted(rank_pdf["basket_id"].unique())
-    valid_ids = set(baskets_sorted[: cfg.n_valid_queries])
-    is_valid = rank_pdf["basket_id"].isin(valid_ids)
+    # Train y validacion se separan tambien por cesta: una cesta entera cae a un lado. El
+    # criterio lo pone `cfg.validation` (punto B4): por defecto, temporal.
+    rank_days = (
+        rank_queries.select("basket_id", "basket_day")
+        .distinct()
+        .toPandas()
+        .set_index("basket_id")["basket_day"]
+    )
     # Con la relevancia graduada se quedan las cestas con al menos un candidato de una
     # categoria del target, no solo las que tienen el SKU exacto en el pool.
     positive = cfg.ranker.label_column
-    train_pdf = rk.drop_groups_without_positives(
-        rank_pdf.loc[~is_valid].reset_index(drop=True), positive
+
+    def split_by(validation: ValidationSplit) -> tuple[pd.DataFrame, pd.DataFrame]:
+        valid_ids = splits.validation_baskets(
+            rank_days, split=validation, n_valid=cfg.n_valid_queries
+        )
+        is_valid = rank_pdf["basket_id"].isin(valid_ids)
+        return (
+            rk.drop_groups_without_positives(
+                rank_pdf.loc[~is_valid].reset_index(drop=True), positive
+            ),
+            rk.drop_groups_without_positives(
+                rank_pdf.loc[is_valid].reset_index(drop=True), positive
+            ),
+        )
+
+    # Ablacion del punto B4: el mismo modelo con el criterio de validacion contrario, sobre
+    # la misma matriz. Es lo que permite decir si la parada temprana temporal cambia algo.
+    # Va primero y suelta sus copias enseguida: cada split duplica la matriz del ranker, y
+    # tener tres a la vez es lo que agota el driver.
+    other = ValidationSplit(
+        mode=VALID_HASH if cfg.validation.mode == VALID_TEMPORAL else VALID_TEMPORAL,
+        days=cfg.validation.days,
     )
-    valid_pdf = rk.drop_groups_without_positives(
-        rank_pdf.loc[is_valid].reset_index(drop=True), positive
+    train_hash, valid_hash = split_by(other)
+    n_train_queries_hash = int(train_hash["basket_id"].nunique())
+    n_valid_queries_hash = int(valid_hash["basket_id"].nunique())
+    booster_hv, evals_hv = rk.train_ranker(
+        train_hash, valid_hash, cfg=cfg.ranker, verbose_eval=0
     )
-    del rank_pdf, is_valid  # la matriz completa ya no hace falta y ocupa varios cientos de MB
+    del train_hash, valid_hash
+    gc.collect()
+    timer.step(
+        f"Ablacion con validacion {other.mode} ({booster_hv.best_iteration} arboles)"
+    )
+
+    train_pdf, valid_pdf = split_by(cfg.validation)
+    n_valid_queries_served = int(valid_pdf["basket_id"].nunique())
+    valid_window = _validation_window(rank_days, cfg.validation)
+    del rank_pdf  # la matriz completa ya no hace falta y ocupa varios cientos de MB
+    gc.collect()
 
     booster, evals = rk.train_ranker(train_pdf, valid_pdf, cfg=cfg.ranker)
     timer.step(f"LambdaRank entrenado ({booster.best_iteration} arboles)")
@@ -802,6 +911,7 @@ def run(
         no_cart=booster_nc,
         sku=booster_sku,
         no_rank=booster_nr,
+        hash_valid=booster_hv,
         no_session_features=no_session,
         no_cart_features=no_cart,
         no_rank_features=no_rank,
@@ -821,7 +931,6 @@ def run(
     summary_pop, _ = ev.evaluate(
         scored, test_q, k=cfg.top_k, score_col="score_popularity", rerank=rerank
     )
-    pool = ev.candidate_recall(scored, test_q)
     importance = rk.feature_importance(booster)
     all_importance = rk.feature_importance(booster, top=len(feat.FEATURE_COLUMNS))
 
@@ -833,6 +942,9 @@ def run(
     target_pdf = context_pdf.loc[context_pdf["role"] == "target", ["basket_id", "product_id"]]
     prefix_pdf = context_pdf.loc[context_pdf["role"] == "prefix", ["basket_id", "product_id"]]
     product_category = tables["products"].select("product_id", "category").toPandas()
+    # Despues de `product_category`: el techo de la primera etapa se reporta tambien a
+    # nivel de categoria (punto M6), y para eso hacen falta el target y el catalogo.
+    pool = ev.candidate_recall(scored, test_q, target_pdf, product_category)
     by_category = ev.category_metrics(
         top_k, target_pdf, product_category, test_q, k=cfg.top_k, bootstrap=cfg.bootstrap
     )
@@ -842,6 +954,15 @@ def run(
     )
     objective = objective_ablation(
         scored, test_q, target_pdf, product_category, k=cfg.top_k, rerank=rerank
+    )
+    validation_ablation = objective_ablation(
+        scored,
+        test_q,
+        target_pdf,
+        product_category,
+        k=cfg.top_k,
+        rerank=rerank,
+        variants=VALIDATION_VARIANTS,
     )
     top_k_sku = ev.top_k_predictions(scored, k=cfg.top_k, score_col="score_sku", rerank=rerank)
     timer.step("Evaluacion")
@@ -910,12 +1031,27 @@ def run(
         "wasted_slots": wasted,
         "cart_ablation": cart_ablation,
         "objective_ablation": objective,
+        "validation_ablation": validation_ablation,
         "rank_feature_importance": rank_feature_importance(all_importance),
         "rerank": rerank,
         "feature_importance": importance,
         "per_query": per_query,
         "recommendations": recommendations,
         "valid_ndcg": float(evals["valid"][f"ndcg@{cfg.top_k}"][booster.best_iteration - 1]),
+        "validation_split": validation_split_report(
+            [
+                _validation_row(
+                    "servida", cfg.validation, booster, evals, cfg,
+                    n_train=n_train_queries, n_valid=n_valid_queries_served,
+                    window=valid_window,
+                ),
+                _validation_row(
+                    "ablacion", other, booster_hv, evals_hv, cfg,
+                    n_train=n_train_queries_hash, n_valid=n_valid_queries_hash,
+                    window=_validation_window(rank_days, other),
+                ),
+            ]
+        ),
         "n_test_queries": int(len(test_q)),
         "n_train_queries": n_train_queries,
         "n_train_queries_sku": n_train_queries_sku,
@@ -1653,6 +1789,129 @@ def _width_note(by_category: pd.DataFrame, k: int) -> str:
     )
 
 
+def _pool_ceiling_note(result: dict[str, object], k: int) -> str:
+    """Contrasta el techo de categoria del pool con lo que el sistema acaba acertando."""
+    pool: pd.DataFrame = result["candidate_recall"]  # type: ignore[assignment]
+    by_category: pd.DataFrame = result["by_category"]  # type: ignore[assignment]
+    if "cat_pool_recall" not in pool.columns:
+        return ""
+    ceiling = float(pool.loc[pool["grupo"] == "total", "cat_pool_recall"].iloc[0])
+    achieved = float(by_category.loc[by_category["grupo"] == "total", f"cat_hit_rate@{k}"].iloc[0])
+    worst = pool.loc[pool["grupo"] != "total"].nsmallest(1, "cat_pool_recall").iloc[0]
+    # Solo se nombra el peor perfil si de verdad se queda por detras del total; cuando
+    # todos llegan al mismo sitio, decirlo sobra.
+    spread = (
+        f" (el peor perfil, {worst['grupo']}, el {worst['cat_pool_recall']:.1%})"
+        if worst["cat_pool_recall"] < ceiling - 0.0005
+        else ", en los cuatro perfiles,"
+    )
+    return (
+        f"El pool alcanza el **{ceiling:.1%}** de las categorias del target{spread} y el "
+        f"sistema acierta alguna en el **{achieved:.1%}** de las cestas. Esa distancia no la "
+        "explica la primera etapa: son candidatos que si llegaron al pool y el ranker no "
+        f"subio al top-{k}."
+    )
+
+
+def _validation_section(cfg: RecommenderConfig, result: dict[str, object], k: int) -> str:
+    """Punto B4: de donde sale la validacion de la parada temprana, y que cambia."""
+    split: pd.DataFrame = result["validation_split"]  # type: ignore[assignment]
+    table: pd.DataFrame = result["validation_ablation"]  # type: ignore[assignment]
+    comparisons: pd.DataFrame = result["comparisons"]  # type: ignore[assignment]
+
+    served = split.loc[split["role"] == "servida"].iloc[0]
+    other = split.loc[split["role"] == "ablacion"].iloc[0]
+    window = served["window"]
+    window_text = (
+        f"del {window[0]} al {window[1]}" if window else "muestreada por hash de la ventana"
+    )
+
+    setup = [
+        "| Variante | De donde sale la validacion | Cestas de train | Cestas de validacion "
+        f"| Arboles | NDCG@{k} de su validacion |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for row in (served, other):
+        origin = (
+            f"ultimos {int(row['days'])} dias de la ventana "
+            f"({row['window'][0]} a {row['window'][1]})"
+            if row["mode"] == VALID_TEMPORAL
+            else f"{row['n_valid_queries']:,} cestas por hash, de toda la ventana"
+        )
+        name = "Temporal (servida)" if row["role"] == "servida" else "Por hash (anterior)"
+        setup.append(
+            f"| {name} | {origin} | {row['n_train_queries']:,} | {row['n_valid_queries']:,} "
+            f"| {row['n_trees']} | {row['valid_ndcg']:.4f} |"
+        )
+
+    metrics = [f"ndcg_graded@{k}", f"cat_hit_rate@{k}", f"sku_hit_rate@{k}", f"ndcg@{k}"]
+    total = table.loc[table["grupo"] == "total"]
+    lines = [
+        f"| Variante | NDCG@{k} graduada | cat_hit_rate@{k} | sku_hit_rate@{k} | NDCG@{k} SKU |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for row in total.to_dict(orient="records"):
+        cells = [row["descripcion"], *(f"{row[m]:.4f}" for m in metrics)]
+        if row["variante"] == "temporal":
+            cells = [f"**{c}**" for c in cells]
+        lines.append("| " + " | ".join(cells) + " |")
+
+    by = table.set_index(["variante", "grupo"])
+    main = f"ndcg_graded@{k}"
+    delta = (by.loc[("temporal", "total"), main] - by.loc[("hash", "total"), main])
+    tree_delta = int(served["n_trees"]) - int(other["n_trees"])
+
+    return "\n".join(
+        [
+            "## De donde sale la validacion de la parada temprana (punto B4)",
+            "",
+            "La parada temprana decide cuantos arboles se sirven. Hasta el punto B4 la "
+            f"validacion eran {cfg.n_valid_queries:,} cestas muestreadas por hash de **la misma "
+            "ventana** que el entrenamiento, asi que el modelo paraba donde dejaba de mejorar "
+            "sobre queries contemporaneas. El test, en cambio, esta siempre mas adelante en el "
+            f"tiempo. Ahora la validacion son los ultimos {cfg.validation.days} dias de la "
+            f"ventana del ranker ({window_text}): mismo sentido de desplazamiento que hacia el "
+            "test. Las dos variantes salen de la misma matriz de features y se evaluan sobre "
+            "las mismas queries de test, con el mismo re-ranking.",
+            "",
+            "Un matiz al leerlo: cambiar el criterio cambia **las dos** partes a la vez, "
+            "porque lo que no cae en validacion entrena. La diferencia en test no es solo "
+            "\"donde para\", tambien es \"con que cestas aprende\"; separarlas pediria fijar "
+            "el numero de arboles a mano y no es lo que se quiere medir aqui.",
+            "",
+            *setup,
+            "",
+            "Las dos NDCG de validacion no son comparables entre si: cada una se mide sobre su "
+            "propia muestra, y la temporal cae sobre cestas mas dificiles. Lo que se compara es "
+            "el resultado en test.",
+            "",
+            f"### Sobre las {result['n_test_queries']:,} queries de test",
+            "",
+            *lines,
+            "",
+            f"La validacion temporal para en {served['n_trees']} arboles frente a "
+            f"{other['n_trees']} ({tree_delta:+d}) y mueve la metrica principal "
+            f"{delta:+.4f}:",
+            "",
+            *_comparison_table(
+                comparisons.loc[comparisons["sistema"] == "validacion_hash"], "total"
+            ),
+            "",
+            "**Lectura.** El cambio es metodologicamente el correcto --- parar sobre queries "
+            "posteriores a las de entrenamiento se parece mas a lo que el modelo encuentra "
+            "en test --- pero **no se mide ninguna diferencia**: el intervalo de la metrica "
+            "principal cruza el cero con holgura. Tambien lo cruzan las otras tres metricas "
+            "y los cuatro perfiles (el desglose esta en `metrics.json`, `comparisons`; la "
+            "unica celda con p < 0,05 es una de veinte comparaciones sin corregir). "
+            "Conviene ademas leerlo con la no-determinacion de la parada temprana delante: "
+            "entre dos ejecuciones con los mismos datos el numero de arboles se mueve solo "
+            "(deuda anotada en el README), asi que una diferencia de esta talla no seria "
+            "atribuible al criterio de validacion aunque la hubiera. Se sirve la temporal "
+            "por ser la mas defendible, no porque rinda mas.",
+        ]
+    )
+
+
 def _comparison_section(result: dict[str, object], k: int) -> str:
     """Diferencias del LambdaRank servido con cada sistema, con IC y p-valor."""
     comparisons: pd.DataFrame = result["comparisons"]  # type: ignore[assignment]
@@ -1919,6 +2178,8 @@ referencia concreta fuera otra.
 
 {_cart_section(cfg, result, k)}
 
+{_validation_section(cfg, result, k)}
+
 {_kaggle_section(summary, k)}
 
 {_pre_fase8_section(cfg, result, k)}
@@ -1932,7 +2193,15 @@ referencia concreta fuera otra.
 Que parte del target llego siquiera al pool de candidatos. Lo que no esta aqui, el ranker
 no lo puede recuperar.
 
+`pool_recall` es a nivel de SKU; `cat_pool_recall`, a nivel de **categoria** (que parte de
+las categorias del target tiene al menos un representante en el pool). La segunda es el
+techo de `cat_hit_rate@{k}`, y por tanto el de la metrica principal. No son lo mismo: un
+pool puede llevar muchas referencias de pocas categorias y quedarse corto justo donde
+importa. Era el caso en cold-start antes del punto M6 (`docs/diagnostico-fase7.md`).
+
 {_table(result['candidate_recall'])}
+
+{_pool_ceiling_note(result, k)}
 
 ## Que features usa el ranker
 
@@ -1968,6 +2237,8 @@ Importancia por ganancia, las {len(result['feature_importance'])} primeras.
             "n_train_queries_sku": result["n_train_queries_sku"],
         },
         "objective_ablation": result["objective_ablation"].to_dict(orient="records"),  # type: ignore[union-attr]
+        "validation_ablation": result["validation_ablation"].to_dict(orient="records"),  # type: ignore[union-attr]
+        "validation_split": result["validation_split"].to_dict(orient="records"),  # type: ignore[union-attr]
         "rank_feature_importance": result["rank_feature_importance"].to_dict(orient="records"),  # type: ignore[union-attr]
         "bootstrap": dataclasses.asdict(cfg.bootstrap),
         "comparisons": result["comparisons"].to_dict(orient="records"),  # type: ignore[union-attr]

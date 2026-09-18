@@ -547,12 +547,122 @@ fuente `pop`, y un `pool_recall` del 38,2 %. Con 496 productos, el pool de popul
 puede crecer (o ir por categoría: los líderes de las N categorías más probables del mes)
 sin coste relevante. Conviene reajustar los topes después de A1, A2 y A4, no antes.
 
+**Estado (Sesión 7).** Hecho, pero **la hipótesis de partida era la equivocada**, y eso es
+lo interesante del punto.
+
+*Lo que de verdad estrangulaba al cold-start no era el número de productos del pool, sino
+cuántas **categorías distintas** tocaba.* Con los topes viejos, el pool de un cliente nuevo
+con el carrito vacío contenía alguna referencia de solo el **70,4 %** de las categorías que
+esa cesta acabaría comprando. Como la métrica principal es la NDCG@5 graduada y una cesta
+lleva casi siempre una línea por categoría, ese 70,4 % es un techo duro sobre
+`cat_hit_rate@5` que ningún ranker puede recuperar. El `pool_recall` de SKU, que era la
+cifra que miraba este punto, no lo enseñaba.
+
+Medido sobre 6.000 cestas de test, variando un tope cada vez (`CandidateConfig`):
+
+| | pool | recall de SKU | categorías cubiertas | perfil 1 (SKU) | perfil 1 (cat.) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Topes de la Fase 3 | 141 | 82,7 % | 96,5 % | 55,1 % | 70,4 % |
+| Solo `n_popularity` = 150 | 205 | 89,8 % | 99,6 % | 74,9 % | 96,3 % |
+| Solo por categoría (62 × 2) | 205 | 87,5 % | 100 % | 70,7 % | 100 % |
+| **Servido** (150 global + 62 × 1) | **234** | **91,7 %** | **100 %** | **75,9 %** | **100 %** |
+
+Dos conclusiones que contradicen lo que proponía el punto:
+
+1. **Construir el pool "por categoría" en vez de por popularidad global es peor.** A
+   igualdad de tamaño de pool (205 candidatos), repartir 2 referencias a cada una de las 62
+   categorías da 70,7 % en el perfil 1 frente al 74,9 % de la popularidad global: gasta
+   huecos en categorías que casi nunca aparecen mientras deja fuera la tercera y la cuarta
+   referencia de las que sí. La popularidad global reparte por demanda esperada, que es la
+   asignación correcta.
+2. **La rama por categoría sí merece la pena, pero con un solo líder por categoría.** A 1
+   producto por categoría cierra la cobertura al 100 % por unos 10 huecos de pool y además
+   sube el recall de SKU. Las dos ramas no compiten: la global reparte por arriba, la de
+   categoría cubre la cola por abajo. Es lo que sirve `candidates_popularity`.
+
+Topes servidos, cada uno justificado por mover el `pool_recall` de algún perfil (no el
+total): `n_popularity` 60 → 150, rama por categoría 62 × 1 (nueva), `n_personal` 80 → 120,
+`n_affinity_product` 30 → 50, `n_affinity_category` 10 → 15, `n_als` 50 → 80. Descartado
+con datos: `n_popularity` = 120 sale al mismo coste de pool que el híbrido servido pero
+cuesta 4,6 pp en el perfil 1, así que la profundidad de la popularidad global sí importa
+para el cold-start.
+
+**Y el resultado, sobre las 18.000 cestas de test: el techo subió mucho y la métrica no se
+movió.**
+
+| | pool | `pool_recall` (SKU) | `cat_pool_recall` | NDCG@5 graduada | `cat_hit_rate@5` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Antes | 141 | 82,5 % | — | 0,3015 | 0,7954 |
+| Después | 234 | **91,8 %** | **100 %** | 0,3018 | 0,7981 |
+| Perfil 1, antes | 65 | 55,3 % | 70,4 % | 0,2330 | 0,7112 |
+| Perfil 1, después | 167 | **77,4 %** | **100 %** | 0,2312 | 0,6968 |
+
+Se amplió el techo de la primera etapa en 9,3 pp (22,1 pp en el cold-start), se cerró la
+cobertura de categorías al 100 % en los cuatro perfiles, y la métrica principal se movió
+**+0,03 pp**. En el perfil 1 incluso baja 1,4 pp de `cat_hit_rate`, dentro de su intervalo
+(n = 554, anchura ~7,8 pp).
+
+Es la misma conclusión que la nota de la Fase 3 ya dejaba escrita, ahora confirmada sobre
+el dataset de la Fase 8 y con A1, A2 y A4 dentro: **el sistema no está limitado por la
+primera etapa**. Con el pool cubriendo el 100 % de las categorías del target y el
+`cat_hit_rate@5` en el 79,8 %, todo lo que falta está en la segunda etapa —ordenar y
+truncar a 5— y en lo poco distinguibles que son entre sí las referencias de una misma
+categoría. Los candidatos que entran al ampliar el pool son productos que el ranker no
+sabe separar.
+
+*Por qué se deja igualmente el pool ampliado:* no cuesta nada en la métrica, quita un
+techo que habría enturbiado cualquier diagnóstico futuro de la segunda etapa, y deja
+`cat_pool_recall` al 100 %, de modo que a partir de ahora cualquier fallo de categoría es
+atribuible al ranker sin ambigüedad. El coste es de cómputo: el pool pasa de 141 a 234
+candidatos por query y la matriz de test de 2,5 M a 4,2 M de filas.
+
+**Efecto colateral que hubo que arreglar.** Con 234 candidatos por query el driver de Spark
+se quedaba sin heap en la ventana de cold-start, y no por los datos: la traza moría en
+`QueryExecution.explainString`, construyendo la representación **en texto** del plan, que
+Spark deja crecer sin cota. `src/etl/session.py` fija ahora
+`spark.sql.maxPlanStringLength`.
+
+Las cifras de pool por perfil y lo que de ellas llega a la métrica final están en
+`reports/recommender/metrics.md`; los tests, en `tests/test_candidate_pool.py`.
+
 ### B4 · Validación del ranker en la misma ventana que el entrenamiento — **BAJA**
 
 La parada temprana usa 2.500 queries de sep-oct muestreadas por hash, la misma ventana
 que el entrenamiento. Es aceptable, pero una validación temporal (las últimas 2 semanas
 de la ventana) sería más fiel al desplazamiento que hay hacia el test de noviembre y
 diciembre.
+
+**Estado (Sesión 7).** Hecho, y **sin efecto medible**.
+
+`ValidationSplit` (`config.py`) decide de dónde sale la validación. Lo servido es
+`temporal`: las cestas de los últimos 14 días de la ventana del ranker (18 a 31 de
+octubre), 3.304 de las 14.500. El modo `hash` de antes se sigue entrenando como ablación
+(`validacion_hash`) sobre la misma matriz de features y se evalúa sobre las mismas queries
+de test, con el mismo re-ranking.
+
+| | de dónde sale la validación | cestas de train | de validación | árboles |
+| --- | --- | ---: | ---: | ---: |
+| Temporal (servida) | 18 a 31 de octubre | 11.196 | 3.304 | 119 |
+| Por hash (anterior) | 2.500 por hash, de toda la ventana | 12.000 | 2.500 | 140 |
+
+Diferencia en test (bootstrap pareado, 1.000 remuestreos): NDCG@5 graduada
+**−0,0001 [−0,0011, +0,0009]**, p = 0,83. Las otras tres métricas y los cuatro perfiles
+también cruzan el cero; la única celda con p < 0,05 es una de veinte comparaciones sin
+corregir. Dos matices para leerlo:
+
+- Cambiar el criterio cambia **las dos** partes a la vez, porque lo que no cae en
+  validación entrena. La diferencia no es solo "dónde para", también es "con qué cestas
+  aprende".
+- La parada temprana **no es del todo determinista entre ejecuciones** (deuda ya anotada
+  en el README): en tres ejecuciones de esta sesión, con los mismos datos y la misma
+  configuración, el modelo servido paró en 154, 119 y 119 árboles. Una diferencia del
+  tamaño de la que se mide aquí no sería atribuible al criterio de validación aunque la
+  hubiera.
+
+Se sirve la temporal por ser la más defendible metodológicamente —parar sobre queries
+posteriores a las de entrenamiento se parece más a lo que el modelo encuentra en test—, no
+porque rinda más. La comparación está en `reports/recommender/metrics.md`; los tests, en
+`tests/test_candidate_pool.py`.
 
 ---
 
@@ -687,13 +797,13 @@ estructura de co-ocurrencia, forma de la distribución de tamaño) deberían viv
 | M2 | Datos | Sustitución entre categorías, varias SKU por categoría, marca blanca | Media | Medio | Medio |
 | M3 | Evaluación | Varios cortes por cesta, desglose por `prefix_size` | Media | Bajo | Indirecto |
 | M4 | Evaluación | Bootstrap/IC y cold-start bien representado | Media | Bajo | Indirecto |
-| M6 | Modelo | Reajustar topes de candidatos (cold-start) | Media-baja | Bajo | Bajo-medio en perfil 1 |
+| M6 | Modelo | Reajustar topes de candidatos (cold-start) | Media-baja | Bajo | **Medido: nulo.** Techo del pool +9,3 pp (+22,1 en perfil 1), métrica principal +0,03 pp |
 | M7 | NBA | Nombre de la acción, fecha de corte en demo, capa común de necesidad | Media | Bajo-medio | Bajo (coherencia) |
 | M8 | Gobierno | Codificar el diagnóstico en `verify_*` | Media | Bajo | Requisito previo |
 | B1 | Repro | Orquestador único + smoke E2E en CI | Media | Medio | — |
 | B2 | Repro | Unificar features Spark/pandas | Baja-media | Medio | — (abarata A1/A2/A4) |
 | B3 | Docs | Poda y actualización de documentación | Baja | Bajo | — |
-| B4 | Modelo | Validación temporal del ranker | Baja | Bajo | Bajo |
+| B4 | Modelo | Validación temporal del ranker | Baja | Bajo | **Medido: nulo** (−0,0001 [−0,0011, +0,0009]) |
 
 ## Orden sugerido de abordaje
 
@@ -717,7 +827,9 @@ regeneración**, porque cada una obliga a rehacer las Fases 2-6, como pasó en l
    `DATA_SPEC.md`. Regenerar, rehacer las Fases 2-6 y comparar contra los baseline
    congelados, como se hizo en la 7.
 7. **Reajuste fino (M6, B4).** Topes de candidatos y validación temporal sobre el
-   dataset nuevo.
+   dataset nuevo. *Hecho en la Sesión 7. Ninguno de los dos mueve la métrica: el valor de
+   este paso fue negativo, en el sentido útil de cerrar dos hipótesis y dejar por escrito
+   que el margen no está en la primera etapa ni en dónde para el entrenamiento.*
 8. **NBA y cierre (M7, B1, B3).** Renombrar y conectar la acción con el recomendador,
    mostrar la fecha de corte en la demo, montar el orquestador y el smoke en CI, y
    podar la documentación.

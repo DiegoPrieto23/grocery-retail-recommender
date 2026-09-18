@@ -70,6 +70,7 @@ def _bundle() -> srv.ServingBundle:
     empty = pd.DataFrame()
     return srv.ServingBundle(
         popularity=empty,
+        category_popularity=empty,
         affinity_product=empty,
         affinity_category=empty,
         category_leaders=empty,

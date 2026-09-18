@@ -497,12 +497,24 @@ def cut_groups(
     return by_size, by_fraction
 
 
-def candidate_recall(scored: pd.DataFrame, queries: pd.DataFrame) -> pd.DataFrame:
+def candidate_recall(
+    scored: pd.DataFrame,
+    queries: pd.DataFrame,
+    target: pd.DataFrame | None = None,
+    product_category: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Techo de la primera etapa: que parte del target llego siquiera al pool.
 
     Separa los dos fallos posibles del sistema. Si el pool ya no contiene el producto, el
     ranker no puede hacer nada; si lo contiene y no lo sube al top-5, el fallo es del
     ranker. Sin esta cifra no se sabe cual de las dos etapas hay que tocar.
+
+    Con `target` y `product_category` anade **`cat_pool_recall`**: que parte de las
+    *categorias* del target tiene al menos un representante en el pool. Es el techo de
+    `cat_hit_rate@k`, y por tanto el de la metrica principal, que no es el mismo que el
+    techo de SKU: un pool puede llevar muchas referencias de pocas categorias y quedarse
+    corto justo donde importa. El punto M6 del diagnostico salio de mirar esta columna y
+    no la de SKU, que era la unica que habia.
     """
     in_pool = scored.loc[scored["label"] == 1].groupby("basket_id").size()
     out = queries[["basket_id", "profile", "n_target"]].copy()
@@ -510,23 +522,46 @@ def candidate_recall(scored: pd.DataFrame, queries: pd.DataFrame) -> pd.DataFram
     out["pool_recall"] = out["n_in_pool"] / out["n_target"]
     out["pool_size"] = out["basket_id"].map(scored.groupby("basket_id").size()).fillna(0).astype(int)
 
-    rows = [
-        {
-            "grupo": "total",
-            "n_queries": int(len(out)),
-            "pool_recall": float(out["pool_recall"].mean()),
-            "pool_size_medio": float(out["pool_size"].mean()),
-        }
-    ]
-    for profile in sorted(out["profile"].unique()):
-        subset = out.loc[out["profile"] == profile]
-        rows.append(
+    with_categories = target is not None and product_category is not None
+    if with_categories:
+        categories = product_category.set_index("product_id")["category"]
+
+        def by_basket(frame: pd.DataFrame) -> pd.Series:
+            """Conjunto de categorias distintas de cada cesta."""
+            return (
+                frame.assign(category=frame["product_id"].map(categories))
+                .dropna(subset=["category"])
+                .groupby("basket_id")["category"]
+                .agg(set)
+            )
+
+        target_cats, pool_cats = by_basket(target), by_basket(scored)
+        empty: set[str] = set()
+        out["cat_pool_recall"] = out["basket_id"].map(
             {
-                "grupo": PROFILE_LABELS.get(int(profile), str(profile)),
-                "n_queries": int(len(subset)),
-                "pool_recall": float(subset["pool_recall"].mean()),
-                "pool_size_medio": float(subset["pool_size"].mean()),
+                basket: len(cats & pool_cats.get(basket, empty)) / len(cats)
+                for basket, cats in target_cats.items()
             }
+        )
+
+    def summarise_group(subset: pd.DataFrame, label: str) -> dict[str, object]:
+        row: dict[str, object] = {
+            "grupo": label,
+            "n_queries": int(len(subset)),
+            "pool_recall": float(subset["pool_recall"].mean()),
+        }
+        if with_categories:
+            row["cat_pool_recall"] = float(subset["cat_pool_recall"].mean())
+        row["pool_size_medio"] = float(subset["pool_size"].mean())
+        return row
+
+    rows = [summarise_group(out, "total")]
+    for profile in sorted(out["profile"].unique()):
+        rows.append(
+            summarise_group(
+                out.loc[out["profile"] == profile],
+                PROFILE_LABELS.get(int(profile), str(profile)),
+            )
         )
     return pd.DataFrame(rows)
 

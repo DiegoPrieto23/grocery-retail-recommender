@@ -90,6 +90,14 @@ def get_spark(
         .config("spark.sql.adaptive.enabled", "true")
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
         .config("spark.sql.warehouse.dir", str(work / "warehouse"))
+        # Cota a la representacion en texto del plan. Por defecto no tiene ninguna, y en
+        # las cadenas largas del recomendador (cinco fuentes unidas, historial as-of y la
+        # matriz de features) el plan de la ejecucion adaptativa llega a cientos de MB de
+        # texto: la JVM se quedaba sin heap en `QueryExecution.explainString`, construyendo
+        # un `String` que nadie llega a leer, no procesando datos. Con el pool del punto M6
+        # (234 candidatos por query) eso tumbaba el driver en la ventana de cold-start.
+        # `explain()` sigue funcionando; solo se trunca a partir de este tamano.
+        .config("spark.sql.maxPlanStringLength", "8192")
         .config("spark.driver.extraJavaOptions", f"-Dderby.system.home={work}")
     )
     for key, value in (extra_conf or {}).items():

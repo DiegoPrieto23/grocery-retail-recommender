@@ -126,13 +126,84 @@ def fit_popularity(
     )
 
 
-def candidates_popularity(
-    queries: DataFrame, popularity: DataFrame, *, cfg: CandidateConfig
-) -> DataFrame:
-    """Los productos mas vendidos del mes de la cesta. Es la fuente de respaldo."""
-    top = popularity.filter(F.col("pop_rank") <= cfg.n_popularity).select(
-        "product_id", "month", *SOURCE_COLUMNS["pop"]
+def fit_category_popularity(popularity: DataFrame, products: DataFrame) -> DataFrame:
+    """Peso esperado de cada categoria en cada mes, y orden de sus referencias dentro.
+
+    El peso de una categoria en el mes es la suma del `pop_score` de sus productos, que ya
+    lleva dentro la correccion estacional: en diciembre "dulces navidenos" sube aunque el
+    resto del ano apenas venda. Es el mismo criterio que usa `fit_popularity`, agregado un
+    nivel mas arriba.
+
+    Existe por el punto M6 del diagnostico: la popularidad **global** concentra su pool en
+    las categorias de mas rotacion, y deja sin un solo candidato a las demas. Como una
+    cesta lleva casi siempre una linea por categoria (`DATA_SPEC.md`), una categoria sin
+    representante en el pool es una linea del target que el ranker ya no puede acertar.
+
+    Returns:
+        Una fila por `(product_id, month)` -- la tabla completa, sin podar -- con
+        `cat_pop_rank` (puesto de su categoria dentro del mes) y `cat_prod_rank` (puesto
+        del producto dentro de su categoria y mes). La poda la hace `candidates_popularity`.
+    """
+    with_cat = popularity.join(
+        F.broadcast(products.select("product_id", "category")), "product_id"
     )
+    by_category = with_cat.groupBy("category", "month").agg(
+        F.sum("pop_score").alias("cat_pop_score")
+    )
+    ranked_categories = Window.partitionBy("month").orderBy(
+        F.col("cat_pop_score").desc(), F.col("category").asc()
+    )
+    by_category = by_category.withColumn(
+        "cat_pop_rank", F.row_number().over(ranked_categories)
+    )
+    ranked_products = Window.partitionBy("category", "month").orderBy(
+        F.col("pop_score").desc(), F.col("product_id").asc()
+    )
+    return (
+        with_cat.withColumn("cat_prod_rank", F.row_number().over(ranked_products))
+        .join(F.broadcast(by_category), ["category", "month"])
+        .select(
+            "product_id",
+            "month",
+            "category",
+            "cat_pop_score",
+            "cat_pop_rank",
+            "cat_prod_rank",
+            *SOURCE_COLUMNS["pop"],
+        )
+    )
+
+
+def candidates_popularity(
+    queries: DataFrame,
+    popularity: DataFrame,
+    category_popularity: DataFrame,
+    *,
+    cfg: CandidateConfig,
+) -> DataFrame:
+    """Los productos mas vendidos del mes de la cesta. Es la fuente de respaldo.
+
+    Dos ramas que se unen (punto M6):
+
+    - **global**: el top `n_popularity` del mes, sin mirar la categoria;
+    - **por categoria**: las `n_pop_categories` categorias de mas peso esperado ese mes,
+      con sus `n_pop_products_per_category` referencias mas vendidas.
+
+    La primera acierta el SKU concreto donde hay volumen; la segunda garantiza cobertura
+    de categorias, que es lo unico de lo que dispone un cliente nuevo con el carrito vacio
+    (perfil 1). Los candidatos que aportan las dos ramas llevan el mismo `pop_score` y el
+    mismo `pop_rank` **global**, asi que el ranker sigue viendo lo popular que es cada
+    producto en terminos absolutos y no se le cuela un rango artificial.
+    """
+    columns = ("product_id", "month", *SOURCE_COLUMNS["pop"])
+    top = popularity.filter(F.col("pop_rank") <= cfg.n_popularity).select(*columns)
+    by_category = category_popularity.filter(
+        (F.col("cat_pop_rank") <= cfg.n_pop_categories)
+        & (F.col("cat_prod_rank") <= cfg.n_pop_products_per_category)
+    ).select(*columns)
+    # `distinct` y no `dropDuplicates`: un producto que entra por las dos ramas trae la
+    # misma fila entera, asi que el resultado no depende del particionado.
+    top = top.unionByName(by_category).distinct()
     return (
         queries.select("basket_id", F.month("basket_day").alias("month"))
         .join(F.broadcast(top), "month")

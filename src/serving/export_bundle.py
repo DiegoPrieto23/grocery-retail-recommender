@@ -60,6 +60,7 @@ SERVING_DIR = Path("data/serving")
 # Tablas del `SourceBundle` que se vuelcan tal cual.
 BUNDLE_TABLES = (
     "popularity",
+    "category_popularity",
     "affinity_product",
     "affinity_category",
     "category_leaders",
@@ -204,6 +205,8 @@ def run(
         "window_start": str(cfg.test_start),
         "n_als": cfg.candidates.n_als,
         "n_popularity": cfg.candidates.n_popularity,
+        "n_pop_categories": cfg.candidates.n_pop_categories,
+        "n_pop_products_per_category": cfg.candidates.n_pop_products_per_category,
         "n_affinity_product": cfg.candidates.n_affinity_product,
         "n_affinity_category": cfg.candidates.n_affinity_category,
         "n_personal": cfg.candidates.n_personal,
