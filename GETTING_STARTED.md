@@ -1,7 +1,8 @@
 # Cómo arrancar el proyecto
 
 Guía para alguien que acaba de clonar el repo. Si lo que buscas es **qué es** el proyecto,
-empieza por el [`README.md`](README.md); si buscas **cómo funcionan los modelos** en lenguaje
+empieza por el [`README.md`](README.md); si buscas **cómo está construido**, por el
+[`README_TECNICO.md`](README_TECNICO.md); si buscas **cómo funcionan los modelos** en lenguaje
 llano, por [`docs/como-funcionan-recomendador-y-nba.md`](docs/como-funcionan-recomendador-y-nba.md).
 
 > Este documento describía hasta la Fase 8 el arranque original con Claude Code, que ya no
@@ -30,8 +31,8 @@ los informes pueden no salir idénticas.
 ## Comprobar que el entorno está bien, antes de gastar una hora
 
 ```bash
-pytest -q                          # ~9 min, 498 tests
-python -m src.pipeline list        # los 13 pasos y sus dependencias
+pytest -q                          # ~9 min, 510 tests
+python -m src.pipeline list        # los 14 pasos y sus dependencias
 python -m src.pipeline all --dry-run
 ```
 
@@ -60,6 +61,7 @@ deja, en orden:
 | `impact` | `IMPACT.md` |
 | `findings` | `reports/insights/` |
 | `assets` | `assets/product_catalog.csv` |
+| `export-demo-bundle` | `data/serving/demo/` — el recorte que se despliega (ver [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md)) |
 
 Si algo falla a mitad, se retoma sin repetir lo hecho:
 
@@ -103,7 +105,7 @@ Hay dos excepciones declaradas:
   distintos con el tiempo. Por eso se descargaron una vez y están versionadas.
 - **El entrenamiento del ranker no es del todo determinista entre ejecuciones**: la parada
   temprana cae en un número de árboles distinto y la métrica se mueve en la tercera decimal.
-  Está anotado como deuda en el [`README.md`](README.md#qué-viene-ahora).
+  Está anotado como deuda en el [`README_TECNICO.md`](README_TECNICO.md#deudas-abiertas).
 
 ## Si quieres tocar algo
 

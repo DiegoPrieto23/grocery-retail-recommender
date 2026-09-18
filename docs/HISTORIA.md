@@ -953,7 +953,7 @@ categoría y 0,64 el producto exacto) leída de `reports/recommender/metrics.jso
 
 La demo necesita `data/processed/`, `data/serving/`, `models/`,
 `predictions/nba_actions.parquet` y `assets/`, es decir, haber ejecutado antes la secuencia
-de [Cómo reproducirlo](../README.md#cómo-reproducirlo). Si falta el bundle o el mapeo de fotos, el error
+de [El pipeline](../README_TECNICO.md#el-pipeline). Si falta el bundle o el mapeo de fotos, el error
 dice qué comando los genera; sin la tabla del NBA la app arranca igual y el banner avisa de
 que no hay acción calculada. La verificación de punta a punta (arranque real, carga de cestas y fotos
 servidas) está en el `ROADMAP.md`, Fases 6 y 7e.

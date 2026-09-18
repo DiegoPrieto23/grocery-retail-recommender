@@ -1,0 +1,28 @@
+{
+  "window_start": "2025-11-01",
+  "n_als": 80,
+  "n_popularity": 150,
+  "n_pop_categories": 62,
+  "n_pop_products_per_category": 1,
+  "n_affinity_product": 50,
+  "n_affinity_category": 15,
+  "n_personal": 120,
+  "rows": {
+    "popularity": 5952,
+    "category_popularity": 5952,
+    "affinity_product": 9730,
+    "affinity_category": 3782,
+    "category_leaders": 248,
+    "known_customers": 18729,
+    "customer_lines": 4216494,
+    "customer_baskets": 582174,
+    "category_repurchase_days": 62,
+    "customer_stats": 18729,
+    "als_topn": 1498320,
+    "products_indexed": 496,
+    "parity_queries": 18000,
+    "parity_cart": 29927,
+    "parity_session_product": 4957,
+    "parity_session_query": 727
+  }
+}

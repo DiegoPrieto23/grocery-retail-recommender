@@ -60,6 +60,9 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PARITY_DIR = PROJECT_ROOT / "data" / "serving" / "parity"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+# Las lineas de ticket recortadas a las cestas que la demo ofrece: es lo que se versiona
+# para el despliegue, donde `data/processed/` no esta (ver docs/DESPLIEGUE.md).
+DEMO_BASKET_ITEMS = PROJECT_ROOT / "data" / "serving" / "demo" / "basket_items.parquet"
 
 # Canales que acepta el selector de la app. El orden es el de `streamlit_app.py`.
 CHANNELS: tuple[str, ...] = ("app", "web", "store")
@@ -212,9 +215,15 @@ def basket_items(
     `basket_items` son millones de filas y la demo necesita cinco. El filtro va en la
     lectura (`filters=`, que pyarrow empuja hasta el row group) y no en un `DataFrame`
     ya cargado en memoria.
+
+    Si no esta la tabla de la Fase 2 se usa la recortada del despliegue, que trae solo las
+    cestas que la demo puede ofrecer (`src/serving/export_demo_bundle.py`). En local estan
+    las dos y manda la completa.
     """
     directory = processed_dir or PROCESSED_DIR
     path = directory / "basket_items.parquet"
+    if not path.is_file() and DEMO_BASKET_ITEMS.is_file():
+        path = DEMO_BASKET_ITEMS
     if not path.is_file():
         raise FileNotFoundError(
             f"No encuentro {path.relative_to(PROJECT_ROOT)}. Ejecuta antes la Fase 2 "

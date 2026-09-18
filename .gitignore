@@ -6,15 +6,28 @@ venv/
 .ipynb_checkpoints/
 
 # El dataset se regenera con data_generation/generate_dataset.py, no se versiona.
+#
+# Excepcion: las tres tablas pequenas de la Fase 2 que la demo publicada lee en caliente.
+# Streamlit Community Cloud no puede ejecutar el pipeline (75 min y una JVM), asi que lo
+# que la app necesita para arrancar tiene que estar en el repo. `basket_items` NO entra:
+# son 33 MB y la demo solo usa las lineas de las cestas que ofrece, que van recortadas en
+# data/serving/demo/. Ver docs/DESPLIEGUE.md.
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/processed/customers.parquet
+!data/processed/products.parquet
+!data/processed/promotions.parquet
 
+# Igual que arriba: el ranker y las acciones del NBA son lo unico de models/ y predictions/
+# que la demo carga. El resto se regenera y no se sube.
 models/*
 predictions/*
 !models/.gitkeep
 !predictions/.gitkeep
+!models/recommender_ranker_lgbm.txt
+!predictions/nba_actions.parquet
 
 spark-warehouse/
 metastore_db/
@@ -31,8 +44,14 @@ mlartifacts/
 !.env.example
 env
 
-# Bundle de serving de la demo (Fase 6b): lo regenera `python -m src.serving.export_bundle`.
-data/serving/
+# Bundle de serving de la demo (Fase 6b). Se versiona todo menos las tres tablas que
+# crecen con el numero de clientes: son 810 de los 826 MB que ocupa el bundle en memoria y
+# el 99 % es historial de clientes que el selector no ofrece. Lo que se despliega es su
+# recorte, data/serving/demo/, que lo regenera
+# `python -m src.serving.export_demo_bundle` y pesa 0,3 MB.
+data/serving/customer_lines.parquet
+data/serving/customer_baskets.parquet
+data/serving/als_topn.parquet
 
 # Oraculo del recomendador (punto A6): probabilidades reales que solo conoce el generador.
 # Lo regenera `python -m data_generation.export_oracle`; nunca junto a data/raw.

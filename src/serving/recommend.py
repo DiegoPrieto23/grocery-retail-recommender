@@ -66,6 +66,11 @@ SERVING_DIR = Path("data/serving")
 PROCESSED_DIR = Path("data/processed")
 MODELS_DIR = Path("models")
 
+# Subdirectorio con el bundle recortado a los clientes que la demo ofrece, que es lo unico
+# que se versiona de las tablas grandes (ver `src/serving/export_demo_bundle.py`). Se usa
+# solo si falta la tabla completa: en local manda el bundle entero.
+DEMO_SUBDIR = "demo"
+
 # Todas las columnas de score que aportan las fuentes, en el orden de `SOURCE_COLUMNS`.
 ALL_SOURCE_COLUMNS: tuple[str, ...] = tuple(
     column for columns in SOURCE_COLUMNS.values() for column in columns
@@ -158,6 +163,21 @@ def _for_customers(indexed: pd.DataFrame, customer_ids) -> pd.DataFrame:
     return out.astype({c: object for c in categorical})
 
 
+def resolve_table(path: Path) -> Path:
+    """La tabla completa si esta; si no, la recortada a los clientes de la demo.
+
+    El orden importa y es este a proposito. En desarrollo estan las dos y manda la
+    completa, que es la que miden los tests de paridad y la que permite recomendar a
+    cualquiera de los 18.729 clientes. En el despliegue solo esta la recortada
+    (`data/serving/demo/`, unos pocos MB frente a 826), y la app arranca con ella sin
+    ninguna variable de entorno ni modo especial. Ver `docs/DESPLIEGUE.md`.
+    """
+    if path.is_file():
+        return path
+    recortada = path.parent / DEMO_SUBDIR / path.name
+    return recortada if recortada.is_file() else path
+
+
 def index_customer_events(
     lines: pd.DataFrame, baskets: pd.DataFrame, products: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -194,7 +214,7 @@ def load_bundle(
     metadata = json.loads((serving_dir / "metadata.json").read_text(encoding="utf-8"))
 
     def table(name: str, directory: Path = serving_dir) -> pd.DataFrame:
-        return pd.read_parquet(directory / f"{name}.parquet")
+        return pd.read_parquet(resolve_table(directory / f"{name}.parquet"))
 
     products = table("products_indexed")
     als_topn = table("als_topn")

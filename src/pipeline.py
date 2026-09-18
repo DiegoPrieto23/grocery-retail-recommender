@@ -119,6 +119,12 @@ def _export_bundle(args: RunArgs) -> None:
     main([])
 
 
+def _export_demo_bundle(args: RunArgs) -> None:
+    from src.serving.export_demo_bundle import main
+
+    main([])
+
+
 def _export_oracle(args: RunArgs) -> None:
     from data_generation.export_oracle import main
 
@@ -275,6 +281,14 @@ STEPS: tuple[Step, ...] = (
         produces=("assets/product_catalog.csv",),
         run=_assets,
         minutes=0.2,
+    ),
+    Step(
+        name="export-demo-bundle",
+        summary="Recorta el bundle a los clientes que la demo ofrece (lo que se despliega)",
+        needs=("export-bundle", "nba"),
+        produces=("data/serving/demo/manifest.json",),
+        run=_export_demo_bundle,
+        minutes=0.5,
     ),
 )
 
