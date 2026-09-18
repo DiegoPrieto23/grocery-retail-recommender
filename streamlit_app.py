@@ -58,6 +58,22 @@ DEFAULT_DEPARTMENT = "Frescos"
 # reciente que mover, asi que el selector de fecha no deja salir de aqui.
 DATASET_END = dt.date(2025, 12, 31)
 
+# Canal de una cesta construida a mano. No hay selector para cambiarlo, y no es un olvido.
+#
+# `channel` es una feature legitima del ranker (`channel_idx`) y sigue viajando en la
+# query, pero en la demo no puede significar lo que parece: el canal solo tiene efecto de
+# verdad a traves del embudo de sesion, y una cesta inventada no tiene sesion, asi que esas
+# features van nulas se elija lo que se elija. Medido sobre 80 combinaciones de cliente y
+# carrito, el top-5 era identico en los tres canales en 69; de las 11 restantes, 6 eran el
+# mismo top-5 reordenado. `channel_idx` es la feature 43 de 60 por ganancia (0,07 %), y las
+# diferencias no siguen ningun patron de negocio -- `app` y `web` se separan tan a menudo
+# como `store` de `app`.
+#
+# Un control que casi nunca cambia nada ensena algo falso: quien lo mueva y no vea reaccion
+# concluira que el canal no importa, cuando lo que pasa es que aqui no puede importar. Se
+# quita el control, no la feature.
+DEFAULT_CHANNEL = "app"
+
 # Cuantas recomendaciones se pintan. Es el `k` de todas las metricas del proyecto.
 TOP_K = 5
 
@@ -152,9 +168,13 @@ def load_real_basket(basket: RealBasket) -> None:
     """Siembra el carrito con una cesta real y alinea su contexto.
 
     Se llama desde un `on_click`, que corre **antes** del rerun: por eso aqui si se puede
-    escribir sobre las claves de `date_input` y `segmented_control`. Alinear dia y canal
-    no es cosmetico — mueven la estacionalidad, las promociones vigentes y la señal de
-    sesion, asi que sin ellos el recomendador veria un contexto que nunca existio.
+    escribir sobre la clave de `date_input`. Alinear el dia no es cosmetico — mueve la
+    estacionalidad y las promociones vigentes, asi que sin el el recomendador veria un
+    contexto que nunca existio.
+
+    El canal ya no tiene selector (ver `DEFAULT_CHANNEL`), pero se sigue alineando: en una
+    cesta real es el unico caso en que el valor significa algo, porque es el que esa compra
+    tuvo de verdad.
     """
     st.session_state.cart = list(basket.cart)
     st.session_state.loaded_basket = basket
@@ -405,7 +425,7 @@ with st.sidebar:
     # se siembra en el estado y **no** se pasa por `value=`/`default=`: hacer las dos
     # cosas a la vez es lo que dispara el aviso de Streamlit por valor duplicado.
     st.session_state.setdefault("basket_day", bundle.window_start)
-    st.session_state.setdefault("channel", "app")
+    st.session_state.setdefault("channel", DEFAULT_CHANNEL)
     basket_day = st.date_input(
         "Día de la compra",
         min_value=bundle.window_start,
@@ -414,7 +434,10 @@ with st.sidebar:
         help="Mueve la estacionalidad y las promociones vigentes.",
         key="basket_day",
     )
-    channel = st.segmented_control("Canal", ["app", "web", "store"], key="channel")
+    # El canal no se elige: es una feature del ranker, pero en la demo no hay nada que
+    # elegir de verdad (ver `DEFAULT_CHANNEL`). Cuando se carga una cesta real, toma el
+    # canal que esa compra tuvo, que es el unico valor con significado.
+    channel = st.session_state.channel
 
     if st.session_state.cart:
         st.button(
