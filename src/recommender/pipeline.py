@@ -800,7 +800,10 @@ def run(
 
     def split_by(validation: ValidationSplit) -> tuple[pd.DataFrame, pd.DataFrame]:
         valid_ids = splits.validation_baskets(
-            rank_days, split=validation, n_valid=cfg.n_valid_queries
+            rank_days,
+            split=validation,
+            n_valid=cfg.n_valid_queries,
+            n_train=cfg.n_train_queries,
         )
         is_valid = rank_pdf["basket_id"].isin(valid_ids)
         return (

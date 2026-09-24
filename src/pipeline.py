@@ -1,7 +1,7 @@
 """Punto de entrada unico para reproducir el proyecto entero (punto B1 del diagnostico).
 
     python -m src.pipeline all                  # la cadena completa, en orden
-    python -m src.pipeline all --scale 0.02     # la misma cadena en pequeno (smoke de CI)
+    python -m src.pipeline all --scale 0.02     # la misma cadena en pequeno
     python -m src.pipeline recommender          # un paso y todo lo que necesita
     python -m src.pipeline nba --only           # un paso, dando por buenas sus entradas
     python -m src.pipeline list                 # que pasos hay, que producen y que tardan
@@ -429,7 +429,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--scale",
         type=float,
         default=1.0,
-        help="Factor de volumen del generador (0.02 = muestra rapida para el smoke).",
+        help="Factor de volumen del generador (0.02 = muestra rapida de punta a punta).",
     )
     parser.add_argument(
         "--only",
@@ -444,7 +444,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--fast",
         action="store_true",
-        help="Baja la precision de los pasos caros de Monte Carlo (smoke de CI).",
+        help="Baja la precision de los pasos caros de Monte Carlo (util a escala reducida).",
     )
     parser.add_argument("--dry-run", action="store_true", help="Solo imprime el plan.")
     return parser.parse_args(argv)

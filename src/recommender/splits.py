@@ -407,7 +407,11 @@ def prefix_and_target(query_items: DataFrame, queries: DataFrame) -> tuple[DataF
 
 
 def validation_baskets(
-    basket_days: pd.Series, *, split: ValidationSplit, n_valid: int
+    basket_days: pd.Series,
+    *,
+    split: ValidationSplit,
+    n_valid: int,
+    n_train: int | None = None,
 ) -> set[str]:
     """Que cestas de la ventana del ranker hacen de validacion (punto B4).
 
@@ -416,6 +420,10 @@ def validation_baskets(
             ventana del ranker.
         split: Modo de separacion (`temporal` o `hash`).
         n_valid: Cuantas cestas se apartan en el modo `hash`.
+        n_train: Cuantas cestas se pidieron para entrenar. Si la ventana trae menos de
+            `n_train + n_valid` (a escala reducida, p. ej. `--scale 0.02`), el modo `hash`
+            aparta la misma proporcion en vez de `n_valid` cestas: si no, se llevaria la
+            ventana entera a validacion y dejaria el entrenamiento vacio.
 
     Returns:
         Los `basket_id` que van a validacion. El resto entrena.
@@ -430,4 +438,7 @@ def validation_baskets(
         days = pd.to_datetime(basket_days)
         cut = days.max() - pd.Timedelta(days=split.days - 1)
         return set(days.index[days >= cut])
-    return set(sorted(basket_days.index)[:n_valid])
+    n = n_valid
+    if n_train is not None and len(basket_days) < n_train + n_valid:
+        n = round(len(basket_days) * n_valid / (n_train + n_valid))
+    return set(sorted(basket_days.index)[:n])

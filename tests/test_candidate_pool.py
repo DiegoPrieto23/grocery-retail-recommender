@@ -184,6 +184,16 @@ def test_validacion_por_hash_aparta_el_numero_pedido_de_cestas():
     assert chosen <= set(BASKET_DAYS.index)
 
 
+def test_validacion_por_hash_con_ventana_corta_deja_cestas_para_entrenar():
+    """A escala reducida la ventana trae menos cestas de las pedidas: se aparta la misma
+    proporcion en vez de mandar la ventana entera a validacion."""
+    chosen = splits.validation_baskets(
+        BASKET_DAYS, split=ValidationSplit(mode=VALID_HASH), n_valid=50, n_train=250
+    )
+    assert len(chosen) == 5  # 30 cestas * 50 / 300
+    assert len(BASKET_DAYS) - len(chosen) == 25
+
+
 def test_modo_de_validacion_desconocido_falla_pronto():
     with pytest.raises(ValueError, match="modo de validacion desconocido"):
         ValidationSplit(mode="aleatorio")

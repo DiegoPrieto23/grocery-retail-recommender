@@ -1098,6 +1098,9 @@ Los tres últimos puntos abiertos del [diagnóstico](docs/diagnostico-fase7.md):
       tests que en un clon limpio se saltan
       · `.github/workflows/smoke.yml`, nocturno de lunes a viernes y a mano. `ci.yml` sigue
       corriendo `pytest` en cada push
+      · **Retirado en septiembre de 2026**: el proyecto es estático (los datos no se
+      regeneran) y no compensaba una ejecución nocturna. La cadena a escala 0,02 sigue
+      disponible a mano con `python -m src.pipeline all --scale 0.02 --fast`
       · El job **falla si algún test se salta**: sin esa comprobación, un bundle mal
       construido dejaría `test_serving_parity.py` en `skipped` y el job pasaría en verde
       sin haber comprobado la paridad Spark/pandas, que es justo lo que viene a comprobar

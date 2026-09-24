@@ -113,7 +113,7 @@ def clasificar(pool: pd.DataFrame) -> pd.Series:
 
     Por eso cada regla exige antes que sus cuantiles se separen de verdad. Con los datos
     reales siempre lo hacen; el caso degenerado aparece con muestras pequenas, que es justo
-    lo que corre el *smoke* de CI con `--scale 0.02`.
+    lo que sale con `--scale 0.02`.
     """
     alta = pool["n_baskets"].quantile(Q_FRECUENCIA_ALTA)
     baja = pool["n_baskets"].quantile(Q_FRECUENCIA_BAJA)

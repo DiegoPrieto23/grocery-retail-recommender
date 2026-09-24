@@ -70,7 +70,7 @@ python -m src.pipeline all --from recommender
 ```
 
 Y para probar el circuito entero en unos minutos en vez de en una hora, con un dataset
-pequeño (es lo que corre el job de smoke en CI):
+pequeño:
 
 ```bash
 python -m src.pipeline all --scale 0.02

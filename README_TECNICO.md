@@ -40,7 +40,7 @@ python -m src.pipeline all --dry-run            # el plan, sin ejecutar nada
 python -m src.pipeline nba                      # un paso y todo lo que necesita (generate → etl → nba)
 python -m src.pipeline nba --only               # solo ese paso, dando por buenas sus entradas
 python -m src.pipeline all --from recommender   # retomar desde la mitad
-python -m src.pipeline all --scale 0.02         # la cadena en pequeño (lo que corre el smoke de CI)
+python -m src.pipeline all --scale 0.02         # la cadena en pequeño, para probarla de punta a punta
 ```
 
 | Paso | Qué hace | Depende de | ~min |
@@ -245,8 +245,8 @@ Dos criterios que se repiten en toda la suite:
   pueda recalcular de cabeza**: cadencias de 7 y 4 días exactos, cinco cestas con importes
   redondos. Si un test falla, el número esperado se comprueba a mano en un minuto.
 
-CI: [`ci.yml`](.github/workflows/ci.yml) (tests) y [`smoke.yml`](.github/workflows/smoke.yml)
-(la cadena entera a escala 0,02, de punta a punta).
+CI: [`ci.yml`](.github/workflows/ci.yml) (tests en cada push). La cadena entera a escala 0,02
+se puede lanzar a mano con `python -m src.pipeline all --scale 0.02 --fast`.
 
 ---
 

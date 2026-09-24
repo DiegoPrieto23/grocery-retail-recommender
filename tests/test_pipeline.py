@@ -2,8 +2,8 @@
 
 Lo que se comprueba aqui es el **grafo**, no los pasos: que las dependencias sean
 coherentes, que el orden que sale de ellas sea ejecutable y que nadie pueda anadir un paso
-que dependa de otro que va despues. Ejecutar los pasos de verdad es lo que hace el job de
-smoke (`.github/workflows/smoke.yml`), que tarda una hora y no cabe en `pytest`.
+que dependa de otro que va despues. Ejecutar los pasos de verdad es lo que hace
+`python -m src.pipeline all --scale 0.02 --fast`, que tarda una hora y no cabe en `pytest`.
 
 El valor de esto es que el orden dejo de estar escrito en el README: si vuelve a estar mal,
 falla un test en vez de fallar una reproduccion tres minutos despues de empezarla.
